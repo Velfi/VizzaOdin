@@ -1,0 +1,30 @@
+[display]
+fps_limit_enabled = true
+fps_limit = 120
+ui_scale = 1.00
+texture_filtering = "Linear"
+
+[window]
+width = 1920
+height = 1080
+maximized = true
+
+[ui]
+auto_hide = true
+auto_hide_delay = 3000
+menu_position = "right"
+
+[camera]
+default_sensitivity = 1.00
+
+[gpu]
+memory_ceiling_fraction = 0.000
+
+[presets]
+directory = "presets"
+
+[steam]
+enabled = false
+app_id = 0
+restart_if_necessary = false
+library_path = ""

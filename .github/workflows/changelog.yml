@@ -1,0 +1,56 @@
+name: Changelog
+
+on:
+  pull_request:
+    paths:
+      - ".changes/**"
+      - "CHANGELOG.md"
+      - "scripts/*changelog*.py"
+      - "scripts/aggregate_release_notes.py"
+      - "scripts/extract_release_notes.py"
+      - "scripts/prerelease_notes.py"
+  push:
+    branches: [main]
+    paths:
+      - ".changes/**"
+      - "CHANGELOG.md"
+      - "scripts/*changelog*.py"
+      - "scripts/aggregate_release_notes.py"
+      - "scripts/extract_release_notes.py"
+      - "scripts/prerelease_notes.py"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate changelog
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Preview changelog fragments
+        shell: bash
+        run: python3 scripts/preview_changelog.py > /tmp/vizzaodin-next-changelog.md
+
+      - name: Validate latest CHANGELOG release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(python3 -c 'import pathlib,re; p=pathlib.Path("CHANGELOG.md"); text=p.read_text(encoding="utf-8") if p.exists() else ""; m=re.search(r"^## ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)", text, re.M); print(m.group(1) if m else "")')"
+          if [[ -z "$VERSION" ]]; then
+            echo "No release sections yet; skipping release-note extraction."
+            exit 0
+          fi
+          python3 scripts/extract_release_notes.py "$VERSION" > /tmp/vizzaodin-release-notes.md
+          if [[ "$VERSION" != *-* ]]; then
+            python3 scripts/aggregate_release_notes.py "$VERSION" > /tmp/vizzaodin-aggregate-release-notes.md
+          fi
+
+      - name: Dry-run changelog compile
+        shell: bash
+        run: python3 scripts/compile_changelog.py 0.0.0 --date 1970-01-01 --keep-fragments > /tmp/vizzaodin-compile-changelog.log
+

@@ -1,0 +1,104 @@
+name: Release build (macOS)
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build:
+    name: Release macOS
+    runs-on: macos-latest
+
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag }}
+
+      - name: Compute version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Install macOS build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install odin sdl3 molten-vk vulkan-loader harfbuzz freetype pkg-config imagemagick
+
+      - name: Install Slang compiler
+        shell: bash
+        run: make install-slangc
+
+      - name: Import Apple signing certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${APPLE_CERTIFICATE:-}" ]]; then
+            echo "::error::APPLE_CERTIFICATE secret is empty"
+            exit 1
+          fi
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          CERT_SIZE=$(wc -c < certificate.p12)
+          if [[ "$CERT_SIZE" -lt 100 ]]; then
+            echo "::error::Decoded certificate.p12 is only ${CERT_SIZE} bytes; APPLE_CERTIFICATE is likely corrupt"
+            exit 1
+          fi
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security list-keychains -d user -s build.keychain login.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -f pkcs12
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
+          rm certificate.p12
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [[ -z "$IDENTITY" ]]; then
+            echo "::error::No Developer ID Application identity found in imported certificate"
+            exit 1
+          fi
+          echo "MACOS_CODESIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Build signed and notarized app archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ODIN_FLAGS: -o:speed
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/package_macos.sh --version "$VERSION"
+
+      - name: Set artifact name
+        id: artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME="vizzaodin-${RELEASE_TAG}-macos"
+          FILENAME="${NAME}.zip"
+          cp dist/VizzaOdin-macos.zip "dist/${FILENAME}"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "filename=dist/${FILENAME}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ${{ steps.artifact.outputs.filename }}
+

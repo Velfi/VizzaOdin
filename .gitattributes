@@ -1,0 +1,27 @@
+# Git LFS: binary source/runtime assets.
+/icon.png filter=lfs diff=lfs merge=lfs -text
+/assets/*.af filter=lfs diff=lfs merge=lfs -text
+/assets/**/*.af filter=lfs diff=lfs merge=lfs -text
+/assets/*.afdesign filter=lfs diff=lfs merge=lfs -text
+/assets/**/*.afdesign filter=lfs diff=lfs merge=lfs -text
+/assets/*.afphoto filter=lfs diff=lfs merge=lfs -text
+/assets/**/*.afphoto filter=lfs diff=lfs merge=lfs -text
+/assets/*.afpub filter=lfs diff=lfs merge=lfs -text
+/assets/**/*.afpub filter=lfs diff=lfs merge=lfs -text
+/assets/*.psd filter=lfs diff=lfs merge=lfs -text
+/assets/**/*.psd filter=lfs diff=lfs merge=lfs -text
+/assets/*.png filter=lfs diff=lfs merge=lfs -text
+/assets/**/*.png filter=lfs diff=lfs merge=lfs -text
+/assets/*.jpg filter=lfs diff=lfs merge=lfs -text
+/assets/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+/assets/*.jpeg filter=lfs diff=lfs merge=lfs -text
+/assets/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
+/assets/*.webp filter=lfs diff=lfs merge=lfs -text
+/assets/**/*.webp filter=lfs diff=lfs merge=lfs -text
+/assets/*.icns filter=lfs diff=lfs merge=lfs -text
+/assets/**/*.icns filter=lfs diff=lfs merge=lfs -text
+/assets/fonts/*.ttf filter=lfs diff=lfs merge=lfs -text
+/assets/fonts/*.otf filter=lfs diff=lfs merge=lfs -text
+
+# Binary but small; keep in normal Git.
+/assets/LUTs/*.lut binary
