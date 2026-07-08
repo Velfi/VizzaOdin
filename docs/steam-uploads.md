@@ -108,6 +108,25 @@ scripts/steam-upload.sh --local --preview 0.1.0
   publish-build permissions for AppID `4945920`.
 - `ERROR! Depot N not found in app M`: depot ID mismatch. Verify Steamworks
   depots and override `STEAM_DEPOT_MACOS` if needed.
+- `ERROR! Failed to commit build for AppID 4945920 : Failure`: SteamPipe
+  built the depot manifest but did not create an app build. Steam can then show
+  the app as installed with `0 mounted depots` and fail to launch with missing
+  `Vizza.app`. Check that the target branch exists before using `--beta` or
+  `--branch`, that depot `4945922` is attached to the app's packages, and that
+  the build account has permission to set builds live. You can omit `--beta`
+  to upload a build without promoting it, then promote it manually in
+  Steamworks after verifying the build.
 - Depot says it is not referenced by any packages: add depot `4945922` to the
   store/release package and developer comp package, then save and publish the
   Steamworks change.
+- Steam installs the new BuildID but still reports missing `Vizza.app`, while
+  `content_log.txt` says `0 mounted depots` or `0 active: 0 target`: the build
+  is live, but the installing account's license/package does not include depot
+  `4945922`. Add depot `4945922` to the developer comp package used by your
+  account and to the release/store packages, save, and publish the Steamworks
+  package changes. Then uninstall/reinstall or verify files in Steam.
+- macOS crash report says `Namespace DYLD, Code 1, Library missing` and names
+  a `/opt/homebrew/.../*.dylib`: the app was built with a Homebrew dependency
+  still linked outside the bundle. Rebuild with the current
+  `scripts/package_macos.sh`; it copies non-system dylibs into
+  `Contents/Frameworks` and rewrites the install names before signing.

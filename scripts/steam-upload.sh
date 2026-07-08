@@ -222,6 +222,86 @@ else
 	stage_release
 fi
 
+verify_staged_app () {
+	local app="$CONTENT/macos/Vizza.app"
+	local launcher="$app/Contents/MacOS/Vizza"
+	local binary="$app/Contents/MacOS/vizzaodin"
+	local file_count
+
+	if [[ ! -d "$app" ]]; then
+		echo "error: staged Steam content is missing Vizza.app at $app" >&2
+		exit 1
+	fi
+	if [[ ! -x "$launcher" ]]; then
+		echo "error: staged Steam app is missing executable launcher: $launcher" >&2
+		exit 1
+	fi
+	if [[ ! -x "$binary" ]]; then
+		echo "error: staged Steam app is missing game binary: $binary" >&2
+		exit 1
+	fi
+
+	file_count="$(find "$app" -type f | wc -l | tr -d '[:space:]')"
+	if [[ "$file_count" -lt 10 ]]; then
+		echo "error: staged Steam app looks incomplete: $app has only $file_count files" >&2
+		exit 1
+	fi
+
+	if command -v otool >/dev/null 2>&1; then
+		local bad_dylib_ref=0
+		local macho
+		local ref
+		while IFS= read -r -d '' macho; do
+			while IFS= read -r ref; do
+				[[ -n "$ref" ]] || continue
+				case "$ref" in
+					/usr/lib/*|/System/Library/*)
+						;;
+					@rpath/*)
+						local rel="${ref#@rpath/}"
+						if [[ ! -f "$app/Contents/Frameworks/$rel" && ! -f "$app/Contents/Frameworks/$(basename "$rel")" ]]; then
+							echo "error: unresolved @rpath dylib reference in staged app: $macho -> $ref" >&2
+							bad_dylib_ref=1
+						fi
+						;;
+					@loader_path/*)
+						local rel="${ref#@loader_path/}"
+						if [[ ! -f "$(dirname "$macho")/$rel" ]]; then
+							echo "error: unresolved @loader_path dylib reference in staged app: $macho -> $ref" >&2
+							bad_dylib_ref=1
+						fi
+						;;
+					@executable_path/*)
+						local rel="${ref#@executable_path/}"
+						if [[ ! -f "$app/Contents/MacOS/$rel" ]]; then
+							echo "error: unresolved @executable_path dylib reference in staged app: $macho -> $ref" >&2
+							bad_dylib_ref=1
+						fi
+						;;
+					/*)
+						echo "error: staged app references external dylib: $macho -> $ref" >&2
+						echo "       Rebuild the macOS package so Homebrew dylibs are bundled in Contents/Frameworks." >&2
+						bad_dylib_ref=1
+						;;
+				esac
+			done < <(otool -L "$macho" 2>/dev/null | awk 'NR > 1 && $0 !~ /:$/ {print $1}')
+		done < <(find "$app/Contents/MacOS" "$app/Contents/Frameworks" -type f \( -perm -111 -o -name '*.dylib' \) -print0)
+		if ! otool -l "$binary" | awk '$1 == "path" && $2 == "@executable_path/../Frameworks" { found = 1 } END { exit(found ? 0 : 1) }'; then
+			echo "error: staged app binary is missing LC_RPATH @executable_path/../Frameworks: $binary" >&2
+			bad_dylib_ref=1
+		fi
+		if [[ "$bad_dylib_ref" -ne 0 ]]; then
+			exit 1
+		fi
+	else
+		echo "warning: otool not found; skipping staged app dylib validation" >&2
+	fi
+
+	echo "Verified staged Steam app: macos/Vizza.app ($file_count files)"
+}
+
+verify_staged_app
+
 # ─────────────────────────── Render VDFs ───────────────────────────
 render_target_vdfs () {
 	local target_label="$1"
@@ -300,9 +380,63 @@ else
 		"${STEAMCMD_ARGS[@]}"
 fi
 
+validate_steam_output () {
+	local target_output="$OUTPUT/main"
+	local depot_log="$target_output/depot_build_${STEAM_DEPOT_MACOS}.log"
+	local app_log="$target_output/app_build_${STEAM_APP_ID}.log"
+	local error_lines
+	local depot_files
+	local build_id
+	local depot_manifest
+
+	if [[ ! -d "$target_output" ]]; then
+		echo "error: SteamPipe did not write expected output directory: $target_output" >&2
+		exit 1
+	fi
+
+	if [[ -f "$depot_log" ]]; then
+		depot_files="$(sed -n 's/.*Found \([0-9][0-9]*\) files (.*) for depot.*/\1/p' "$depot_log" | tail -1)"
+		if [[ -n "$depot_files" && "$depot_files" -eq 0 ]]; then
+			echo "error: SteamPipe found zero files for depot $STEAM_DEPOT_MACOS." >&2
+			echo "       Check ContentRoot/FileMapping in $SCRIPTS/main/depot_build_macos.vdf." >&2
+			exit 1
+		fi
+	fi
+
+	if error_lines="$(grep -R -n 'ERROR!' "$target_output" 2>/dev/null)"; then
+		echo "error: SteamPipe reported errors:" >&2
+		printf '%s\n' "$error_lines" >&2
+		if [[ -f "$app_log" ]] && grep -q 'Failed to commit build' "$app_log"; then
+			echo >&2
+			echo "Steam built the depot manifest but failed to commit the app build." >&2
+			echo "That leaves Steam with an installable app but no mounted depots, so it reports Vizza.app as missing." >&2
+			echo "Check Steamworks: the target branch exists, depot $STEAM_DEPOT_MACOS is attached to the app packages, and the build account can set builds live." >&2
+		fi
+		exit 1
+	fi
+
+	if [[ -f "$app_log" ]]; then
+		build_id="$(sed -n 's/.*Successfully finished AppID .* build (BuildID \([0-9][0-9]*\)).*/\1/p' "$app_log" | tail -1)"
+		if [[ -n "$build_id" ]]; then
+			echo "Steam build created: $build_id"
+		fi
+	fi
+	if [[ -f "$target_output/depot_build_${STEAM_DEPOT_MACOS}.vdf" ]]; then
+		depot_manifest="$(awk '/"manifest"/ { gsub(/"/, "", $2); print $2 }' "$target_output/depot_build_${STEAM_DEPOT_MACOS}.vdf" | tail -1)"
+		if [[ -n "$depot_manifest" ]]; then
+			echo "Steam depot manifest created: $STEAM_DEPOT_MACOS / $depot_manifest"
+		fi
+	fi
+}
+
+validate_steam_output
+
 echo
 echo "Done. Logs in: $OUTPUT"
 if [[ $PREVIEW -eq 0 ]]; then
 	echo "View builds:"
 	echo "  main: https://partner.steamgames.com/apps/builds/${STEAM_APP_ID}"
+	echo
+	echo "If Steam installs this build with 0 mounted depots, fix Steamworks packages:"
+	echo "  add depot ${STEAM_DEPOT_MACOS} to the developer comp and release/store packages, then publish Steamworks changes."
 fi

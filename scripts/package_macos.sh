@@ -159,6 +159,215 @@ copy_homebrew_dylib() {
 	fi
 }
 
+normalize_file_path() {
+	local path="$1"
+	local dir
+	local base
+	dir="$(dirname "$path")"
+	base="$(basename "$path")"
+	[[ -d "$dir" ]] || return 1
+	(cd "$dir" >/dev/null 2>&1 && printf '%s/%s\n' "$(pwd -P)" "$base")
+}
+
+dylib_ref_is_system() {
+	case "$1" in
+		/usr/lib/*|/System/Library/*)
+			return 0
+			;;
+	esac
+	return 1
+}
+
+resolve_dylib_ref() {
+	local ref="$1"
+	local loader="$2"
+	local rel
+	local candidate
+
+	case "$ref" in
+		@rpath/*)
+			rel="${ref#@rpath/}"
+			candidate="$FRAMEWORKS_DIR/$rel"
+			if [[ -f "$candidate" ]]; then
+				normalize_file_path "$candidate"
+				return
+			fi
+			candidate="$FRAMEWORKS_DIR/$(basename "$rel")"
+			if [[ -f "$candidate" ]]; then
+				normalize_file_path "$candidate"
+				return
+			fi
+			;;
+		@loader_path/*)
+			rel="${ref#@loader_path/}"
+			candidate="$(dirname "$loader")/$rel"
+			if [[ -f "$candidate" ]]; then
+				normalize_file_path "$candidate"
+				return
+			fi
+			;;
+		@executable_path/*)
+			rel="${ref#@executable_path/}"
+			candidate="$MACOS_DIR/$rel"
+			if [[ -f "$candidate" ]]; then
+				normalize_file_path "$candidate"
+				return
+			fi
+			;;
+		/*)
+			if [[ -f "$ref" ]]; then
+				normalize_file_path "$ref"
+				return
+			fi
+			;;
+	esac
+	return 1
+}
+
+array_contains() {
+	local needle="$1"
+	shift
+	local item
+	for item in "$@"; do
+		if [[ "$item" == "$needle" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+macho_has_rpath() {
+	local binary="$1"
+	local rpath="$2"
+	otool -l "$binary" | awk -v rpath="$rpath" '$1 == "path" && $2 == rpath { found = 1 } END { exit(found ? 0 : 1) }'
+}
+
+ensure_macho_rpath() {
+	local binary="$1"
+	local rpath="$2"
+	if ! macho_has_rpath "$binary" "$rpath"; then
+		install_name_tool -add_rpath "$rpath" "$binary"
+	fi
+}
+
+bundle_dylib_dependencies() {
+	local -a queue=()
+	local -a scanned=()
+	local binary
+	local dep
+	local source
+	local name
+	local target
+	local target_ref
+
+	enqueue_scan() {
+		local path
+		path="$(normalize_file_path "$1")" || return 1
+		if [[ "${#queue[@]}" -gt 0 ]] && array_contains "$path" "${queue[@]}"; then
+			return
+		fi
+		if [[ "${#scanned[@]}" -gt 0 ]] && array_contains "$path" "${scanned[@]}"; then
+			return
+		fi
+		queue+=("$path")
+	}
+
+	printf 'Bundling macOS dylib dependencies...\n'
+	enqueue_scan "$MACOS_DIR/$EXECUTABLE_NAME"
+	while IFS= read -r -d '' binary; do
+		enqueue_scan "$binary"
+	done < <(find "$FRAMEWORKS_DIR" -type f -name '*.dylib' -print0)
+
+	while [[ "${#queue[@]}" -gt 0 ]]; do
+		binary="${queue[0]}"
+		queue=("${queue[@]:1}")
+		if [[ "${#scanned[@]}" -gt 0 ]] && array_contains "$binary" "${scanned[@]}"; then
+			continue
+		fi
+		scanned+=("$binary")
+
+		if [[ "$binary" == "$FRAMEWORKS_DIR/"* ]]; then
+			install_name_tool -id "@rpath/$(basename "$binary")" "$binary" 2>/dev/null || true
+			install_name_tool -add_rpath "@loader_path" "$binary" 2>/dev/null || true
+		fi
+
+		while IFS= read -r dep; do
+			[[ -n "$dep" ]] || continue
+			if dylib_ref_is_system "$dep"; then
+				continue
+			fi
+			if ! source="$(resolve_dylib_ref "$dep" "$binary")"; then
+				printf 'error: could not resolve dylib reference %s from %s\n' "$dep" "$binary" >&2
+				exit 1
+			fi
+			if [[ "$source" == "$binary" ]] || dylib_ref_is_system "$source"; then
+				continue
+			fi
+
+			name="$(basename "$source")"
+			target="$FRAMEWORKS_DIR/$name"
+			target_ref="@rpath/$name"
+			if [[ "$source" != "$target" ]]; then
+				copy_dylib "$source"
+			fi
+			if [[ ! -f "$target" ]]; then
+				printf 'error: expected bundled dylib was not copied: %s\n' "$target" >&2
+				exit 1
+			fi
+
+			install_name_tool -id "$target_ref" "$target" 2>/dev/null || true
+			if [[ "$dep" != "$target_ref" ]]; then
+				install_name_tool -change "$dep" "$target_ref" "$binary"
+			fi
+			enqueue_scan "$target"
+		done < <(otool -L "$binary" | awk 'NR > 1 && $0 !~ /:$/ {print $1}')
+	done
+
+	ensure_macho_rpath "$MACOS_DIR/$EXECUTABLE_NAME" "@executable_path/../Frameworks"
+}
+
+verify_bundled_dylib_refs() {
+	local -a machos=()
+	local binary
+	local dep
+	local bad=0
+
+	machos+=("$MACOS_DIR/$EXECUTABLE_NAME")
+	while IFS= read -r -d '' binary; do
+		machos+=("$binary")
+	done < <(find "$FRAMEWORKS_DIR" -type f -name '*.dylib' -print0)
+
+	for binary in "${machos[@]}"; do
+		while IFS= read -r dep; do
+			[[ -n "$dep" ]] || continue
+			if dylib_ref_is_system "$dep"; then
+				continue
+			fi
+			if ! resolve_dylib_ref "$dep" "$binary" >/dev/null; then
+				printf 'error: unresolved bundled dylib reference %s from %s\n' "$dep" "$binary" >&2
+				bad=1
+				continue
+			fi
+			case "$dep" in
+				@rpath/*|@loader_path/*|@executable_path/*)
+					;;
+				/*)
+					printf 'error: app still references external dylib %s from %s\n' "$dep" "$binary" >&2
+					bad=1
+					;;
+			esac
+		done < <(otool -L "$binary" | awk 'NR > 1 && $0 !~ /:$/ {print $1}')
+	done
+	if ! macho_has_rpath "$MACOS_DIR/$EXECUTABLE_NAME" "@executable_path/../Frameworks"; then
+		printf 'error: %s is missing LC_RPATH @executable_path/../Frameworks\n' "$MACOS_DIR/$EXECUTABLE_NAME" >&2
+		bad=1
+	fi
+
+	if [[ "$bad" -ne 0 ]]; then
+		exit 1
+	fi
+}
+
 sign_path() {
 	local path="$1"
 	local args=(--force --timestamp --options runtime --sign "$SIGN_IDENTITY")
@@ -336,6 +545,8 @@ if ! command -v magick >/dev/null 2>&1; then
 	require_tool iconutil
 fi
 require_tool ditto
+require_tool install_name_tool
+require_tool otool
 if [[ "$SKIP_SIGN" != "1" ]]; then
 	require_tool codesign
 	require_tool security
@@ -382,20 +593,8 @@ if prefix="$(brew --prefix molten-vk 2>/dev/null)" && [[ -n "$prefix" && -f "$pr
 	cp "$prefix/share/vulkan/icd.d/MoltenVK_icd.json" "$RESOURCES_DIR/vulkan/icd.d/MoltenVK_icd.json"
 fi
 
-if [[ -f "$FRAMEWORKS_DIR/libSDL3.0.dylib" ]]; then
-	install_name_tool -change "$(otool -L "$MACOS_DIR/$EXECUTABLE_NAME" | awk '/libSDL3\.0\.dylib/ {print $1; exit}')" "@rpath/libSDL3.0.dylib" "$MACOS_DIR/$EXECUTABLE_NAME" 2>/dev/null || true
-	install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS_DIR/$EXECUTABLE_NAME" 2>/dev/null || true
-	install_name_tool -id "@rpath/libSDL3.0.dylib" "$FRAMEWORKS_DIR/libSDL3.0.dylib" 2>/dev/null || true
-fi
-if [[ -f "$FRAMEWORKS_DIR/libvulkan.1.dylib" ]]; then
-	install_name_tool -id "@rpath/libvulkan.1.dylib" "$FRAMEWORKS_DIR/libvulkan.1.dylib" 2>/dev/null || true
-fi
-if [[ -f "$FRAMEWORKS_DIR/libMoltenVK.dylib" ]]; then
-	install_name_tool -id "@rpath/libMoltenVK.dylib" "$FRAMEWORKS_DIR/libMoltenVK.dylib" 2>/dev/null || true
-fi
-if [[ -f "$FRAMEWORKS_DIR/libsteam_api.dylib" ]]; then
-	install_name_tool -id "@rpath/libsteam_api.dylib" "$FRAMEWORKS_DIR/libsteam_api.dylib" 2>/dev/null || true
-fi
+bundle_dylib_dependencies
+verify_bundled_dylib_refs
 
 if [[ "$SKIP_SIGN" != "1" ]]; then
 	resolve_sign_identity
