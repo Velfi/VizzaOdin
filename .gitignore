@@ -7,10 +7,12 @@ __pycache__/
 *.py[cod]
 
 build/
+build-staging/
 dist/
 profiles/
 *.trace/
 .tools/
+steam_sdk/
 third_party/tomlc17/
 
 *.bin

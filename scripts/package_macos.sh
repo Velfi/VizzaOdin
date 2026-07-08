@@ -5,7 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 APP_NAME="${APP_NAME:-Vizza}"
 EXECUTABLE_NAME="${EXECUTABLE_NAME:-vizzaodin}"
 BUNDLE_ID="${BUNDLE_ID:-com.zelda-built-this.Vizza.store}"
-VERSION="${VERSION:-0.1.0}"
+APP_VERSION_FILE="$ROOT_DIR/packages/engine/version.odin"
+DEFAULT_VERSION="0.1.0"
+if [[ -f "$APP_VERSION_FILE" ]]; then
+	DEFAULT_VERSION="$(awk -F '"' '/^APP_VERSION ::/ {print $2; exit}' "$APP_VERSION_FILE")"
+fi
+VERSION="${VERSION:-$DEFAULT_VERSION}"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build}"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
 APP_DIR="$DIST_DIR/$APP_NAME.app"

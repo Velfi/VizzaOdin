@@ -309,8 +309,9 @@ mcp_bridge_handle_jsonrpc :: proc(bridge: ^Mcp_Bridge, line: string) -> string {
 	id := mcp_bridge_extract_id(line)
 	if strings.contains(line, "\"method\":\"initialize\"") || strings.contains(line, "\"method\": \"initialize\"") {
 		return fmt.tprintf(
-			"{{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{{\"tools\":{{}}}},\"serverInfo\":{{\"name\":\"vizzaodin\",\"version\":\"0.1.0\"}}}}}}",
+			"{{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{{\"tools\":{{}}}},\"serverInfo\":{{\"name\":\"vizzaodin\",\"version\":\"%s\"}}}}}}",
 			id,
+			engine.APP_VERSION,
 		)
 	}
 	if strings.contains(line, "\"method\":\"notifications/initialized\"") || strings.contains(line, "\"method\": \"notifications/initialized\"") {

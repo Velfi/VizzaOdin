@@ -139,14 +139,32 @@ make theme-preview
 make theme-preview-mcp
 make run-steam
 make build-steam
+make steam-upload-preview VERSION=0.1.0
+scripts/release.sh 0.1.0
 ```
 
 Steam commands default to app ID `4945920`; override with `STEAM_APP_ID=...`
-for test apps or alternate branches.
+for test apps or alternate branches. SteamPipe uploads use app ID `4945920`
+and macOS depot `4945922` from `packaging/steam/targets.env`.
 
-See [docs/mcp.md](docs/mcp.md), [docs/gpu-profiling.md](docs/gpu-profiling.md),
-and [docs/ui-theme-preview.md](docs/ui-theme-preview.md) for the MCP,
-profiling, and UI preview workflows.
+To smoke-test a local SteamPipe upload package, first build the app bundle with
+Steam support, then run the preview uploader:
+
+```bash
+SKIP_SIGN=1 SKIP_NOTARIZE=1 scripts/package_macos.sh --steam
+scripts/steam-upload.sh --preview --local 0.1.0
+```
+
+For a real upload from a GitHub release asset:
+
+```bash
+STEAM_BUILD_USER=vizza_ci scripts/steam-upload.sh --beta 0.1.0
+```
+
+See [docs/steam-uploads.md](docs/steam-uploads.md), [docs/mcp.md](docs/mcp.md),
+[docs/gpu-profiling.md](docs/gpu-profiling.md), and
+[docs/ui-theme-preview.md](docs/ui-theme-preview.md) for the Steam upload,
+MCP, profiling, and UI preview workflows.
 
 ### Project layout
 

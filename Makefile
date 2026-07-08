@@ -62,7 +62,7 @@ endif
 STEAM_REDIST_SRC := $(STEAM_SDK_LOCATION)/redistributable_bin/$(STEAM_REDIST_SUBDIR)/$(STEAM_REDIST_FILE)
 ODIN_FLAGS ?= -o:none
 
-.PHONY: run run-macos-vulkan build build-steam run-steam copy-steam-redist check test fmt clean shaders deps install-slangc mcp mcp-macos-vulkan theme-preview theme-preview-mcp profile-ui-trace package-macos ui-font-atlas tomlc17 textshape
+.PHONY: run run-macos-vulkan build build-steam run-steam copy-steam-redist check test fmt clean shaders deps install-slangc mcp mcp-macos-vulkan theme-preview theme-preview-mcp profile-ui-trace package-macos steam-upload-preview ui-font-atlas tomlc17 textshape
 
 run: shaders build
 	$(MACOS_VULKAN_ENV) $(BUILD_DIR)/$(APP)
@@ -108,6 +108,10 @@ copy-steam-redist:
 
 package-macos:
 	./scripts/package_macos.sh
+
+steam-upload-preview:
+	@test -n "$(VERSION)" || (printf 'Set VERSION, e.g. make steam-upload-preview VERSION=0.1.0\n' >&2; exit 1)
+	./scripts/steam-upload.sh --preview --local "$(VERSION)"
 
 check: $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
 	odin check $(SRC)
