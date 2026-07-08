@@ -30,6 +30,8 @@ MAIN_MENU_TEXT_BUTTON_SCALE_MULTIPLIER :: f32(2.5)
 MAIN_MENU_TEXT_BUTTON_FOCUS_BORDER_WIDTH :: f32(5)
 MAIN_MENU_SIM_BUTTON_GRADIENT_MIDPOINT :: f32(0.66)
 MAIN_MENU_DISPLAY_FONT_BASELINE_RATIO :: f32(0.78)
+MAIN_MENU_TITLE_SLOT :: 0
+MAIN_MENU_SIMULATION_SLOT_OFFSET :: 1
 
 Main_Menu_Preview_Slot :: struct {
 	mode: App_Mode,
@@ -66,6 +68,7 @@ App_Ui_State :: struct {
 	video_recording_state: Video_Recording_Ui_State,
 	video_recording_status: [MAX_ERROR_TEXT]u8,
 	main_menu_selected: int,
+	main_menu_focus_slot: int,
 	main_menu_scroll: f32,
 	main_menu_live_preview_visible: bool,
 	main_menu_live_preview_mode: App_Mode,
@@ -211,6 +214,7 @@ app_ui_init :: proc(ui: ^App_Ui_State, settings: App_Settings, theme_preview := 
 	ui.theme_preview = theme_preview
 	ui.simulation_shell = {show_ui = true, controls_visible = true}
 	ui.main_menu_selected = 1
+	ui.main_menu_focus_slot = app_ui_main_menu_slot_for_simulation_index(ui.main_menu_selected)
 	ui.menu_position_index = option_index(settings.menu_position, MENU_POSITION_OPTIONS[:], 1)
 	ui.texture_filtering_index = option_index(settings.texture_filtering, TEXTURE_FILTERING_OPTIONS[:], 0)
 	ui.preview_hsv = {h = 0.56, s = 0.78, v = 0.92, a = 1}
@@ -324,15 +328,13 @@ app_ui_draw_main_menu :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx:
 	if app_ui_main_menu_pointer_interaction(gui) {
 		ui.main_menu_focus_navigation_active = false
 	}
-	if app_ui_main_menu_focus_navigation_input(gui) {
-		ui.main_menu_focus_navigation_active = true
-	}
+	app_ui_main_menu_apply_navigation(ui, gui)
 
 	app_ui_draw_main_menu_backdrop(gui, {0, 0, width, height}, theme)
 
-	ui.main_menu_selected = max(min(ui.main_menu_selected, len(APP_SIMULATION_NAMES) - 1), 0)
+	app_ui_main_menu_sync_slot_to_selection(ui, gui)
 	if gui.input.accept && gui.focused == uifw.GUI_ID_NONE {
-		app_ui_navigate(ui, app_ui_mode_for_simulation_index(ui.main_menu_selected))
+		app_ui_main_menu_activate_slot(ui, ui.main_menu_focus_slot, worker)
 	}
 
 	margin_x := max(width * 0.055, gui.style.spacing_4)
@@ -348,11 +350,23 @@ app_ui_draw_main_menu :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx:
 	title_text_w := uifw.gui_font_text_width(.Display, title_bytes, title_scale, title_fallback_advance)
 	title_click := uifw.Rect{title.x, title.y, min(title_text_w, title.w), title.h}
 	title_id := uifw.gui_make_id(gui, "main_menu_logo")
+	if ui.main_menu_focus_navigation_active {
+		if ui.main_menu_focus_slot == MAIN_MENU_TITLE_SLOT {
+			gui.focused = title_id
+		} else if gui.focused == title_id {
+			gui.focused = uifw.GUI_ID_NONE
+		}
+	}
 	title_control := uifw.gui_control(gui, title_id, title_click, true)
 	if title_control.activated || (title_control.hovered && gui.active == title_id && gui.input.mouse_released) {
+		ui.main_menu_focus_slot = MAIN_MENU_TITLE_SLOT
 		ui.main_menu_palette_randomize_requested = true
 	}
 	uifw.gui_text_aligned_font(gui, title, title_label, theme.text, .Left, .Display, title_scale)
+	if title_control.focused {
+		ui.main_menu_focus_slot = MAIN_MENU_TITLE_SLOT
+		uifw.gui_round_stroke(gui, uifw.gui_inset(title_click, -theme.border_width * 2), theme.card_radius, uifw.gui_apply_opacity(theme.text, 0.88), MAIN_MENU_TEXT_BUTTON_FOCUS_BORDER_WIDTH)
+	}
 	byline_scale := gui.style.heading_text_scale * 1.45
 	byline_text_h := uifw.GUI_FONT_LOGICAL_HEIGHT * byline_scale
 	title_baseline_y := title.y + title_text_h * MAIN_MENU_DISPLAY_FONT_BASELINE_RATIO
@@ -393,26 +407,70 @@ app_ui_draw_main_menu :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx:
 
 	if width >= 920 {
 		actions := uifw.Rect{actions_x, actions_y, button_w, actions_h}
+		options_id := uifw.gui_make_id(gui, "options")
+		if ui.main_menu_focus_navigation_active {
+			if ui.main_menu_focus_slot == app_ui_main_menu_options_slot() {
+				gui.focused = options_id
+			} else if gui.focused == options_id {
+				gui.focused = uifw.GUI_ID_NONE
+			}
+		}
 		if app_ui_draw_main_menu_text_button(gui, {actions.x, actions.y, button_w, button_h}, "options", "OPTIONS", theme) {
-			app_ui_navigate(ui, .Options)
+			ui.main_menu_focus_slot = app_ui_main_menu_options_slot()
+			app_ui_main_menu_activate_slot(ui, ui.main_menu_focus_slot, worker)
+		}
+		if gui.focused == options_id {
+			ui.main_menu_focus_slot = app_ui_main_menu_options_slot()
+		}
+		quit_id := uifw.gui_make_id(gui, "quit")
+		if ui.main_menu_focus_navigation_active {
+			if ui.main_menu_focus_slot == app_ui_main_menu_quit_slot() {
+				gui.focused = quit_id
+			} else if gui.focused == quit_id {
+				gui.focused = uifw.GUI_ID_NONE
+			}
 		}
 		if app_ui_draw_main_menu_text_button(gui, {actions.x, actions.y + button_h + action_gap, button_w, button_h}, "quit", "QUIT", theme) {
-			msg: Render_To_Ui_Message
-			msg.kind = .Request_Close
-			_ = engine.queue_try_push(worker.render_to_ui, msg)
+			ui.main_menu_focus_slot = app_ui_main_menu_quit_slot()
+			app_ui_main_menu_activate_slot(ui, ui.main_menu_focus_slot, worker)
+		}
+		if gui.focused == quit_id {
+			ui.main_menu_focus_slot = app_ui_main_menu_quit_slot()
 		}
 	} else {
 		action_gap := max(theme.item_gap * 1.4, theme.footer_height * 0.35)
 		actions := uifw.Rect{list.x, max(list.y + list.h - theme.footer_height * 2 - action_gap, list.y), list.w, theme.footer_height * 2 + action_gap}
 		button_w := min(actions.w, max(gui.style.body_char_width * 16, 220))
 		button_x := actions.x + max((actions.w - button_w) * 0.5, 0)
+		options_id := uifw.gui_make_id(gui, "options")
+		if ui.main_menu_focus_navigation_active {
+			if ui.main_menu_focus_slot == app_ui_main_menu_options_slot() {
+				gui.focused = options_id
+			} else if gui.focused == options_id {
+				gui.focused = uifw.GUI_ID_NONE
+			}
+		}
 		if app_ui_draw_main_menu_text_button(gui, {button_x, actions.y, button_w, theme.footer_height}, "options", "OPTIONS", theme) {
-			app_ui_navigate(ui, .Options)
+			ui.main_menu_focus_slot = app_ui_main_menu_options_slot()
+			app_ui_main_menu_activate_slot(ui, ui.main_menu_focus_slot, worker)
+		}
+		if gui.focused == options_id {
+			ui.main_menu_focus_slot = app_ui_main_menu_options_slot()
+		}
+		quit_id := uifw.gui_make_id(gui, "quit")
+		if ui.main_menu_focus_navigation_active {
+			if ui.main_menu_focus_slot == app_ui_main_menu_quit_slot() {
+				gui.focused = quit_id
+			} else if gui.focused == quit_id {
+				gui.focused = uifw.GUI_ID_NONE
+			}
 		}
 		if app_ui_draw_main_menu_text_button(gui, {button_x, actions.y + theme.footer_height + action_gap, button_w, theme.footer_height}, "quit", "QUIT", theme) {
-			msg: Render_To_Ui_Message
-			msg.kind = .Request_Close
-			_ = engine.queue_try_push(worker.render_to_ui, msg)
+			ui.main_menu_focus_slot = app_ui_main_menu_quit_slot()
+			app_ui_main_menu_activate_slot(ui, ui.main_menu_focus_slot, worker)
+		}
+		if gui.focused == quit_id {
+			ui.main_menu_focus_slot = app_ui_main_menu_quit_slot()
 		}
 	}
 }
@@ -426,11 +484,130 @@ app_ui_main_menu_pointer_interaction :: proc(gui: ^uifw.Gui_Context) -> bool {
 	        gui.input.wheel_delta != 0)
 }
 
-app_ui_main_menu_focus_navigation_input :: proc(gui: ^uifw.Gui_Context) -> bool {
-	return gui.input.nav_pressed_x != 0 ||
-	       gui.input.nav_pressed_y != 0 ||
-	       gui.input.focus_next ||
-	       gui.input.focus_prev
+app_ui_main_menu_options_slot :: proc() -> int {
+	return MAIN_MENU_SIMULATION_SLOT_OFFSET + len(APP_SIMULATION_NAMES)
+}
+
+app_ui_main_menu_quit_slot :: proc() -> int {
+	return app_ui_main_menu_options_slot() + 1
+}
+
+app_ui_main_menu_slot_count :: proc() -> int {
+	return app_ui_main_menu_quit_slot() + 1
+}
+
+app_ui_main_menu_clamp_slot :: proc(slot: int) -> int {
+	return max(min(slot, app_ui_main_menu_slot_count() - 1), MAIN_MENU_TITLE_SLOT)
+}
+
+app_ui_main_menu_slot_for_simulation_index :: proc(index: int) -> int {
+	return MAIN_MENU_SIMULATION_SLOT_OFFSET + max(min(index, len(APP_SIMULATION_NAMES) - 1), 0)
+}
+
+app_ui_main_menu_simulation_index_for_slot :: proc(slot: int) -> (index: int, ok: bool) {
+	index = slot - MAIN_MENU_SIMULATION_SLOT_OFFSET
+	ok = index >= 0 && index < len(APP_SIMULATION_NAMES)
+	if !ok {
+		index = 0
+	}
+	return
+}
+
+app_ui_main_menu_sync_slot_to_selection :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
+	ui.main_menu_selected = max(min(ui.main_menu_selected, len(APP_SIMULATION_NAMES) - 1), 0)
+	ui.main_menu_focus_slot = app_ui_main_menu_clamp_slot(ui.main_menu_focus_slot)
+	if gui.focused == uifw.GUI_ID_NONE && !ui.main_menu_focus_navigation_active {
+		ui.main_menu_focus_slot = app_ui_main_menu_slot_for_simulation_index(ui.main_menu_selected)
+	}
+}
+
+app_ui_main_menu_apply_navigation :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
+	app_ui_main_menu_sync_slot_to_selection(ui, gui)
+
+	direction := 0
+	if gui.input.focus_next {
+		direction = 1
+	} else if gui.input.focus_prev {
+		direction = -1
+	} else if gui.input.nav_pressed_y > 0 {
+		direction = 1
+	} else if gui.input.nav_pressed_y < 0 {
+		direction = -1
+	}
+
+	if direction != 0 {
+		if (gui.input.focus_next || gui.input.focus_prev) && gui.focused == uifw.GUI_ID_NONE && !ui.main_menu_focus_navigation_active {
+			ui.main_menu_focus_slot = direction > 0 ? MAIN_MENU_TITLE_SLOT : app_ui_main_menu_quit_slot()
+		} else {
+			if !ui.main_menu_focus_navigation_active {
+				ui.main_menu_focus_slot = app_ui_main_menu_slot_for_simulation_index(ui.main_menu_selected)
+			}
+			ui.main_menu_focus_slot = app_ui_main_menu_clamp_slot(ui.main_menu_focus_slot + direction)
+		}
+		ui.main_menu_focus_navigation_active = true
+		gui.focus_moved = true
+		if index, ok := app_ui_main_menu_simulation_index_for_slot(ui.main_menu_focus_slot); ok {
+			ui.main_menu_selected = index
+		}
+		return
+	}
+
+	if gui.input.nav_pressed_x > 0 {
+		if _, ok := app_ui_main_menu_simulation_index_for_slot(ui.main_menu_focus_slot); ok {
+			ui.main_menu_focus_slot = app_ui_main_menu_options_slot()
+			ui.main_menu_focus_navigation_active = true
+			gui.focus_moved = true
+		}
+	} else if gui.input.nav_pressed_x < 0 {
+		if ui.main_menu_focus_slot == app_ui_main_menu_options_slot() || ui.main_menu_focus_slot == app_ui_main_menu_quit_slot() {
+			ui.main_menu_focus_slot = app_ui_main_menu_slot_for_simulation_index(ui.main_menu_selected)
+			ui.main_menu_focus_navigation_active = true
+			gui.focus_moved = true
+		}
+	}
+}
+
+app_ui_main_menu_request_close :: proc(worker: ^Render_Worker_State) {
+	if worker == nil || worker.render_to_ui == nil {
+		return
+	}
+	msg: Render_To_Ui_Message
+	msg.kind = .Request_Close
+	_ = engine.queue_try_push(worker.render_to_ui, msg)
+}
+
+app_ui_main_menu_activate_slot :: proc(ui: ^App_Ui_State, slot: int, worker: ^Render_Worker_State) {
+	clamped_slot := app_ui_main_menu_clamp_slot(slot)
+	if index, ok := app_ui_main_menu_simulation_index_for_slot(clamped_slot); ok {
+		ui.main_menu_selected = index
+		app_ui_navigate(ui, app_ui_mode_for_simulation_index(index))
+		return
+	}
+	if clamped_slot == MAIN_MENU_TITLE_SLOT {
+		ui.main_menu_palette_randomize_requested = true
+	} else if clamped_slot == app_ui_main_menu_options_slot() {
+		app_ui_navigate(ui, .Options)
+	} else if clamped_slot == app_ui_main_menu_quit_slot() {
+		app_ui_main_menu_request_close(worker)
+	}
+}
+
+app_ui_main_menu_scroll_simulation_into_view :: proc(ui: ^App_Ui_State, viewport: uifw.Rect, content_h, row_gap: f32, theme: Menu_Theme) {
+	index, ok := app_ui_main_menu_simulation_index_for_slot(ui.main_menu_focus_slot)
+	if !ok {
+		return
+	}
+	max_scroll := max(content_h - viewport.h, 0)
+	row_step := theme.row_height + row_gap
+	row_top := f32(index) * row_step
+	row_bottom := row_top + theme.row_height
+	padding := min(max(row_gap * 0.45, 8), max(viewport.h * 0.18, 0))
+	if row_top < ui.main_menu_scroll + padding {
+		ui.main_menu_scroll = row_top - padding
+	} else if row_bottom > ui.main_menu_scroll + viewport.h - padding {
+		ui.main_menu_scroll = row_bottom - viewport.h + padding
+	}
+	ui.main_menu_scroll = min(max(ui.main_menu_scroll, 0), max_scroll)
 }
 
 app_ui_main_menu_text_button_size :: proc(gui: ^uifw.Gui_Context, label: string, theme: Menu_Theme) -> uifw.Vec2 {
@@ -641,12 +818,25 @@ app_ui_draw_main_menu_content :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context,
 }
 
 app_ui_draw_main_menu_list :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bounds: uifw.Rect, theme: Menu_Theme) {
-	content_h := f32(len(APP_SIMULATION_NAMES)) * theme.row_height + f32(max(len(APP_SIMULATION_NAMES) - 1, 0)) * theme.item_gap
+	row_gap := gui.style.spacing
+	content_h := f32(len(APP_SIMULATION_NAMES)) * theme.row_height + f32(max(len(APP_SIMULATION_NAMES) - 1, 0)) * row_gap
 	viewport := bounds
+	if ui.main_menu_focus_navigation_active {
+		app_ui_main_menu_scroll_simulation_into_view(ui, viewport, content_h, row_gap, theme)
+	}
 	uifw.gui_scroll_begin(gui, viewport, content_h, &ui.main_menu_scroll)
 	uifw.gui_push_id(gui, "main_menu_simulations")
-	if gui.focused == uifw.GUI_ID_NONE && gui.input.nav_pressed_y != 0 {
-		gui.focused = uifw.gui_make_id(gui, fmt.tprintf("simulation_%d", ui.main_menu_selected))
+	if ui.main_menu_focus_navigation_active {
+		if index, ok := app_ui_main_menu_simulation_index_for_slot(ui.main_menu_focus_slot); ok {
+			gui.focused = uifw.gui_make_id(gui, fmt.tprintf("simulation_%d", index))
+		} else {
+			for i in 0 ..< len(APP_SIMULATION_NAMES) {
+				if gui.focused == uifw.gui_make_id(gui, fmt.tprintf("simulation_%d", i)) {
+					gui.focused = uifw.GUI_ID_NONE
+					break
+				}
+			}
+		}
 	}
 	rows: [len(APP_SIMULATION_NAMES)]uifw.Rect
 	hovered_index := -1
@@ -658,6 +848,7 @@ app_ui_draw_main_menu_list :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bo
 	}
 	if hovered_index >= 0 && !ui.main_menu_focus_navigation_active {
 		ui.main_menu_selected = hovered_index
+		ui.main_menu_focus_slot = app_ui_main_menu_slot_for_simulation_index(hovered_index)
 		gui.focused = uifw.gui_make_id(gui, fmt.tprintf("simulation_%d", hovered_index))
 	}
 	for i in 0 ..< len(APP_SIMULATION_NAMES) {
@@ -665,18 +856,20 @@ app_ui_draw_main_menu_list :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bo
 		selected := i == ui.main_menu_selected
 		if app_ui_draw_simulation_row(ui, gui, row, viewport, i, selected, theme) {
 			ui.main_menu_selected = i
+			ui.main_menu_focus_slot = app_ui_main_menu_slot_for_simulation_index(i)
 			app_ui_navigate(ui, app_ui_mode_for_simulation_index(i))
 		}
 		id := uifw.gui_make_id(gui, fmt.tprintf("simulation_%d", i))
 		if gui.focused == id {
 			ui.main_menu_selected = i
+			ui.main_menu_focus_slot = app_ui_main_menu_slot_for_simulation_index(i)
 		}
 	}
-	uifw.gui_apply_spatial_navigation(gui)
 	for i in 0 ..< len(APP_SIMULATION_NAMES) {
 		id := uifw.gui_make_id(gui, fmt.tprintf("simulation_%d", i))
 		if gui.focused == id {
 			ui.main_menu_selected = i
+			ui.main_menu_focus_slot = app_ui_main_menu_slot_for_simulation_index(i)
 		}
 	}
 	uifw.gui_pop_id(gui)

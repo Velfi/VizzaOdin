@@ -91,9 +91,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          NAME="vizzaodin-${RELEASE_TAG}-macos"
+          NAME="vizza-${RELEASE_TAG}-macos"
           FILENAME="${NAME}.zip"
-          cp dist/VizzaOdin-macos.zip "dist/${FILENAME}"
+          cp dist/Vizza-macos.zip "dist/${FILENAME}"
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
           echo "filename=dist/${FILENAME}" >> "$GITHUB_OUTPUT"
 
@@ -101,4 +101,3 @@ jobs:
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: ${{ steps.artifact.outputs.filename }}
-

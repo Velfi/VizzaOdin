@@ -2148,6 +2148,127 @@ test_app_ui_main_menu_arrows_move_once_per_press :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_app_ui_main_menu_keyboard_scrolls_all_sims_into_view :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default())
+	ui.main_menu_selected = 0
+	ui.main_menu_focus_slot = game.app_ui_main_menu_slot_for_simulation_index(0)
+
+	vk_ctx: engine.Vk_Context
+	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
+	worker: game.Render_Worker_State
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height), 1)
+
+	for _ in 0 ..< 9 {
+		uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, key_down = true})
+		game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+		uifw.gui_end_frame(&ctx)
+
+		uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}})
+		game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+		uifw.gui_end_frame(&ctx)
+	}
+
+	testing.expect_value(t, ui.main_menu_selected, 9)
+	testing.expect(t, ui.main_menu_scroll > 0)
+
+	width := f32(vk_ctx.swapchain_extent.width)
+	height := f32(vk_ctx.swapchain_extent.height)
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), width, height, 1)
+	theme := game.app_ui_menu_theme(&ctx, width, height)
+	margin_x := max(width * 0.055, ctx.style.spacing_4)
+	title_y := max(height * 0.070, ctx.style.spacing_4)
+	title_scale := max((height * 0.31) / f32(16), ctx.style.display_text_scale * 1.2)
+	title_text_h := uifw.GUI_FONT_LOGICAL_HEIGHT * title_scale
+	title_h := min(max(max(height * 0.20, ctx.style.display_line_height), title_text_h), height - title_y)
+	side_w := min(max(width * 0.23, f32(330)), f32(560))
+	right_margin := max(width * 0.050, ctx.style.spacing_4)
+	options_size := game.app_ui_main_menu_text_button_size(&ctx, "OPTIONS", theme)
+	quit_size := game.app_ui_main_menu_text_button_size(&ctx, "QUIT", theme)
+	button_w := max(side_w, max(options_size.x, quit_size.x))
+	actions_x := max(width - right_margin - button_w, margin_x)
+	list_w := min(max(width * 0.60, f32(680)), max(actions_x - theme.detail_gap - margin_x, 1))
+	list_y := max(title_y + title_h + theme.inner_gap, height * 0.39)
+	list_bottom := height - max(height * 0.050, ctx.style.spacing_4)
+	list_h := max(list_bottom - list_y, theme.row_height * 2.25)
+	viewport := uifw.Rect{margin_x, list_y, list_w, list_h}
+	selected_top := f32(ui.main_menu_selected) * (theme.row_height + ctx.style.spacing)
+	selected_bottom := selected_top + theme.row_height
+
+	testing.expect(t, selected_bottom <= ui.main_menu_scroll + viewport.h + theme.item_gap)
+	testing.expect(t, selected_top >= ui.main_menu_scroll - theme.item_gap)
+}
+
+@(test)
+test_app_ui_main_menu_keyboard_reaches_title_options_and_quit :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default())
+	ui.main_menu_selected = 0
+	ui.main_menu_focus_slot = game.app_ui_main_menu_slot_for_simulation_index(0)
+
+	render_to_ui := new(game.Render_To_Ui_Queue)
+	defer free(render_to_ui)
+	worker: game.Render_Worker_State
+	worker.render_to_ui = render_to_ui
+	vk_ctx: engine.Vk_Context
+	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, key_up = true})
+	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, ui.main_menu_focus_slot, game.MAIN_MENU_TITLE_SLOT)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}})
+	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, key_enter = true})
+	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+	testing.expect(t, ui.main_menu_palette_randomize_requested)
+
+	ui.main_menu_palette_randomize_requested = false
+	ui.main_menu_selected = 9
+	ui.main_menu_focus_slot = game.app_ui_main_menu_slot_for_simulation_index(9)
+	ui.main_menu_focus_navigation_active = true
+	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, nav_pressed_y = 1, active_device = .Controller})
+	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, ui.main_menu_focus_slot, game.app_ui_main_menu_options_slot())
+
+	ctx.focused = uifw.gui_make_id(&ctx, "options")
+	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, accept = true, active_device = .Controller})
+	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, ui.mode, game.App_Mode.Options)
+
+	game.app_ui_navigate(&ui, .Main_Menu)
+	ui.main_menu_focus_slot = game.app_ui_main_menu_options_slot()
+	ui.main_menu_focus_navigation_active = true
+	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, nav_pressed_y = 1, active_device = .Controller})
+	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, ui.main_menu_focus_slot, game.app_ui_main_menu_quit_slot())
+
+	ctx.focused = uifw.gui_make_id(&ctx, "quit")
+	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, accept = true, active_device = .Controller})
+	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	msg: game.Render_To_Ui_Message
+	testing.expect(t, engine.queue_try_pop(render_to_ui, &msg))
+	testing.expect_value(t, msg.kind, game.Render_To_Ui_Message_Kind.Request_Close)
+}
+
+@(test)
 test_app_ui_main_menu_keyboard_selection_ignores_stationary_hover :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)

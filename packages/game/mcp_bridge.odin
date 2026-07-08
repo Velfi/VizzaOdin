@@ -327,7 +327,7 @@ mcp_bridge_handle_jsonrpc :: proc(bridge: ^Mcp_Bridge, line: string) -> string {
 }
 
 MCP_TOOLS_JSON :: `[
-{"name":"app_status","description":"Read status from the running VizzaOdin app.","inputSchema":{"type":"object","properties":{}}},
+{"name":"app_status","description":"Read status from the running Vizza app.","inputSchema":{"type":"object","properties":{}}},
 {"name":"profile_start","description":"Start a nonblocking UI/render profile for an app mode over a fixed number of frames.","inputSchema":{"type":"object","required":["mode"],"properties":{"mode":{"type":"string"},"frames":{"type":"number","description":"Frames to collect. Defaults to 240."},"ui_spike_ms":{"type":"number"},"render_spike_ms":{"type":"number"},"gpu_ui_spike_ms":{"type":"number"},"screenshot_spike_ms":{"type":"number"},"cap_ratio":{"type":"number"},"text_calls_per_frame":{"type":"number"},"min_width_cache_hit_rate":{"type":"number"}}}},
 {"name":"profile_status","description":"Read the current UI/render profile collection state.","inputSchema":{"type":"object","properties":{}}},
 {"name":"profile_report","description":"Return the latest UI/render profile report with sanitizer findings.","inputSchema":{"type":"object","properties":{}}},

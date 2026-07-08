@@ -5,7 +5,7 @@ Instruments captures. Its purpose is to let an LLM fully read `.instruments` or
 `.trace` bundles from any project without loading huge XML exports into one
 prompt.
 
-The server should not be part of the running VizzaOdin app MCP. Instruments
+The server should not be part of the running Vizza app MCP. Instruments
 captures are offline profiling artifacts, and the existing app MCP is a live
 window/input/screenshot bridge. Keeping them separate makes the inspector useful
 across projects and avoids putting filesystem and trace-export behavior into the

@@ -116,7 +116,7 @@ app_run :: proc(config: App_Run_Config = {}) -> int {
 	sdl.SetGamepadEventsEnabled(true)
 
 	flags := sdl.WINDOW_VULKAN | sdl.WINDOW_RESIZABLE | sdl.WINDOW_HIGH_PIXEL_DENSITY
-	app.window = sdl.CreateWindow("VizzaOdin", c.int(app.settings.window_width), c.int(app.settings.window_height), flags)
+	app.window = sdl.CreateWindow("Vizza", c.int(app.settings.window_width), c.int(app.settings.window_height), flags)
 	if app.window == nil {
 		engine.log_error("SDL window creation failed: ", sdl.GetError())
 		return 1

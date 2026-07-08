@@ -320,7 +320,7 @@ vk_create_instance :: proc(ctx: ^Vk_Context) -> bool {
 
 	app_info := vk.ApplicationInfo {
 		sType = .APPLICATION_INFO,
-		pApplicationName = "VizzaOdin",
+		pApplicationName = "Vizza",
 		applicationVersion = vk_make_version(0, 1, 0),
 		pEngineName = "VizzaOdin",
 		engineVersion = vk_make_version(0, 1, 0),

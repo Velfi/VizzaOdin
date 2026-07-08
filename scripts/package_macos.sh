@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-APP_NAME="${APP_NAME:-VizzaOdin}"
+APP_NAME="${APP_NAME:-Vizza}"
 EXECUTABLE_NAME="${EXECUTABLE_NAME:-vizzaodin}"
-BUNDLE_ID="${BUNDLE_ID:-com.vizza.vizzaodin}"
+BUNDLE_ID="${BUNDLE_ID:-com.zelda-built-this.Vizza.store}"
 VERSION="${VERSION:-0.1.0}"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build}"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
@@ -25,7 +25,7 @@ SKIP_SIGN="${SKIP_SIGN:-0}"
 SKIP_NOTARIZE="${SKIP_NOTARIZE:-0}"
 ODIN_FLAGS="${ODIN_FLAGS:--o:none}"
 STEAM_ENABLED="${STEAM_ENABLED:-0}"
-STEAM_APP_ID="${STEAM_APP_ID:-0}"
+STEAM_APP_ID="${STEAM_APP_ID:-4945920}"
 STEAM_SDK_LOCATION="${STEAM_SDK_LOCATION:-$HOME/steam_sdk}"
 
 usage() {

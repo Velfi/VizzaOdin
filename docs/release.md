@@ -4,7 +4,7 @@ VizzaOdin releases are currently macOS-only.
 
 Pushing a tag that starts with `v` runs `.github/workflows/release.yml`. That
 workflow calls the reusable macOS package workflow, uploads the signed and
-notarized `VizzaOdin.app` zip, then creates a GitHub Release.
+notarized `Vizza.app` zip, then creates a GitHub Release.
 
 ## Required GitHub Secrets
 
@@ -53,4 +53,3 @@ git push origin v0.2.0-0
 Pre-release GitHub notes use a compare link. Stable release notes come from
 `CHANGELOG.md`; if the matching section is missing, the workflow falls back to
 GitHub's generated release notes.
-

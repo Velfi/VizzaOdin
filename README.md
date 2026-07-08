@@ -1,78 +1,173 @@
+![VizzaOdin Logo](icon.png)
+
 # VizzaOdin
 
-An Odin rewrite experiment for Vizza.
+An Odin/Slang port of [Vizza](https://github.com/Velfi/Vizza), a collection of
+interactive GPU-accelerated simulations for fun and beauty. The port keeps the
+original simulations as the behavior reference while replacing the Tauri,
+Svelte, Rust, and WebGPU stack with a native SDL3/Vulkan app and a
+project-owned immediate-mode UI.
 
-The target architecture is native Odin: SDL3 for the window/input layer,
-`vendor:vulkan` for GPU simulation/rendering, and a project-owned immediate-mode
-GUI instead of a webview.
+## How to play
 
-## Package layout
+VizzaOdin releases are currently macOS-only.
 
-- `src`: executable entrypoint and integration tests.
-- `packages/game`: Vizza app flow, Gray-Scott simulation, settings, render graph,
-  render worker, and MCP bridge.
-- `packages/engine`: shared infrastructure such as bounded queues, Vulkan
-  context/resources, shader asset lookup, screenshots, and the Vulkan UI renderer.
-- `packages/ui`: renderer-agnostic immediate-mode UI primitives and widgets.
+Download the latest macOS package from the
+[releases page](https://github.com/Velfi/VizzaOdin/releases).
 
-## Commands
+- For macOS: download `vizza-<version>-macos.zip`, unzip it, and open
+  `Vizza.app`.
+- The packaged app targets macOS 13 or newer and bundles its shaders, assets,
+  SDL3, Vulkan loader, and MoltenVK runtime files.
 
-```sh
+For the original cross-platform Tauri app, download Vizza from the
+[original releases page](https://github.com/Velfi/Vizza/releases).
+
+## Simulations
+
+Screenshots below come from the original Vizza app where matching README images
+already exist.
+
+### Slime Mold
+
+Agent-based simulation where creatures follow trails to create emergent
+transport networks.
+
+![Slime Mold Example](https://raw.githubusercontent.com/Velfi/Vizza/main/example-slime-mold.png)
+
+### Gray-Scott
+
+Reaction-diffusion simulation modeling chemicals that create cellular islands,
+waves, and turbulent organic patterns.
+
+![Gray-Scott Example](https://raw.githubusercontent.com/Velfi/Vizza/main/example-gray-scott.png)
+
+### Particle Life
+
+Multi-species particle simulation with attraction and repulsion interactions.
+
+![Particle Life Example](https://raw.githubusercontent.com/Velfi/Vizza/main/example-particle-life.png)
+
+### Flow Field
+
+Particles trace a changing vector field, revealing direction through layered
+motion trails.
+
+![Flow Field Example](https://raw.githubusercontent.com/Velfi/Vizza/main/example-flow-mode.png)
+
+### Pellets
+
+Lightweight 2D particle physics with density, collisions, gravity, and
+image-like emergent texture.
+
+![Pellets Example](https://raw.githubusercontent.com/Velfi/Vizza/main/example-pellets-mode.png)
+
+### Gradient Editor
+
+Create and inspect color ramps used by the simulations and post-processing
+passes.
+
+![Gradient Editor Example](https://raw.githubusercontent.com/Velfi/Vizza/main/example-gradient-editor.png)
+
+### Voronoi CA
+
+Cellular automata playground driven by nearest-neighbor Voronoi regions and
+local state transitions.
+
+### Moire
+
+Interference patterns from layered wave fields, offsets, distortion, and
+procedural image sampling.
+
+![Moire Example](https://raw.githubusercontent.com/Velfi/Vizza/main/example-moire.png)
+
+### Vectors
+
+Vector-field inspection for direction, magnitude, and dense line rendering.
+
+### Primordial
+
+Particle motion organized by local density, soft attraction, and primordial
+clustering.
+
+## For Developers
+
+### Prerequisites
+
+- [Odin](https://odin-lang.org/)
+- `make`, `cc`, `git`, and `pkg-config`
+- SDL3, Vulkan loader, HarfBuzz, and Freetype development packages
+- On macOS: MoltenVK and Homebrew packages matching the release workflow:
+  `odin`, `sdl3`, `molten-vk`, `vulkan-loader`, `harfbuzz`, `freetype`,
+  `pkg-config`, and `imagemagick`
+- Slang compiler on `PATH`, or use `make install-slangc` to install the pinned
+  compiler into `.tools/slang`
+
+### Development
+
+```bash
+make deps
+make install-slangc
 make run
-make run-steam STEAM_APP_ID=<id>
+```
+
+`make deps` downloads the pinned `third_party/tomlc17` checkout and builds the
+local text-shaping shim. `make run` compiles shaders, builds the app, and runs
+`build/vizzaodin`.
+
+### Build
+
+```bash
 make build
-make build-steam STEAM_APP_ID=<id>
+make package-macos
+```
+
+`make build` writes the native executable to `build/vizzaodin`.
+`make package-macos` creates `dist/Vizza.app` and
+`dist/Vizza-macos.zip`; signing and notarization are configured through the
+environment variables documented in [docs/release.md](docs/release.md).
+
+### Useful commands
+
+```bash
 make check
 make test
-make deps
-make textshape
-make install-slangc
-make ui-font-atlas
+make fmt
 make shaders
 make mcp
 make theme-preview
 make theme-preview-mcp
-make profile-ui-trace
-make fmt
-make package-macos
+make run-steam
+make build-steam
 ```
 
-The compiled binary is written to `build/vizzaodin`.
+Steam commands default to app ID `4945920`; override with `STEAM_APP_ID=...`
+for test apps or alternate branches.
 
-`make deps` downloads the pinned `third_party/tomlc17` checkout and builds it
-along with the `third_party/textshape` HarfBuzz/Freetype shim. `make tomlc17`
-re-downloads/builds only `tomlc17`; `make textshape` rebuilds only the text
-shaping shim. On systems without a global Slang compiler,
-`make install-slangc` installs the pinned `slangc` tool into `.tools/slang`.
-`make ui-font-atlas` regenerates `assets/shaders/ui_font_bitmap.slang` from
-`assets/fonts/ZeldaSans-Regular-v1.otf`.
-`make shaders` uses `.tools/slang/bin/slangc` when present, otherwise `slangc`
-on PATH, and compiles all `assets/shaders/**/*.slang` into `build/shaders`,
-generating `build/shaders/slang-manifest.txt` with one entry per compiled
-shader stage. `make mcp` runs the app as a stdio MCP server; see `docs/mcp.md`.
-`make build-steam` and `make run-steam` enable SteamAPI defaults, define the
-Steam App ID, and copy the Steamworks redistributable from `STEAM_SDK_LOCATION`
-(default: `~/steam_sdk`) next to `build/vizzaodin`. Steam can also be enabled at
-runtime with `[steam].enabled`, `VIZZA_STEAM_ENABLED=1`, or `--steam`; use
-`--no-steam` to disable it for a run. `--steam-app-id`, `VIZZA_STEAM_APP_ID`, or
-`[steam].app_id` provide the app ID, and `--steam-library`/`VIZZA_STEAM_LIBRARY`
-can point at a nonstandard SteamAPI library path.
-`make theme-preview` opens the UI component design sheet. `make theme-preview-mcp`
-opens the same sheet with the MCP screenshot tool enabled; see
-`docs/ui-theme-preview.md`. The native UI framework's current styling, layout,
-rendering, media, and interaction surface is tracked in
-`docs/ui-framework-features.md`.
-`make profile-ui-trace` attaches Xcode Instruments to a running `vizzaodin`
-process and writes `profiles/vizzaodin-ui-render.trace`; override `DURATION`,
-`TEMPLATE`, or `OUTPUT` as needed. Use it with the MCP profiling tools described
-in `docs/gpu-profiling.md`.
-`make package-macos` builds `dist/VizzaOdin.app`, signs it with the configured
-Developer ID identity, notarizes it with `notarytool`, and writes
-`dist/VizzaOdin-macos.zip`. Signing/notarization can be configured with
-`MACOS_CODESIGN_IDENTITY`, `NOTARYTOOL_PROFILE`, or the standard
-`APPLE_ID`/`APPLE_TEAM_ID`/`APPLE_APP_SPECIFIC_PASSWORD` variables. Override
-`ODIN_FLAGS` to change the build optimization mode. Pass `--steam` or
-`STEAM_ENABLED=1` to include `libsteam_api.dylib` in the app bundle.
+See [docs/mcp.md](docs/mcp.md), [docs/gpu-profiling.md](docs/gpu-profiling.md),
+and [docs/ui-theme-preview.md](docs/ui-theme-preview.md) for the MCP,
+profiling, and UI preview workflows.
 
-See `docs/dependency-map.md` for the dependency translation from the original
-Tauri/Svelte/Rust project.
+### Project layout
+
+- `src`: executable entrypoint and integration tests
+- `packages/game`: app flow, simulations, settings, render graph, render worker,
+  Steam integration, video recording, and MCP bridge
+- `packages/engine`: queues, Vulkan context/resources, shader lookup,
+  screenshots, logging, profiling, and UI rendering
+- `packages/ui`: renderer-agnostic immediate-mode UI primitives and widgets
+- `assets`: Slang shaders, LUTs, fonts, and app media
+- `docs`: architecture, release, MCP, profiling, and dependency notes
+
+## Tech Stack
+
+- Language: Odin
+- Window/input: SDL3
+- Graphics and compute: Vulkan through `vendor:vulkan`
+- Shaders: Slang compiled to SPIR-V
+- UI: project-owned immediate-mode GUI
+- Settings and presets: TOML via pinned `tomlc17`
+- Packaging: Make plus signed/notarized macOS app bundles
+
+See [docs/dependency-map.md](docs/dependency-map.md) for the dependency
+translation from the original Tauri/Svelte/Rust project.
