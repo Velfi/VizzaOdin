@@ -2,7 +2,8 @@
 set -eu
 
 REPO="shader-slang/slang"
-API_URL="https://api.github.com/repos/${REPO}/releases/latest"
+RELEASE_TAG=${SLANG_RELEASE_TAG:-}
+RELEASE_SCAN_LIMIT=${SLANG_RELEASE_SCAN_LIMIT:-20}
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
@@ -49,8 +50,14 @@ case "$ARCH_NAME" in
 		;;
 esac
 
-echo "Fetching latest Slang release metadata..."
-URLS=$(curl -fsSL "$API_URL" | sed -n 's/.*"browser_download_url": "\(.*\)".*/\1/p')
+if [ -n "$RELEASE_TAG" ]; then
+	API_URL="https://api.github.com/repos/${REPO}/releases/tags/${RELEASE_TAG}"
+	echo "Fetching Slang release metadata for ${RELEASE_TAG}..."
+else
+	API_URL="https://api.github.com/repos/${REPO}/releases?per_page=${RELEASE_SCAN_LIMIT}"
+	echo "Fetching recent Slang release metadata..."
+fi
+URLS=$(curl -fsSL "$API_URL" | sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p')
 
 ASSET_URL=""
 for URL in $URLS; do
@@ -71,6 +78,11 @@ done
 
 if [ -z "$ASSET_URL" ]; then
 	echo "error: could not find a Slang release asset for ${OS_NAME}/${ARCH_NAME}" >&2
+	if [ -z "$RELEASE_TAG" ]; then
+		echo "Scanned the ${RELEASE_SCAN_LIMIT} most recent releases." >&2
+	else
+		echo "Scanned release ${RELEASE_TAG}." >&2
+	fi
 	echo "Open https://github.com/${REPO}/releases and install the matching archive manually." >&2
 	exit 1
 fi
