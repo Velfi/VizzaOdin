@@ -67,6 +67,8 @@ jobs:
 
       - name: Install Slang compiler
         if: steps.slang-cache.outputs.cache-hit != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: make install-slangc
 

@@ -21,6 +21,24 @@ need_tool sed
 need_tool find
 need_tool grep
 
+github_api() {
+	if [ -n "${GITHUB_TOKEN:-}" ]; then
+		curl -fsSL \
+			-H "Accept: application/vnd.github+json" \
+			-H "Authorization: Bearer ${GITHUB_TOKEN}" \
+			-H "X-GitHub-Api-Version: 2022-11-28" \
+			"$1"
+	elif [ -n "${GH_TOKEN:-}" ]; then
+		curl -fsSL \
+			-H "Accept: application/vnd.github+json" \
+			-H "Authorization: Bearer ${GH_TOKEN}" \
+			-H "X-GitHub-Api-Version: 2022-11-28" \
+			"$1"
+	else
+		curl -fsSL "$1"
+	fi
+}
+
 OS_NAME=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME=$(uname -m | tr '[:upper:]' '[:lower:]')
 
@@ -57,7 +75,14 @@ else
 	API_URL="https://api.github.com/repos/${REPO}/releases?per_page=${RELEASE_SCAN_LIMIT}"
 	echo "Fetching recent Slang release metadata..."
 fi
-URLS=$(curl -fsSL "$API_URL" | sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p')
+METADATA=$(github_api "$API_URL") || {
+	echo "error: failed to fetch Slang release metadata from ${API_URL}" >&2
+	if [ -z "${GITHUB_TOKEN:-}" ] && [ -z "${GH_TOKEN:-}" ]; then
+		echo "Set GITHUB_TOKEN or GH_TOKEN to avoid unauthenticated GitHub API rate limits." >&2
+	fi
+	exit 1
+}
+URLS=$(printf '%s\n' "$METADATA" | sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p')
 
 ASSET_URL=""
 for URL in $URLS; do
