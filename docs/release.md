@@ -28,6 +28,15 @@ Configure these repository secrets before running the release workflow:
 
 - `APPLE_CERTIFICATE`: base64-encoded Developer ID Application `.p12`
 - `APPLE_CERTIFICATE_PASSWORD`: password for the `.p12`
+
+For notarization, use App Store Connect API key secrets:
+
+- `APPLE_API_KEY_CONTENT`: raw contents of `AuthKey_<key-id>.p8`
+- `APPLE_API_KEY`: App Store Connect API key ID
+- `APPLE_API_ISSUER`: App Store Connect issuer UUID
+
+The workflow also supports the older Apple ID notarization secrets:
+
 - `APPLE_ID`: Apple ID used for notarization
 - `APPLE_TEAM_ID`: Apple Developer Team ID
 - `APPLE_APP_SPECIFIC_PASSWORD`: app-specific password for notarization

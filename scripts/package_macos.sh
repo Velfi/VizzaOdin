@@ -23,6 +23,9 @@ ARCHIVE_PATH="$DIST_DIR/$APP_NAME-macos.zip"
 SIGN_IDENTITY="${MACOS_CODESIGN_IDENTITY:-${CODESIGN_IDENTITY:-}}"
 ENTITLEMENTS="${MACOS_ENTITLEMENTS:-}"
 NOTARY_PROFILE="${NOTARYTOOL_PROFILE:-${MACOS_NOTARY_PROFILE:-}}"
+APPLE_API_KEY_PATH="${APPLE_API_KEY_PATH:-}"
+APPLE_API_KEY="${APPLE_API_KEY:-}"
+APPLE_API_ISSUER="${APPLE_API_ISSUER:-}"
 APPLE_ID="${APPLE_ID:-}"
 APPLE_TEAM_ID="${APPLE_TEAM_ID:-${TEAM_ID:-}}"
 APPLE_APP_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-${APP_SPECIFIC_PASSWORD:-}}"
@@ -56,6 +59,7 @@ Environment:
   MACOS_CODESIGN_IDENTITY or CODESIGN_IDENTITY
   MACOS_ENTITLEMENTS
   NOTARYTOOL_PROFILE or MACOS_NOTARY_PROFILE
+  APPLE_API_KEY_PATH, APPLE_API_KEY, APPLE_API_ISSUER
   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_SPECIFIC_PASSWORD
   ODIN_FLAGS              Default: -o:none
   STEAM_ENABLED           Set to 1 to match --steam.
@@ -413,10 +417,16 @@ if [[ "$SKIP_SIGN" != "1" && "$SKIP_NOTARIZE" != "1" ]]; then
 	printf 'Submitting %s for notarization...\n' "$(basename "$ARCHIVE_PATH")"
 	if [[ -n "$NOTARY_PROFILE" ]]; then
 		xcrun notarytool submit "$ARCHIVE_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
+	elif [[ -n "$APPLE_API_KEY_PATH" || -n "$APPLE_API_KEY" || -n "$APPLE_API_ISSUER" ]]; then
+		if [[ -z "$APPLE_API_KEY_PATH" || -z "$APPLE_API_KEY" || -z "$APPLE_API_ISSUER" ]]; then
+			printf 'Incomplete App Store Connect API notarization credentials. Set APPLE_API_KEY_PATH, APPLE_API_KEY, and APPLE_API_ISSUER.\n' >&2
+			exit 1
+		fi
+		xcrun notarytool submit "$ARCHIVE_PATH" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
 	elif [[ -n "$APPLE_ID" && -n "$APPLE_TEAM_ID" && -n "$APPLE_APP_PASSWORD" ]]; then
 		xcrun notarytool submit "$ARCHIVE_PATH" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
 	else
-		printf 'No notarization credentials found. Set NOTARYTOOL_PROFILE or APPLE_ID/APPLE_TEAM_ID/APPLE_APP_SPECIFIC_PASSWORD.\n' >&2
+		printf 'No notarization credentials found. Set NOTARYTOOL_PROFILE, APPLE_API_KEY_PATH/APPLE_API_KEY/APPLE_API_ISSUER, or APPLE_ID/APPLE_TEAM_ID/APPLE_APP_SPECIFIC_PASSWORD.\n' >&2
 		exit 1
 	fi
 	xcrun stapler staple "$APP_DIR"

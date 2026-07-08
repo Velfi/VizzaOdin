@@ -18,6 +18,7 @@ jobs:
 
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
 
     steps:
       - uses: actions/checkout@v6
@@ -35,15 +36,50 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
+      - name: Cache Homebrew downloads
+        id: brew-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: ${{ runner.os }}-${{ runner.arch }}-homebrew-v1-${{ hashFiles('.github/Brewfile') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-homebrew-v1-
+
       - name: Install macOS build dependencies
         shell: bash
         run: |
           set -euo pipefail
-          brew install odin sdl3 molten-vk vulkan-loader harfbuzz freetype pkg-config imagemagick
+          brew bundle install --file=.github/Brewfile --no-upgrade
+
+      - name: Save Homebrew download cache
+        if: steps.brew-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: ${{ steps.brew-cache.outputs.cache-primary-key }}
+
+      - name: Cache Slang compiler
+        id: slang-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .tools/slang
+          key: ${{ runner.os }}-${{ runner.arch }}-slang-v1-${{ hashFiles('scripts/install_slangc.sh') }}
 
       - name: Install Slang compiler
+        if: steps.slang-cache.outputs.cache-hit != 'true'
         shell: bash
         run: make install-slangc
+
+      - name: Verify Slang compiler
+        shell: bash
+        run: .tools/slang/bin/slangc -version
+
+      - name: Save Slang compiler cache
+        if: steps.slang-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .tools/slang
+          key: ${{ steps.slang-cache.outputs.cache-primary-key }}
 
       - name: Import Apple signing certificate
         env:
@@ -77,10 +113,33 @@ jobs:
           fi
           echo "MACOS_CODESIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
 
+      - name: Write Apple notarization API key
+        env:
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${APPLE_API_KEY_CONTENT:-}" && -z "${APPLE_API_KEY:-}" ]]; then
+            echo "No App Store Connect API key configured; falling back to Apple ID notarization secrets if present."
+            exit 0
+          fi
+          if [[ -z "${APPLE_API_KEY_CONTENT:-}" || -z "${APPLE_API_KEY:-}" ]]; then
+            echo "::error::Set both APPLE_API_KEY_CONTENT and APPLE_API_KEY, or neither."
+            exit 1
+          fi
+          mkdir -p "$HOME/.private_keys"
+          KEY_PATH="$HOME/.private_keys/AuthKey_${APPLE_API_KEY}.p8"
+          printf '%s\n' "$APPLE_API_KEY_CONTENT" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
       - name: Build signed and notarized app archive
         env:
           VERSION: ${{ steps.version.outputs.version }}
           ODIN_FLAGS: -o:speed
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}

@@ -1,0 +1,8 @@
+brew "odin"
+brew "sdl3"
+brew "molten-vk"
+brew "vulkan-loader"
+brew "harfbuzz"
+brew "freetype"
+brew "pkg-config"
+brew "imagemagick"
