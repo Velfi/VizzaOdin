@@ -9,6 +9,8 @@ struct Vertex_Input {
 	float glyph: TEXCOORD1;
 	[[vk::location(4)]]
 	float4 effect: TEXCOORD2;
+	[[vk::location(5)]]
+	float4 material: TEXCOORD3;
 };
 
 struct Vertex_Output {
@@ -21,6 +23,8 @@ struct Vertex_Output {
 	float glyph: TEXCOORD1;
 	[[vk::location(3)]]
 	float4 effect: TEXCOORD2;
+	[[vk::location(4)]]
+	float4 material: TEXCOORD3;
 };
 
 [shader("vertex")]
@@ -31,5 +35,6 @@ Vertex_Output main(Vertex_Input input) {
 	output.texcoord = input.texcoord;
 	output.glyph = input.glyph;
 	output.effect = input.effect;
+	output.material = input.material;
 	return output;
 }

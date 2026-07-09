@@ -10,15 +10,20 @@ project-owned immediate-mode UI.
 
 ## How to play
 
-VizzaOdin releases are currently macOS-only.
-
-Download the latest macOS package from the
+Download the latest package from the
 [releases page](https://github.com/Velfi/VizzaOdin/releases).
 
 - For macOS: download `vizza-<version>-macos.zip`, unzip it, and open
   `Vizza.app`.
 - The packaged app targets macOS 13 or newer and bundles its shaders, assets,
   SDL3, Vulkan loader, and MoltenVK runtime files.
+- For Windows: download `vizza-<version>-windows-x64.zip`, unzip it, and run
+  `Vizza.exe`.
+- The Windows package bundles its shaders, assets, SDL3, HarfBuzz, Freetype,
+  and Vulkan loader runtime files. It still requires a Vulkan-capable GPU
+  driver.
+- Windows releases also include `vizza-<version>-windows-x64.msix` for
+  Microsoft Store submission or signed sideloading.
 
 For the original cross-platform Tauri app, download Vizza from the
 [original releases page](https://github.com/Velfi/Vizza/releases).
@@ -100,6 +105,8 @@ clustering.
 - On macOS: MoltenVK and Homebrew packages matching the release workflow:
   `odin`, `sdl3`, `molten-vk`, `vulkan-loader`, `harfbuzz`, `freetype`,
   `pkg-config`, and `imagemagick`
+- On Windows: Visual Studio Build Tools, vcpkg packages for `sdl3`,
+  `harfbuzz`, `freetype`, and `vulkan-loader`, plus Git Bash for shader builds
 - Slang compiler on `PATH`, or use `make install-slangc` to install the pinned
   compiler into `.tools/slang`
 
@@ -120,12 +127,15 @@ local text-shaping shim. `make run` compiles shaders, builds the app, and runs
 ```bash
 make build
 make package-macos
+pwsh ./scripts/package_windows.ps1 -Msix
 ```
 
 `make build` writes the native executable to `build/vizzaodin`.
 `make package-macos` creates `dist/Vizza.app` and
 `dist/Vizza-macos.zip`; signing and notarization are configured through the
 environment variables documented in [docs/release.md](docs/release.md).
+`scripts/package_windows.ps1` creates `dist/Vizza-windows/`,
+`dist/Vizza-windows.zip`, and, with `-Msix`, `dist/Vizza-windows.msix`.
 
 ### Useful commands
 
@@ -140,6 +150,7 @@ make theme-preview-mcp
 make run-steam
 make build-steam
 make steam-upload-preview VERSION=0.1.0
+pwsh ./scripts/package_windows.ps1 -Msix
 scripts/release.sh 0.1.0
 ```
 
@@ -185,7 +196,8 @@ MCP, profiling, and UI preview workflows.
 - Shaders: Slang compiled to SPIR-V
 - UI: project-owned immediate-mode GUI
 - Settings and presets: TOML via pinned `tomlc17`
-- Packaging: Make plus signed/notarized macOS app bundles
+- Packaging: Make plus signed/notarized macOS app bundles, Windows zip
+  archives, and Windows MSIX packages
 
 See [docs/dependency-map.md](docs/dependency-map.md) for the dependency
 translation from the original Tauri/Svelte/Rust project.

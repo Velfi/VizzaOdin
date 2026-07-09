@@ -253,7 +253,7 @@ render_worker_runtime_shutdown :: proc(state: ^Render_Worker_State, runtime: ^Re
 }
 
 render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Render_Worker_Runtime, cmd: Ui_To_Render_Command) {
-	switch cmd.kind {
+	#partial switch cmd.kind {
 	case .Close:
 		video_recorder_stop(&runtime.video_recorder)
 		state.running = false
@@ -440,6 +440,12 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 			key_c = cmd.frame_input.key_c,
 			key_slash = cmd.frame_input.key_slash,
 			key_space = cmd.frame_input.key_space,
+			key_space_down = cmd.frame_input.key_space_down,
+			key_space_pressed = cmd.frame_input.key_space_pressed,
+			key_space_released = cmd.frame_input.key_space_released,
+			controller_left = cmd.frame_input.controller_left,
+			controller_right = cmd.frame_input.controller_right,
+			controller_zoom = cmd.frame_input.controller_zoom,
 		})
 		simulation_input := app_ui_simulation_filter_input(&runtime.app_ui, &runtime.gui, cmd.frame_input)
 		simulation_input.camera_sensitivity = runtime.app_ui.settings.default_camera_sensitivity
@@ -522,6 +528,102 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 		mode_before_navigation := runtime.app_ui.mode
 		app_ui_navigate(&runtime.app_ui, cmd.app_mode)
 		render_worker_apply_main_menu_palette_after_navigation(runtime, mode_before_navigation)
+	case .Apply_Builtin_Preset:
+		if render_worker_apply_builtin_preset(runtime, cmd.app_mode, cmd.builtin_preset_index) {
+			render_worker_publish_preset_result(state, true, fmt.tprintf("Applied built-in preset %d for %v", cmd.builtin_preset_index, cmd.app_mode))
+		} else {
+			render_worker_publish_preset_result(state, false, fmt.tprintf("Failed to apply built-in preset %d for %v", cmd.builtin_preset_index, cmd.app_mode))
+		}
+	case .Apply_Particle_Life_Settings:
+		particle_life_load_settings(&runtime.particle_life, cmd.particle_life_settings)
+		if cmd.particle_life_randomize_forces {
+			particle_life_randomize_forces(&runtime.particle_life)
+		}
+		if cmd.particle_life_reset {
+			particle_life_reset_runtime(&runtime.particle_life)
+		}
+		render_worker_publish_preset_result(state, true, "Configured Particle Life")
+	case .Apply_Flow_Settings:
+		runtime.app_ui.flow_field.flow = cmd.flow_settings
+		image_path := fixed_string(runtime.app_ui.flow_field.flow.image_path[:])
+		if len(image_path) > 0 && runtime.app_ui.flow_field.flow.vector_field_type == .Image {
+			_ = flow_gpu_load_vector_field_image_path(&runtime.flow_gpu, &runtime.vk_ctx, image_path, &runtime.app_ui.flow_field.flow)
+		}
+		if cmd.flow_reset {
+			flow_gpu_destroy(&runtime.flow_gpu, &runtime.vk_ctx)
+		}
+		render_worker_publish_preset_result(state, true, "Configured Flow Field")
+	case .Apply_Remaining_Settings:
+		switch cmd.remaining_kind {
+		case .Flow_Field:
+			runtime.app_ui.flow_field.flow = cmd.flow_settings
+			image_path := fixed_string(runtime.app_ui.flow_field.flow.image_path[:])
+			if len(image_path) > 0 && runtime.app_ui.flow_field.flow.vector_field_type == .Image {
+				_ = flow_gpu_load_vector_field_image_path(&runtime.flow_gpu, &runtime.vk_ctx, image_path, &runtime.app_ui.flow_field.flow)
+			}
+			if cmd.remaining_reset {
+				flow_gpu_destroy(&runtime.flow_gpu, &runtime.vk_ctx)
+			}
+		case .Pellets:
+			runtime.app_ui.pellets.pellets = cmd.pellets_settings
+			if cmd.remaining_reset {
+				runtime.pellets_gpu.ready = false
+			}
+		case .Voronoi_CA:
+			runtime.app_ui.voronoi_ca.voronoi = cmd.voronoi_settings
+			if cmd.remaining_reset {
+				runtime.voronoi_gpu.needs_rebuild = true
+			}
+		case .Moire:
+			runtime.app_ui.moire.moire = cmd.moire_settings
+			image_path := fixed_string(runtime.app_ui.moire.moire.image_path[:])
+			if len(image_path) > 0 && runtime.app_ui.moire.moire.image_mode_enabled {
+				_ = moire_gpu_load_image_path(&runtime.moire_gpu, &runtime.vk_ctx, image_path, &runtime.app_ui.moire.moire)
+			}
+			if cmd.remaining_reset {
+				moire_gpu_destroy(&runtime.moire_gpu, &runtime.vk_ctx)
+			}
+		case .Vectors:
+			runtime.app_ui.vectors.vectors = cmd.vectors_settings
+			image_path := fixed_string(runtime.app_ui.vectors.vectors.image_path[:])
+			if len(image_path) > 0 && runtime.app_ui.vectors.vectors.vector_field_type == .Image {
+				_ = vectors_gpu_load_image_path(&runtime.vectors_gpu, image_path, &runtime.app_ui.vectors.vectors)
+			}
+			if cmd.remaining_reset {
+				vectors_gpu_destroy(&runtime.vectors_gpu, &runtime.vk_ctx)
+			}
+		case .Primordial:
+			runtime.app_ui.primordial.primordial = cmd.primordial_settings
+			if cmd.remaining_reset {
+				runtime.primordial_gpu.ready = false
+			}
+		case .Slime_Mold:
+			runtime.app_ui.slime_mold.slime = cmd.slime_settings
+			if slime_gpu_ensure(&runtime.slime_gpu, &runtime.vk_ctx, &runtime.app_ui.slime_mold.slime) {
+				mask_path := fixed_string(runtime.app_ui.slime_mold.slime.mask_image_path[:])
+				if len(mask_path) > 0 && runtime.app_ui.slime_mold.slime.mask_pattern == .Image {
+					_ = slime_gpu_load_mask_image_path(&runtime.slime_gpu, mask_path, &runtime.app_ui.slime_mold.slime)
+				}
+				position_path := fixed_string(runtime.app_ui.slime_mold.slime.position_image_path[:])
+				if len(position_path) > 0 && runtime.app_ui.slime_mold.slime.position_generator == 7 {
+					_ = slime_gpu_load_position_image_path(&runtime.slime_gpu, position_path, &runtime.app_ui.slime_mold.slime)
+				}
+			}
+			if cmd.remaining_reset {
+				runtime.slime_gpu.needs_reset = true
+			}
+		}
+		render_worker_publish_preset_result(state, true, fmt.tprintf("Configured %v", cmd.remaining_kind))
+	case .Set_Color_Scheme:
+		color_scheme_name := cmd.color_scheme_name
+		name := fixed_string(color_scheme_name[:])
+		if render_worker_set_color_scheme(runtime, cmd.app_mode, name, cmd.color_scheme_reversed, cmd.color_scheme_reversed_set) {
+			render_worker_publish_preset_result(state, true, fmt.tprintf("Set color scheme %s for %v", name, cmd.app_mode))
+		} else {
+			render_worker_publish_preset_result(state, false, fmt.tprintf("Failed to set color scheme %s for %v", name, cmd.app_mode))
+		}
+	case .Hide_Ui:
+		render_worker_hide_ui(runtime)
 	case .Start_Video_Recording:
 		file_path := cmd.file_path
 		path := fixed_string(file_path[:])
@@ -619,11 +721,15 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 		file_path := cmd.file_path
 		path := fixed_string(file_path[:])
 		if len(path) > 0 {
-			if slime_gpu_ensure(&runtime.slime_gpu, &runtime.vk_ctx, &runtime.app_ui.slime_mold.slime) &&
-			   slime_gpu_load_mask_image_path(&runtime.slime_gpu, path, &runtime.app_ui.slime_mold.slime) {
-				render_worker_publish_preset_result(state, true, "Loaded Slime mask image")
+			if !slime_gpu_ensure(&runtime.slime_gpu, &runtime.vk_ctx, &runtime.app_ui.slime_mold.slime) {
+				render_worker_publish_preset_result(state, false, fmt.tprintf("Failed to load Slime mask image: path=\"%s\"; reason=Slime GPU initialization failed; target=%dx%d", path, runtime.slime_gpu.width, runtime.slime_gpu.height))
 			} else {
-				render_worker_publish_preset_result(state, false, "Failed to load Slime mask image")
+				ok, reason := slime_gpu_load_mask_image_path_diagnostic(&runtime.slime_gpu, path, &runtime.app_ui.slime_mold.slime)
+				if ok {
+					render_worker_publish_preset_result(state, true, "Loaded Slime mask image")
+				} else {
+					render_worker_publish_preset_result(state, false, fmt.tprintf("Failed to load Slime mask image: path=\"%s\"; target=%dx%d; fit=%v; reason=%s", path, runtime.slime_gpu.width, runtime.slime_gpu.height, runtime.app_ui.slime_mold.slime.mask_image_fit_mode, reason))
+				}
 			}
 		}
 	case .Load_Slime_Position_Image:
@@ -855,6 +961,187 @@ render_worker_apply_main_menu_palette_after_navigation :: proc(runtime: ^Render_
 	}
 	palette_name := main_menu_backdrop_current_palette_name(&runtime.render_backend.main_menu_backdrop)
 	_ = render_main_menu_apply_palette_to_mode(&runtime.app_ui, &runtime.sim.settings, &runtime.particle_life.settings, runtime.app_ui.mode, palette_name)
+}
+
+render_worker_remaining_kind_from_app_mode :: proc(mode: App_Mode, out: ^Remaining_Sim_Kind) -> bool {
+	#partial switch mode {
+	case .Slime_Mold:
+		out^ = .Slime_Mold
+	case .Flow_Field:
+		out^ = .Flow_Field
+	case .Pellets:
+		out^ = .Pellets
+	case .Voronoi_CA:
+		out^ = .Voronoi_CA
+	case .Moire:
+		out^ = .Moire
+	case .Vectors:
+		out^ = .Vectors
+	case .Primordial:
+		out^ = .Primordial
+	case:
+		return false
+	}
+	return true
+}
+
+render_worker_remaining_state_from_app_mode :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode) -> ^Remaining_Sim_State {
+	if runtime == nil {
+		return nil
+	}
+	#partial switch mode {
+	case .Slime_Mold:
+		return &runtime.app_ui.slime_mold
+	case .Flow_Field:
+		return &runtime.app_ui.flow_field
+	case .Pellets:
+		return &runtime.app_ui.pellets
+	case .Voronoi_CA:
+		return &runtime.app_ui.voronoi_ca
+	case .Moire:
+		return &runtime.app_ui.moire
+	case .Vectors:
+		return &runtime.app_ui.vectors
+	case .Primordial:
+		return &runtime.app_ui.primordial
+	case:
+		return nil
+	}
+	return nil
+}
+
+render_worker_mark_mode_dirty :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode) {
+	#partial switch mode {
+	case .Primordial:
+		runtime.primordial_gpu.ready = false
+	case .Pellets:
+		runtime.pellets_gpu.ready = false
+	case .Voronoi_CA:
+		runtime.voronoi_gpu.needs_rebuild = true
+	case .Slime_Mold:
+		runtime.slime_gpu.needs_reset = true
+	case:
+	}
+}
+
+render_worker_hide_ui :: proc(runtime: ^Render_Worker_Runtime) {
+	if runtime == nil {
+		return
+	}
+	runtime.app_ui.simulation_shell.show_ui = false
+	runtime.app_ui.simulation_shell.controls_visible = false
+	runtime.app_ui.simulation_shell.force_hidden = true
+	runtime.app_ui.simulation_shell.idle_seconds = f32(max(runtime.app_ui.settings.auto_hide_delay, 0)) / 1000.0
+	runtime.app_ui.slime_controller.deck_visible = false
+	runtime.app_ui.slime_controller.panel_open = false
+}
+
+render_worker_apply_builtin_preset :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode, index: int) -> bool {
+	if runtime == nil {
+		return false
+	}
+	#partial switch mode {
+	case .Gray_Scott:
+		gray_scott_apply_builtin_preset(&runtime.sim, index)
+	case .Particle_Life:
+		particle_life_apply_builtin_preset(&runtime.particle_life, index)
+	case:
+		kind: Remaining_Sim_Kind
+		if !render_worker_remaining_kind_from_app_mode(mode, &kind) {
+			return false
+		}
+		remaining := render_worker_remaining_state_from_app_mode(runtime, mode)
+		if remaining == nil {
+			return false
+		}
+		remaining_sim_apply_builtin_preset(remaining, kind, index)
+		render_worker_mark_mode_dirty(runtime, mode)
+	}
+	return true
+}
+
+render_worker_get_color_scheme_reversed :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode, out: ^bool) -> bool {
+	if runtime == nil || out == nil {
+		return false
+	}
+	#partial switch mode {
+	case .Slime_Mold:
+		out^ = runtime.app_ui.slime_mold.slime.color_scheme_reversed
+	case .Gray_Scott:
+		out^ = runtime.sim.settings.color_scheme_reversed
+	case .Particle_Life:
+		out^ = runtime.particle_life.settings.color_scheme_reversed
+	case .Flow_Field:
+		out^ = runtime.app_ui.flow_field.flow.color_scheme_reversed
+	case .Pellets:
+		out^ = runtime.app_ui.pellets.pellets.color_scheme_reversed
+	case .Voronoi_CA:
+		out^ = runtime.app_ui.voronoi_ca.voronoi.color_scheme_reversed
+	case .Moire:
+		out^ = runtime.app_ui.moire.moire.color_scheme_reversed
+	case .Vectors:
+		out^ = runtime.app_ui.vectors.vectors.color_scheme_reversed
+	case .Primordial:
+		out^ = runtime.app_ui.primordial.primordial.color_scheme_reversed
+	case:
+		return false
+	}
+	return true
+}
+
+render_worker_set_color_scheme_reversed :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode, reversed: bool) -> bool {
+	#partial switch mode {
+	case .Slime_Mold:
+		runtime.app_ui.slime_mold.slime.color_scheme_reversed = reversed
+	case .Gray_Scott:
+		runtime.sim.settings.color_scheme_reversed = reversed
+	case .Particle_Life:
+		runtime.particle_life.settings.color_scheme_reversed = reversed
+	case .Flow_Field:
+		runtime.app_ui.flow_field.flow.color_scheme_reversed = reversed
+	case .Pellets:
+		runtime.app_ui.pellets.pellets.color_scheme_reversed = reversed
+	case .Voronoi_CA:
+		runtime.app_ui.voronoi_ca.voronoi.color_scheme_reversed = reversed
+	case .Moire:
+		runtime.app_ui.moire.moire.color_scheme_reversed = reversed
+	case .Vectors:
+		runtime.app_ui.vectors.vectors.color_scheme_reversed = reversed
+	case .Primordial:
+		runtime.app_ui.primordial.primordial.color_scheme_reversed = reversed
+	case:
+		return false
+	}
+	return true
+}
+
+render_worker_set_color_scheme :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode, name: string, reversed: bool, reversed_set: bool) -> bool {
+	if runtime == nil || len(name) == 0 {
+		return false
+	}
+	if _, ok := color_scheme_load(name); !ok {
+		return false
+	}
+	previous_reversed := false
+	if !reversed_set {
+		if !render_worker_get_color_scheme_reversed(runtime, mode, &previous_reversed) {
+			return false
+		}
+	}
+	if !render_main_menu_apply_palette_to_mode(&runtime.app_ui, &runtime.sim.settings, &runtime.particle_life.settings, mode, name) {
+		return false
+	}
+	if reversed_set {
+		if !render_worker_set_color_scheme_reversed(runtime, mode, reversed) {
+			return false
+		}
+	} else {
+		if !render_worker_set_color_scheme_reversed(runtime, mode, previous_reversed) {
+			return false
+		}
+	}
+	render_worker_mark_mode_dirty(runtime, mode)
+	return true
 }
 
 render_worker_profile_record :: proc(runtime: ^Render_Worker_Runtime, frame_index: u64, sim_seconds, ui_seconds, render_seconds: f64) {

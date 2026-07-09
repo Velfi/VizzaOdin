@@ -43,6 +43,7 @@ Main_Menu_Preview_Slot :: struct {
 Simulation_Shell_State :: struct {
 	show_ui: bool,
 	controls_visible: bool,
+	force_hidden: bool,
 	idle_seconds: f32,
 	mouse_pressed: bool,
 	mouse_button: u32,
@@ -65,6 +66,7 @@ App_Ui_State :: struct {
 	texture_filtering_index: int,
 	settings_dirty: bool,
 	simulation_shell: Simulation_Shell_State,
+	slime_controller: Slime_Controller_Ui_State,
 	video_recording_state: Video_Recording_Ui_State,
 	video_recording_status: [MAX_ERROR_TEXT]u8,
 	main_menu_selected: int,
@@ -213,6 +215,7 @@ app_ui_init :: proc(ui: ^App_Ui_State, settings: App_Settings, theme_preview := 
 	ui.settings = settings
 	ui.theme_preview = theme_preview
 	ui.simulation_shell = {show_ui = true, controls_visible = true}
+	slime_controller_ui_init(&ui.slime_controller)
 	ui.main_menu_selected = 1
 	ui.main_menu_focus_slot = app_ui_main_menu_slot_for_simulation_index(ui.main_menu_selected)
 	ui.menu_position_index = option_index(settings.menu_position, MENU_POSITION_OPTIONS[:], 1)
@@ -637,24 +640,24 @@ app_ui_fit_sim_start_text_scale :: proc(gui: ^uifw.Gui_Context, label: string, d
 app_ui_menu_theme :: proc(gui: ^uifw.Gui_Context, width, height: f32) -> Menu_Theme {
 	scale := min(max(min(width / 1920, height / 1080), 0.72), 1.35)
 	return {
-		panel = {0.30, 0.000, 0.000, 1.0},
-		panel_top = {1.00, 0.000, 0.000, 1.0},
-		surface = {0.020, 0.018, 0.018, 0.82},
-		surface_hot = {0.070, 0.028, 0.025, 0.88},
-		surface_selected = {0.16, 0.030, 0.026, 0.90},
-		preview_surface = {0.005, 0.005, 0.006, 1.0},
-		footer_surface = {0.030, 0.012, 0.010, 0.72},
-		border = {0.00, 0.00, 0.00, 0.56},
-		border_hot = {1.00, 1.00, 1.00, 0.50},
+		panel = {0.09, 0.11, 0.13, 0.24},
+		panel_top = {0.70, 0.78, 0.86, 0.22},
+		surface = {0.08, 0.10, 0.12, 0.34},
+		surface_hot = {0.18, 0.21, 0.24, 0.40},
+		surface_selected = {0.24, 0.28, 0.32, 0.46},
+		preview_surface = {0.018, 0.022, 0.028, 1.0},
+		footer_surface = {0.09, 0.11, 0.13, 0.24},
+		border = {1.00, 1.00, 1.00, 0.18},
+		border_hot = {1.00, 1.00, 1.00, 0.58},
 		accent = {1.00, 1.00, 1.00, 1.0},
-		accent_soft = {1.00, 1.00, 1.00, 0.18},
+		accent_soft = {1.00, 1.00, 1.00, 0.20},
 		text = {1.00, 1.00, 1.00, 1.0},
 		text_muted = {0.90, 0.90, 0.90, 0.88},
 		text_dim = {1.00, 1.00, 1.00, 0.68},
-		chip = {0.0, 0.0, 0.0, 0.30},
+		chip = {0.08, 0.10, 0.12, 0.28},
 		chip_border = {1.0, 1.0, 1.0, 0.20},
 		danger = {0.90, 0.18, 0.16, 1.0},
-		shadow = {0, 0, 0, 0.72},
+		shadow = {0, 0, 0, 0.42},
 		panel_padding = gui.style.spacing_4 * scale,
 		inner_gap = max(gui.style.spacing_4 * 1.1 * scale, 18),
 		item_gap = max(height * 0.032, gui.style.spacing_3 * 1.35 * scale),
@@ -668,8 +671,8 @@ app_ui_menu_theme :: proc(gui: ^uifw.Gui_Context, width, height: f32) -> Menu_Th
 		chip_gap = 0,
 		detail_min_width = 0,
 		detail_gap = max(gui.style.spacing_4 * 2.6 * scale, 36),
-		radius = 0,
-		card_radius = 0,
+		radius = max(gui.style.radius_panel, f32(5)),
+		card_radius = max(gui.style.radius_control, f32(5)),
 		border_width = 1,
 		start_width = 0,
 	}
@@ -679,6 +682,20 @@ app_ui_draw_main_menu_backdrop :: proc(gui: ^uifw.Gui_Context, bounds: uifw.Rect
 	_ = gui
 	_ = bounds
 	_ = theme
+}
+
+app_ui_menu_glass_style :: proc(gui: ^uifw.Gui_Context, theme: Menu_Theme, radius: f32, emphasis: f32 = 0) -> uifw.Gui_Glass_Style {
+	glass := uifw.gui_default_glass_style(gui, radius)
+	t := uifw.gui_clamp01(emphasis)
+	glass.tint = uifw.gui_lerp_color(theme.surface, theme.surface_selected, t)
+	glass.tint.a = 0.34 + t * 0.14
+	glass.roughness = 0.42 + t * 0.18
+	glass.thickness = max(gui.style.rhythm * (0.18 + t * 0.06), f32(7))
+	glass.bevel = max(gui.style.border_width * (5.5 + t * 1.5), f32(5))
+	glass.dispersion = 0.70 + t * 0.35
+	glass.border = 0.28 + t * 0.34
+	glass.highlight = 0.34 + t * 0.22
+	return glass
 }
 
 app_ui_draw_menu_chip :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, label: string, theme: Menu_Theme, emphasis: f32) {
@@ -713,15 +730,11 @@ app_ui_draw_main_menu_button :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, ke
 	}
 	fill := uifw.gui_lerp_color(base, target, hot_t)
 	border := uifw.gui_lerp_color(theme.border, theme.border_hot, hot_t)
-	uifw.gui_box(gui, rect, {
-		fill = fill,
-		border = border,
-		radius = theme.card_radius,
-		border_width = theme.border_width,
-		shadow_color = theme.shadow,
-		shadow_offset = {0, theme.small_gap * 0.65},
-		shadow_blur = theme.inner_gap,
-	})
+	glass := app_ui_menu_glass_style(gui, theme, theme.card_radius, hot_t)
+	glass.tint = fill
+	uifw.gui_shadow(gui, rect, theme.card_radius, {0, theme.small_gap * 0.65}, theme.inner_gap, theme.shadow)
+	uifw.gui_refractive_glass_rect(gui, rect, glass)
+	uifw.gui_round_stroke(gui, rect, theme.card_radius, border, theme.border_width)
 	if control.focused {
 		uifw.gui_focus_ring(gui, rect)
 	}
@@ -755,6 +768,11 @@ app_ui_draw_main_menu_text_button :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rec
 	id := uifw.gui_make_id(gui, key)
 	control := uifw.gui_control(gui, id, button, true)
 	hot_t := uifw.gui_animate_value(gui, uifw.gui_id_child(id, "text_hot"), (control.hovered || control.focused || gui.active == id) ? f32(1) : f32(0), 16)
+	if hot_t > 0.01 || control.focused {
+		glass := app_ui_menu_glass_style(gui, theme, theme.card_radius, hot_t)
+		glass.tint.a = 0.12 + hot_t * 0.08
+		uifw.gui_refractive_glass_rect(gui, button, glass)
+	}
 	if hot_t > 0.01 {
 		stroke := uifw.gui_apply_opacity(theme.text, 0.95 * hot_t)
 		uifw.gui_round_stroke(gui, button, theme.card_radius, stroke, MAIN_MENU_TEXT_BUTTON_FOCUS_BORDER_WIDTH)
@@ -890,15 +908,9 @@ app_ui_draw_simulation_row :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bo
 	live_preview := app_ui_live_preview_supported(mode)
 
 	border := uifw.gui_lerp_color(theme.border, theme.border_hot, max(hover_t, selected_t))
-	if live_preview {
-		uifw.gui_round_stroke(gui, card, theme.card_radius, border, theme.border_width)
-	} else {
-		uifw.gui_box(gui, card, {
-			fill = theme.preview_surface,
-			border = border,
-			radius = theme.card_radius,
-			border_width = theme.border_width,
-		})
+	emphasis := max(hover_t, selected_t)
+	if !live_preview {
+		uifw.gui_refractive_glass_rect(gui, card, app_ui_menu_glass_style(gui, theme, theme.card_radius, emphasis))
 	}
 
 	preview := uifw.gui_inset(card, theme.border_width)
@@ -906,6 +918,10 @@ app_ui_draw_simulation_row :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bo
 	if clipped_preview.w > 1 && clipped_preview.h > 1 {
 		app_ui_draw_live_simulation_preview(ui, gui, preview, clipped_preview, mode, theme.preview_surface, f32(index))
 	}
+	if live_preview {
+		uifw.gui_refractive_glass_rect(gui, card, app_ui_menu_glass_style(gui, theme, theme.card_radius, emphasis))
+	}
+	uifw.gui_round_stroke(gui, card, theme.card_radius, border, theme.border_width)
 
 	uifw.gui_scissor_begin(gui, clipped_card)
 	if clipped_preview.w > 1 && clipped_preview.h > 1 {
@@ -1093,7 +1109,17 @@ app_ui_draw_gradient_editor :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, v
 app_ui_draw_remaining_sim :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, sim: ^Remaining_Sim_State, vk_ctx: ^engine.Vk_Context, worker: ^Render_Worker_State) {
 	width := f32(vk_ctx.swapchain_extent.width)
 	height := f32(vk_ctx.swapchain_extent.height)
-	if gui.input.pause {
+	controller_ui_active := kind == .Slime_Mold && slime_controller_ui_enabled(ui)
+	pause_consumed := false
+	if controller_ui_active && gui.input.pause && gui.input.active_device == .Controller {
+		app_ui_focus_simulation_bar_pause(gui)
+		ui.simulation_shell.controls_visible = true
+		pause_consumed = true
+	}
+	if kind == .Slime_Mold {
+		pause_consumed = slime_controller_ui_update_input(ui, gui, sim, width, height) || pause_consumed
+	}
+	if gui.input.pause && !pause_consumed {
 		sim.paused = !sim.paused
 	}
 	if kind != .Vectors && kind != .Moire && kind != .Primordial && kind != .Pellets && kind != .Flow_Field && kind != .Slime_Mold && kind != .Voronoi_CA {
@@ -1102,10 +1128,13 @@ app_ui_draw_remaining_sim :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, kin
 	if ui.simulation_shell.controls_visible {
 		app_ui_draw_simulation_bar(ui, gui, app_mode_from_remaining_sim_kind(kind), nil, nil, sim, sim.paused, false, remaining_sim_name(kind), vk_ctx, width, worker)
 	}
-	if ui.simulation_shell.show_ui {
+	if ui.simulation_shell.show_ui && !controller_ui_active {
 		panel := app_ui_simulation_menu_panel(ui, gui, width, height)
 		remaining_sim_draw_controls(sim, gui, kind, panel, &ui.color_scheme_editor, worker)
 		remaining_sim_draw_color_scheme_modal(gui, &ui.color_scheme_editor, kind, sim)
+	}
+	if kind == .Slime_Mold {
+		slime_controller_ui_draw(ui, gui, sim, width, height, worker)
 	}
 	if kind == .Vectors && sim.vectors_image_dialog_requested {
 		sim.vectors_image_dialog_requested = false
@@ -1207,6 +1236,9 @@ app_ui_draw_options :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx: ^
 		ui.settings.menu_position = MENU_POSITION_OPTIONS[ui.menu_position_index]
 		app_ui_mark_settings_changed(ui, worker)
 	}
+	if uifw.gui_toggle(gui, "Controller UI", "experimental_controller_ui", &ui.settings.experimental_controller_ui) {
+		app_ui_mark_settings_changed(ui, worker)
+	}
 	uifw.gui_pop_id(gui)
 
 	uifw.gui_spacer(gui, gui.style.spacing_2)
@@ -1261,6 +1293,20 @@ app_ui_draw_gray_scott :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^
 }
 
 app_ui_simulation_shell_update :: proc(ui: ^App_Ui_State, input: Ui_Frame_Input) {
+	controller_ui_action_shortcut := slime_controller_ui_enabled(ui) && input.active_device == .Controller && input.toggle_ui
+	if ui.simulation_shell.force_hidden {
+		if input.key_slash || (input.toggle_ui && !controller_ui_action_shortcut) {
+			ui.simulation_shell.force_hidden = false
+			ui.simulation_shell.show_ui = true
+			ui.simulation_shell.controls_visible = true
+			ui.simulation_shell.idle_seconds = 0
+		} else {
+			ui.simulation_shell.show_ui = false
+			ui.simulation_shell.controls_visible = false
+			ui.simulation_shell.idle_seconds = f32(max(ui.settings.auto_hide_delay, 0)) / 1000.0
+			return
+		}
+	}
 	interaction := input.mouse_pressed ||
 		input.mouse_released ||
 		input.mouse_down ||
@@ -1299,7 +1345,7 @@ app_ui_simulation_shell_update :: proc(ui: ^App_Ui_State, input: Ui_Frame_Input)
 	if !ui.settings.auto_hide_ui || ui.simulation_shell.show_ui {
 		ui.simulation_shell.controls_visible = true
 	}
-	if input.toggle_ui || input.key_slash {
+	if input.key_slash || (input.toggle_ui && !controller_ui_action_shortcut) {
 		ui.simulation_shell.show_ui = !ui.simulation_shell.show_ui
 		ui.simulation_shell.controls_visible = true
 		ui.simulation_shell.idle_seconds = 0
@@ -1332,8 +1378,20 @@ app_ui_simulation_filter_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context
 	bar_rect := uifw.Rect{0, 0, width, app_ui_simulation_bar_height(gui)}
 	menu_rect := app_ui_simulation_menu_panel(ui, gui, width, height)
 	over_bar := ui.simulation_shell.controls_visible && uifw.gui_contains(bar_rect, input.mouse_pos)
-	over_menu := ui.simulation_shell.show_ui && uifw.gui_contains(menu_rect, input.mouse_pos)
-	over_ui := over_bar || over_menu
+	controller_ui_active := slime_controller_ui_enabled(ui)
+	over_menu := ui.simulation_shell.show_ui && !controller_ui_active && uifw.gui_contains(menu_rect, input.mouse_pos)
+	controller_ui_over := controller_ui_active && slime_controller_ui_over_ui(&ui.slime_controller, gui, input)
+	controller_ui_modal := controller_ui_active &&
+		(input.key_space ||
+		 input.key_space_down ||
+		 input.key_space_pressed ||
+		 input.key_space_released ||
+		 (input.pause && input.active_device == .Controller) ||
+		 (input.toggle_ui && input.active_device == .Controller))
+	over_ui := over_bar || over_menu || controller_ui_over || controller_ui_modal
+	if controller_ui_active {
+		filtered = slime_controller_ui_filter_input(ui, gui, filtered)
+	}
 
 	if input.mouse_pressed {
 		ui.simulation_shell.mouse_pressed = !over_ui
@@ -1401,8 +1459,15 @@ app_ui_draw_simulation_bar :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, mo
 	_ = vk_ctx
 	bar_h := app_ui_simulation_bar_height(gui)
 	bar := uifw.Rect{0, 0, width, bar_h}
-	uifw.gui_backdrop_blur_rect(gui, bar, {1, 1, 1, 0.62}, 0.006)
-	uifw.gui_rect(gui, bar, {0, 0, 0, 0.80})
+	glass := uifw.gui_default_glass_style(gui, 0)
+	glass.tint = {0.06, 0.08, 0.10, 0.48}
+	glass.radius = 0
+	glass.roughness = 0.62
+	glass.thickness = max(gui.style.rhythm * 0.22, f32(8))
+	glass.bevel = max(gui.style.border_width * 6, f32(6))
+	glass.border = 0.36
+	glass.highlight = 0.38
+	uifw.gui_refractive_glass_rect(gui, bar, glass)
 	uifw.gui_stroke(gui, {0, bar_h - gui.style.border_width, width, gui.style.border_width}, {1, 1, 1, 0.10})
 
 	scale := app_ui_simulation_bar_scale(gui)
@@ -1452,6 +1517,12 @@ app_ui_draw_simulation_bar :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, mo
 	right_w := f32(260) * scale
 	info_rect := uifw.Rect{max(width - right_w - gui.style.spacing_2, status_rect.x + status_rect.w + gap), y, right_w, button_h}
 	uifw.gui_text_right(gui, app_ui_simulation_bar_text_rect(gui, info_rect), info, gui.style.text_muted)
+	uifw.gui_pop_id(gui)
+}
+
+app_ui_focus_simulation_bar_pause :: proc(gui: ^uifw.Gui_Context) {
+	uifw.gui_push_id(gui, "simulation_bar")
+	gui.focused = uifw.gui_make_id(gui, "pause")
 	uifw.gui_pop_id(gui)
 }
 
@@ -1606,7 +1677,15 @@ app_ui_draw_loading_overlay :: proc(gui: ^uifw.Gui_Context, width, height: f32, 
 		return
 	}
 	overlay := uifw.Rect{0, 0, width, height}
-	uifw.gui_rect(gui, overlay, {0, 0, 0, 0.80})
+	glass := uifw.gui_default_glass_style(gui, 0)
+	glass.tint = {0.04, 0.05, 0.07, 0.56}
+	glass.radius = 0
+	glass.roughness = 0.88
+	glass.thickness = max(gui.style.rhythm * 0.42, f32(16))
+	glass.bevel = max(gui.style.border_width * 3, f32(3))
+	glass.border = 0.12
+	glass.highlight = 0.18
+	uifw.gui_refractive_glass_rect(gui, overlay, glass)
 	scale := app_ui_simulation_bar_scale(gui)
 	spinner_size := max(gui.style.rhythm, f32(40) * scale)
 	center_x := width * 0.5
@@ -1678,10 +1757,13 @@ app_ui_navigate :: proc(ui: ^App_Ui_State, mode: App_Mode) {
 	if mode == .Options {
 		ui.options_scroll = 0
 	}
+	if mode == .Slime_Mold && ui.settings.experimental_controller_ui {
+		ui.slime_controller.deck_visible = true
+	}
 }
 
 app_ui_save_settings :: proc(ui: ^App_Ui_State, worker: ^Render_Worker_State) {
-	if settings_save_app("config/app.toml", ui.settings) {
+	if settings_save_app(settings_app_config_path(), ui.settings) {
 		worker.settings = ui.settings
 		ui.settings_dirty = false
 		app_ui_publish_settings_changed(ui, worker)
@@ -2046,7 +2128,7 @@ app_ui_options_content_height :: proc(gui: ^uifw.Gui_Context) -> f32 {
 	app_ui_options_measure_row(&height, &item_count, gui.style.spacing_2)
 	app_ui_options_measure_section(&height, &item_count, gui, 4)
 	app_ui_options_measure_row(&height, &item_count, gui.style.spacing_2)
-	app_ui_options_measure_section(&height, &item_count, gui, 3)
+	app_ui_options_measure_section(&height, &item_count, gui, 4)
 	app_ui_options_measure_row(&height, &item_count, gui.style.spacing_2)
 	app_ui_options_measure_section(&height, &item_count, gui, 3)
 	app_ui_options_measure_row(&height, &item_count, gui.style.spacing_2)

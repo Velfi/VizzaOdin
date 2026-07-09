@@ -13,6 +13,7 @@ maximized = true
 auto_hide = true
 auto_hide_delay = 3000
 menu_position = "right"
+experimental_controller_ui = true
 
 [camera]
 default_sensitivity = 1.00

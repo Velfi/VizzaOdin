@@ -385,9 +385,8 @@ pellets_write_static_params_size :: proc(gpu: ^Pellets_Gpu_State, frame_slot: in
 		}
 	}
 	if gpu.background_color_buffers[frame_slot].mapped != nil {
-		scheme := color_scheme_effective(&settings.color_scheme, settings.color_scheme_reversed)
 		color := cast(^[4]f32)gpu.background_color_buffers[frame_slot].mapped
-		color^ = color_scheme_color_at(scheme, 0)
+		color^ = pellets_background_color(settings)
 	}
 	if gpu.grid_params_buffers[frame_slot].mapped != nil {
 		params := cast(^Pellets_Grid_Params)gpu.grid_params_buffers[frame_slot].mapped
@@ -1048,13 +1047,19 @@ pellets_gpu_present :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context,
 }
 
 pellets_clear_color :: proc(settings: ^Pellets_Settings) -> uifw.Color {
+	color := pellets_background_color(settings)
+	return {color[0], color[1], color[2], color[3]}
+}
+
+pellets_background_color :: proc(settings: ^Pellets_Settings) -> [4]f32 {
 	#partial switch settings.background_color_mode {
 	case .White:
-		return {0.92, 0.91, 0.88, 1}
+		return {1, 1, 1, 1}
 	case .Gray18:
 		return {0.18, 0.18, 0.18, 1}
 	case .Color_Scheme:
-		return {0.05, 0.045, 0.055, 1}
+		scheme := color_scheme_effective(&settings.color_scheme, settings.color_scheme_reversed)
+		return color_scheme_color_at(scheme, 0)
 	case:
 		return {0, 0, 0, 1}
 	}

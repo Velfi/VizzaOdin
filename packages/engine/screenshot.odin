@@ -8,7 +8,7 @@ import qoi "core:image/qoi"
 import "core:sync"
 import vk "vendor:vulkan"
 
-MAX_SCREENSHOT_BYTES :: 32 * 1024 * 1024
+MAX_SCREENSHOT_BYTES :: 256 * 1024 * 1024
 
 Screenshot_State :: struct {
 	mutex: sync.Mutex,
@@ -93,6 +93,10 @@ screenshot_state_copy_qoi :: proc(state: ^Screenshot_State, allocator := context
 }
 
 screenshot_state_copy_qoi_sized :: proc(state: ^Screenshot_State, max_width, max_height: u32, scale: f32, allocator := context.allocator) -> (data: []u8, width, height: u32, sequence: u64, ok: bool) {
+	return screenshot_state_copy_qoi_resized(state, max_width, max_height, scale, 0, 0, allocator)
+}
+
+screenshot_state_copy_qoi_resized :: proc(state: ^Screenshot_State, max_width, max_height: u32, scale: f32, output_width, output_height: u32, allocator := context.allocator) -> (data: []u8, width, height: u32, sequence: u64, ok: bool) {
 	sync.mutex_lock(&state.mutex)
 	defer sync.mutex_unlock(&state.mutex)
 	if !state.ready || len(state.rgba) == 0 {
@@ -106,7 +110,7 @@ screenshot_state_copy_qoi_sized :: proc(state: ^Screenshot_State, max_width, max
 		return
 	}
 
-	target_width, target_height := screenshot_scaled_dimensions(source_width, source_height, max_width, max_height, scale)
+	target_width, target_height := screenshot_scaled_dimensions(source_width, source_height, max_width, max_height, scale, output_width, output_height)
 
 	pixel_count := int(target_width * target_height)
 	alloc_err: runtime.Allocator_Error
@@ -158,7 +162,19 @@ screenshot_state_copy_qoi_sized :: proc(state: ^Screenshot_State, max_width, max
 	return
 }
 
-screenshot_scaled_dimensions :: proc(source_width, source_height, max_width, max_height: u32, scale: f32) -> (target_width, target_height: u32) {
+screenshot_scaled_dimensions :: proc(source_width, source_height, max_width, max_height: u32, scale: f32, output_width := u32(0), output_height := u32(0)) -> (target_width, target_height: u32) {
+	if output_width > 0 && output_height > 0 {
+		return output_width, output_height
+	}
+	if output_width > 0 {
+		ratio := f32(output_width) / f32(max(source_width, 1))
+		return output_width, u32(max(f32(source_height) * ratio, 1))
+	}
+	if output_height > 0 {
+		ratio := f32(output_height) / f32(max(source_height, 1))
+		return u32(max(f32(source_width) * ratio, 1)), output_height
+	}
+
 	output_scale := scale
 	if output_scale <= 0 {
 		output_scale = 1

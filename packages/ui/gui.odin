@@ -113,6 +113,18 @@ Gui_Image_Filter :: struct {
 	blur: f32,
 }
 
+Gui_Glass_Style :: struct {
+	tint: Color,
+	radius: f32,
+	thickness: f32,
+	roughness: f32,
+	bevel: f32,
+	ior: f32,
+	dispersion: f32,
+	border: f32,
+	highlight: f32,
+}
+
 Input_Device_Kind :: enum {
 	Mouse_Keyboard,
 	Controller,
@@ -180,6 +192,12 @@ Input_State :: struct {
 	key_c: bool,
 	key_slash: bool,
 	key_space: bool,
+	key_space_down: bool,
+	key_space_pressed: bool,
+	key_space_released: bool,
+	controller_left: Vec2,
+	controller_right: Vec2,
+	controller_zoom: f32,
 }
 
 Draw_Command_Kind :: enum {
@@ -196,6 +214,7 @@ Draw_Command_Kind :: enum {
 	Shader_Rect,
 	Image,
 	Backdrop_Blur_Rect,
+	Refractive_Glass_Rect,
 	Text,
 	Scissor_Begin,
 	Scissor_End,
@@ -223,6 +242,7 @@ Draw_Command :: struct {
 	stroke_width: f32,
 	image_id: Gui_Image_Id,
 	image_filter: Gui_Image_Filter,
+	glass_style: Gui_Glass_Style,
 	shader_kind: Gui_Shader_Kind,
 	shader_params: Color,
 	blend: Gui_Blend_Mode,
@@ -496,15 +516,15 @@ Gui_Context :: struct {
 gui_default_style :: proc() -> Gui_Style {
 	return {
 		bg = {0.0, 0.0, 0.0, 0.0},
-		panel = {0.0, 0.0, 0.0, 0.94},
-		panel_border = {1.0, 1.0, 1.0, 0.28},
-		control = {1.0, 1.0, 1.0, 0.14},
-		control_hot = {1.0, 1.0, 1.0, 0.26},
-		control_active = {0.392, 0.424, 1.0, 0.30},
+		panel = {0.08, 0.10, 0.12, 0.56},
+		panel_border = {1.0, 1.0, 1.0, 0.22},
+		control = {1.0, 1.0, 1.0, 0.12},
+		control_hot = {1.0, 1.0, 1.0, 0.24},
+		control_active = {0.86, 0.92, 1.0, 0.28},
 		control_disabled = {1.0, 1.0, 1.0, 0.07},
 		text = {1.0, 1.0, 1.0, 0.90},
 		text_muted = {1.0, 1.0, 1.0, 0.70},
-		accent = {0.392, 0.424, 1.0, 1.0},
+		accent = {0.86, 0.92, 1.0, 1.0},
 		danger = {0.937, 0.267, 0.267, 1.0},
 		spacing = 12,
 		spacing_1 = 4,
@@ -887,7 +907,7 @@ gui_begin_panel :: proc(ctx: ^Gui_Context, bounds: Rect) {
 
 gui_panel_begin :: proc(ctx: ^Gui_Context, bounds: Rect) {
 	gui_shadow(ctx, bounds, ctx.style.radius_panel, ctx.style.shadow_offset, ctx.style.shadow_blur, ctx.style.shadow_color)
-	gui_round_rect(ctx, bounds, ctx.style.radius_panel, ctx.style.panel)
+	gui_refractive_glass_rect(ctx, bounds, gui_default_glass_style(ctx, ctx.style.radius_panel))
 	gui_round_stroke(ctx, bounds, ctx.style.radius_panel, ctx.style.panel_border, ctx.style.border_width)
 	gui_layout_begin(ctx, gui_inset(bounds, ctx.style.panel_padding), .Column, ctx.style.spacing, ctx.style.row_height)
 }
@@ -3021,6 +3041,50 @@ gui_image_uv_filtered_blend :: proc(ctx: ^Gui_Context, rect: Rect, image_id: Gui
 gui_backdrop_blur_rect :: proc(ctx: ^Gui_Context, rect: Rect, tint: Color, blur: f32) {
 	filter := Gui_Image_Filter{brightness = 1.04, contrast = 0.96, grayscale = 0, blur = blur}
 	append(&ctx.commands, Draw_Command{kind = .Backdrop_Blur_Rect, rect = rect, color = tint, image_filter = filter})
+}
+
+gui_default_glass_style :: proc(ctx: ^Gui_Context, radius: f32) -> Gui_Glass_Style {
+	r := radius
+	if r <= 0 {
+		r = ctx.style.radius_panel
+	}
+	return {
+		tint = {0.07, 0.09, 0.11, 0.38},
+		radius = r,
+		thickness = max(ctx.style.rhythm * 0.18, f32(7)),
+		roughness = 0.50,
+		bevel = max(ctx.style.border_width * 5, f32(5)),
+		ior = 1.46,
+		dispersion = 0.90,
+		border = 0.32,
+		highlight = 0.36,
+	}
+}
+
+gui_refractive_glass_rect :: proc(ctx: ^Gui_Context, rect: Rect, style: Gui_Glass_Style) {
+	if rect.w <= 0 || rect.h <= 0 {
+		return
+	}
+	glass := style
+	if glass.radius < 0 {
+		glass.radius = 0
+	}
+	if glass.thickness <= 0 {
+		glass.thickness = max(ctx.style.rhythm * 0.18, f32(7))
+	}
+	if glass.bevel <= 0 {
+		glass.bevel = max(ctx.style.border_width * 5, f32(5))
+	}
+	if glass.ior <= 0 {
+		glass.ior = 1.46
+	}
+	if glass.dispersion < 0 {
+		glass.dispersion = 0
+	}
+	glass.roughness = gui_clamp01(glass.roughness)
+	glass.border = gui_clamp01(glass.border)
+	glass.highlight = gui_clamp01(glass.highlight)
+	append(&ctx.commands, Draw_Command{kind = .Refractive_Glass_Rect, rect = rect, color = glass.tint, glass_style = glass})
 }
 
 gui_focus_ring :: proc(ctx: ^Gui_Context, rect: Rect) {

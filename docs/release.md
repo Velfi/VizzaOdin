@@ -1,6 +1,6 @@
 # Release Pipeline
 
-VizzaOdin releases are currently macOS-only.
+VizzaOdin releases currently publish macOS and Windows artifacts.
 
 Use `scripts/release.sh` to cut releases from `main`:
 
@@ -19,8 +19,9 @@ Pre-releases, such as `0.2.0-0`, skip changelog compilation so fragments can
 accumulate until the stable release.
 
 Pushing a tag that starts with `v` runs `.github/workflows/release.yml`. That
-workflow calls the reusable macOS package workflow, uploads the signed and
-notarized `Vizza.app` zip, then creates a GitHub Release.
+workflow hydrates Git LFS assets once, calls the reusable macOS and Windows
+package workflows, uploads the signed and notarized `Vizza.app` zip plus the
+Windows zip, then creates a GitHub Release.
 
 ## Required GitHub Secrets
 
@@ -43,6 +44,26 @@ The workflow also supports the older Apple ID notarization secrets:
 
 The repository also needs GitHub Actions workflow permissions that allow
 `contents: write`, because the release workflow creates GitHub Releases.
+
+The Windows workflow uses MSVC, Odin, vcpkg packages for
+SDL3/HarfBuzz/Freetype/Vulkan loader, and the Slang compiler to produce both
+`vizza-v<version>-windows-x64.zip` and `vizza-v<version>-windows-x64.msix`.
+The zip contains `Vizza.exe`, the app DLL dependencies, `assets/`, and compiled
+`build/shaders/`; use that package for GitHub downloads and Steam staging.
+
+The MSIX is a packaged Win32 desktop app (`packagedClassicApp` with
+`runFullTrust`), not a sandboxed UWP rewrite. For Microsoft Store submission,
+set these repository variables to the identity values from Partner Center:
+
+- `WINDOWS_PACKAGE_IDENTITY_NAME`
+- `WINDOWS_PACKAGE_PUBLISHER`
+- `WINDOWS_PACKAGE_PUBLISHER_DISPLAY_NAME`
+
+Store ingestion re-signs MSIX/AppX packages. For sideloadable GitHub artifacts,
+configure these optional secrets:
+
+- `WINDOWS_CERTIFICATE`: base64-encoded code-signing `.pfx`
+- `WINDOWS_CERTIFICATE_PASSWORD`: password for the `.pfx`
 
 ## Changelog Fragments
 

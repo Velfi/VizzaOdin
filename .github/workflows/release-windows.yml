@@ -1,0 +1,135 @@
+name: Release build (Windows)
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build:
+    name: Release Windows
+    runs-on: windows-latest
+
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      VCPKG_ROOT: C:\vcpkg
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag }}
+          lfs: false
+
+      - uses: ./.github/actions/hydrate-lfs-bundle
+
+      - name: Compute version
+        id: version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:RELEASE_TAG -replace '^v', ''
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ github.token }}
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\vcpkg\installed
+            ~\AppData\Local\vcpkg\archives
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v1-${{ hashFiles('.github/workflows/release-windows.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-vcpkg-v1-
+
+      - name: Install Windows build dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Test-Path "$env:VCPKG_ROOT\vcpkg.exe")) {
+            & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          }
+          & "$env:VCPKG_ROOT\vcpkg.exe" install `
+            "sdl3:$env:VCPKG_DEFAULT_TRIPLET" `
+            "harfbuzz:$env:VCPKG_DEFAULT_TRIPLET" `
+            "freetype:$env:VCPKG_DEFAULT_TRIPLET" `
+            "vulkan-loader:$env:VCPKG_DEFAULT_TRIPLET"
+
+      - name: Cache Slang compiler
+        id: slang-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .tools/slang
+          key: ${{ runner.os }}-${{ runner.arch }}-slang-v1-${{ hashFiles('scripts/install_slangc.ps1') }}
+
+      - name: Install Slang compiler
+        if: steps.slang-cache.outputs.cache-hit != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: ./scripts/install_slangc.ps1
+
+      - name: Verify Slang compiler
+        shell: pwsh
+        run: ./.tools/slang/bin/slangc.exe -version
+
+      - name: Save Slang compiler cache
+        if: steps.slang-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .tools/slang
+          key: ${{ steps.slang-cache.outputs.cache-primary-key }}
+
+      - name: Build Windows app archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ODIN_FLAGS: -o:speed
+          WINDOWS_PACKAGE_IDENTITY_NAME: ${{ vars.WINDOWS_PACKAGE_IDENTITY_NAME }}
+          WINDOWS_PACKAGE_PUBLISHER: ${{ vars.WINDOWS_PACKAGE_PUBLISHER }}
+          WINDOWS_PACKAGE_PUBLISHER_DISPLAY_NAME: ${{ vars.WINDOWS_PACKAGE_PUBLISHER_DISPLAY_NAME }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:WINDOWS_CERTIFICATE) {
+            $pfxPath = Join-Path $env:RUNNER_TEMP "vizza-windows-signing.pfx"
+            [System.IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+            "WINDOWS_PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+            $env:WINDOWS_PFX_PATH = $pfxPath
+          }
+          ./scripts/package_windows.ps1 -Version $env:VERSION -Msix
+
+      - name: Set artifact name
+        id: artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "vizza-$env:RELEASE_TAG-windows-x64"
+          $zip = "$name.zip"
+          $msix = "$name.msix"
+          Copy-Item -Path "dist/Vizza-windows.zip" -Destination "dist/$zip" -Force
+          Copy-Item -Path "dist/Vizza-windows.msix" -Destination "dist/$msix" -Force
+          "name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "zip=dist/$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "msix=dist/$msix" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            ${{ steps.artifact.outputs.zip }}
+            ${{ steps.artifact.outputs.msix }}

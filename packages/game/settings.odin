@@ -2,6 +2,7 @@ package game
 
 import "core:fmt"
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
 
 Toml_Type :: enum i32 {
@@ -88,6 +89,7 @@ App_Settings :: struct {
 	auto_hide_ui: bool,
 	auto_hide_delay: i32,
 	menu_position: string,
+	experimental_controller_ui: bool,
 	default_camera_sensitivity: f32,
 	texture_filtering: string,
 	gpu_memory_ceiling_fraction: f32,
@@ -109,6 +111,7 @@ settings_default :: proc() -> App_Settings {
 		auto_hide_ui = true,
 		auto_hide_delay = 3000,
 		menu_position = "middle",
+		experimental_controller_ui = true,
 		default_camera_sensitivity = 1.0,
 		texture_filtering = "Linear",
 		gpu_memory_ceiling_fraction = 0,
@@ -122,6 +125,17 @@ settings_default :: proc() -> App_Settings {
 
 settings_toml_parser_name :: proc() -> string {
 	return "tomlc17"
+}
+
+settings_app_config_path :: proc() -> string {
+	when ODIN_OS == .Windows {
+		buf: [1024]u8
+		local_app_data := os.get_env_buf(buf[:], "LOCALAPPDATA")
+		if len(local_app_data) > 0 {
+			return fmt.tprintf("%s/VizzaOdin/config/app.toml", local_app_data)
+		}
+	}
+	return "config/app.toml"
 }
 
 settings_load_app :: proc(path: string) -> (App_Settings, bool) {
@@ -176,6 +190,9 @@ settings_load_app :: proc(path: string) -> (App_Settings, bool) {
 			settings.menu_position = cloned
 		}
 	}
+	if v, ok := toml_bool(result.toptab, "ui.experimental_controller_ui"); ok {
+		settings.experimental_controller_ui = v
+	}
 	if v, ok := toml_f64(result.toptab, "camera.default_sensitivity"); ok {
 		settings.default_camera_sensitivity = f32(v)
 	}
@@ -207,11 +224,14 @@ settings_load_app :: proc(path: string) -> (App_Settings, bool) {
 }
 
 settings_save_app :: proc(path: string, settings: App_Settings) -> bool {
-	_ = os.make_directory_all("config")
+	dir, _ := filepath.split(path)
+	if len(dir) > 0 {
+		_ = os.make_directory_all(dir)
+	}
 	buf: [1024]u8
 	text := fmt.bprintf(
 		buf[:],
-		"[display]\nfps_limit_enabled = %v\nfps_limit = %d\nui_scale = %.2f\ntexture_filtering = \"%s\"\n\n[window]\nwidth = %d\nheight = %d\nmaximized = %v\n\n[ui]\nauto_hide = %v\nauto_hide_delay = %d\nmenu_position = \"%s\"\n\n[camera]\ndefault_sensitivity = %.2f\n\n[gpu]\nmemory_ceiling_fraction = %.3f\n\n[presets]\ndirectory = \"%s\"\n\n[steam]\nenabled = %v\napp_id = %d\nrestart_if_necessary = %v\nlibrary_path = \"%s\"\n",
+		"[display]\nfps_limit_enabled = %v\nfps_limit = %d\nui_scale = %.2f\ntexture_filtering = \"%s\"\n\n[window]\nwidth = %d\nheight = %d\nmaximized = %v\n\n[ui]\nauto_hide = %v\nauto_hide_delay = %d\nmenu_position = \"%s\"\nexperimental_controller_ui = %v\n\n[camera]\ndefault_sensitivity = %.2f\n\n[gpu]\nmemory_ceiling_fraction = %.3f\n\n[presets]\ndirectory = \"%s\"\n\n[steam]\nenabled = %v\napp_id = %d\nrestart_if_necessary = %v\nlibrary_path = \"%s\"\n",
 		settings.default_fps_limit_enabled,
 		settings.default_fps_limit,
 		settings.ui_scale,
@@ -222,6 +242,7 @@ settings_save_app :: proc(path: string, settings: App_Settings) -> bool {
 		settings.auto_hide_ui,
 		settings.auto_hide_delay,
 		settings.menu_position,
+		settings.experimental_controller_ui,
 		settings.default_camera_sensitivity,
 		settings.gpu_memory_ceiling_fraction,
 		settings.preset_directory,
@@ -395,8 +416,9 @@ settings_write_particle_life_toml :: proc(settings: Particle_Life_Settings, out:
 		cursor^ += len(text)
 	}
 	color_mode_index := int(max(min(u32(settings.color_mode), u32(len(PARTICLE_LIFE_COLOR_MODE_NAMES) - 1)), 0))
+	background_index := int(max(min(int(settings.background_color_mode), len(VECTOR_BACKGROUND_MODE_NAMES) - 1), 0))
 	color_scheme_name := settings.color_scheme
-	appendf(out, &cursor, "[particle_life]\nparticle_count = %d\nspecies_count = %d\nmax_force = %.6f\nmax_distance = %.6f\nfriction = %.6f\nbeta = %.6f\nbrownian_motion = %.6f\nparticle_size = %.6f\ncursor_size = %.6f\ncursor_strength = %.6f\nposition_generator = \"%s\"\ntype_generator = \"%s\"\nforce_generator = \"%s\"\nforce_random_min = %.6f\nforce_random_max = %.6f\ncamera_x = %.6f\ncamera_y = %.6f\ncamera_zoom = %.6f\ncolor_mode = \"%s\"\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nbackground_r = %.6f\nbackground_g = %.6f\nbackground_b = %.6f\nbackground_a = %.6f\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\nbrightness = %.6f\ncontrast = %.6f\nsaturation = %.6f\ngamma = %.6f\ntrails_enabled = %v\ntrail_fade_amount = %.6f\ninfinite_tiles_enabled = %v\ninfinite_tile_radius = %d\nanalysis_enabled = %v\nanalysis_interval_frames = %d\nanalysis_grid_size = %d\ncoherence_threshold = %.6f\nmin_blob_area_cells = %d\nblob_overlay_enabled = %v\nwrap_edges = %v\npaused = %v\ncustom_force_matrix = %v\n\n[particle_life.force_matrix]\n",
+	appendf(out, &cursor, "[particle_life]\nparticle_count = %d\nspecies_count = %d\nmax_force = %.6f\nmax_distance = %.6f\nfriction = %.6f\nbeta = %.6f\nbrownian_motion = %.6f\nparticle_size = %.6f\ncursor_size = %.6f\ncursor_strength = %.6f\nposition_generator = \"%s\"\ntype_generator = \"%s\"\nforce_generator = \"%s\"\nforce_random_min = %.6f\nforce_random_max = %.6f\ncamera_x = %.6f\ncamera_y = %.6f\ncamera_zoom = %.6f\ncolor_mode = \"%s\"\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nbackground_color_mode = \"%s\"\nbackground_r = %.6f\nbackground_g = %.6f\nbackground_b = %.6f\nbackground_a = %.6f\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\nbrightness = %.6f\ncontrast = %.6f\nsaturation = %.6f\ngamma = %.6f\ntrails_enabled = %v\ntrail_fade_amount = %.6f\ninfinite_tiles_enabled = %v\ninfinite_tile_radius = %d\nanalysis_enabled = %v\nanalysis_interval_frames = %d\nanalysis_grid_size = %d\ncoherence_threshold = %.6f\nmin_blob_area_cells = %d\nblob_overlay_enabled = %v\nwrap_edges = %v\npaused = %v\ncustom_force_matrix = %v\n\n[particle_life.force_matrix]\n",
 		settings.particle_count,
 		settings.species_count,
 		settings.max_force,
@@ -418,6 +440,7 @@ settings_write_particle_life_toml :: proc(settings: Particle_Life_Settings, out:
 		PARTICLE_LIFE_COLOR_MODE_NAMES[color_mode_index],
 		color_scheme_name_get(&color_scheme_name),
 		settings.color_scheme_reversed,
+		VECTOR_BACKGROUND_MODE_NAMES[background_index],
 		settings.background_color[0],
 		settings.background_color[1],
 		settings.background_color[2],
@@ -578,6 +601,17 @@ settings_load_particle_life :: proc(path: string, defaults: Particle_Life_Settin
 	}
 	if v, ok := toml_bool(result.toptab, "particle_life.color_scheme_reversed"); ok {
 		settings.color_scheme_reversed = v
+	}
+	if v, ok := toml_string(result.toptab, "particle_life.background_color_mode"); ok {
+		value: Vector_Background_Mode
+		if vector_background_mode_from_name(v, &value) {
+			settings.background_color_mode = value
+			settings.background_index = int(value)
+		}
+	} else if v, ok := toml_i64(result.toptab, "particle_life.background_color_mode"); ok {
+		value := max(min(v, i64(len(VECTOR_BACKGROUND_MODE_NAMES) - 1)), 0)
+		settings.background_color_mode = Vector_Background_Mode(value)
+		settings.background_index = int(value)
 	}
 	if v, ok := toml_f64(result.toptab, "particle_life.background_r"); ok {
 		settings.background_color[0] = f32(v)

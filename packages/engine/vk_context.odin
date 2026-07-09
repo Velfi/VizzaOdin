@@ -135,6 +135,7 @@ Vk_Context :: struct {
 	last_cpu_timings: Vk_Frame_Cpu_Timings,
 	command_shape: Vk_Command_Shape_Counters,
 	last_command_shape: Vk_Command_Shape_Counters,
+	swapchain_supports_transfer_src: bool,
 	initialized: bool,
 	capture_enabled: bool,
 	supports_debug_utils: bool,
@@ -946,8 +947,10 @@ vk_create_render_pass :: proc(ctx: ^Vk_Context) -> bool {
 vk_swapchain_image_usage :: proc(ctx: ^Vk_Context, caps: vk.SurfaceCapabilitiesKHR) -> vk.ImageUsageFlags {
 	usage := vk.ImageUsageFlags{.COLOR_ATTACHMENT, .TRANSFER_DST}
 	transfer_src := vk.ImageUsageFlags{.TRANSFER_SRC}
+	ctx.swapchain_supports_transfer_src = false
 	if transfer_src <= caps.supportedUsageFlags {
 		usage += transfer_src
+		ctx.swapchain_supports_transfer_src = true
 	}
 	return usage
 }

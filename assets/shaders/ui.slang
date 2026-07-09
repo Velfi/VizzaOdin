@@ -16,7 +16,7 @@ float3 ui_hsv_to_rgb(float3 hsv) {
 
 float4 ui_shader_output(float2 uv, float4 tint, float4 effect, float glyph) {
 	float kind = floor((-glyph - 10.0) + 0.5);
-	if (kind > 3.5) {
+	if (kind == 4.0) {
 		float2 p = uv * 2.0 - 1.0;
 		float dist = length(p);
 		float inner = saturate(effect.y);
@@ -29,7 +29,7 @@ float4 ui_shader_output(float2 uv, float4 tint, float4 effect, float glyph) {
 		float3 rgb = lerp(track, tint.rgb, arc);
 		return float4(rgb, ring * tint.a);
 	}
-	if (kind > 2.5) {
+	if (kind == 3.0) {
 		float2 p = uv * 2.0 - 1.0;
 		float dist = length(p);
 		float inner = saturate(effect.x);
@@ -38,14 +38,14 @@ float4 ui_shader_output(float2 uv, float4 tint, float4 effect, float glyph) {
 		float hue = frac(atan2(p.y, p.x) / 6.28318530718);
 		return float4(ui_hsv_to_rgb(float3(hue, 1.0, 1.0)) * tint.rgb, ring * tint.a);
 	}
-	if (kind > 1.5) {
+	if (kind == 2.0) {
 		float2 cell = floor(uv * float2(18.0, 3.0));
 		float checker = fmod(cell.x + cell.y, 2.0) < 1.0 ? 0.22 : 0.34;
 		float4 base = float4(tint.rgb, saturate(uv.x) * tint.a);
 		float3 composed = lerp(float3(checker), base.rgb, base.a);
 		return float4(composed, 1.0);
 	}
-	if (kind > 0.5) {
+	if (kind == 1.0) {
 		float3 saturation_color = lerp(float3(1.0), tint.rgb, saturate(uv.x));
 		float3 value_color = saturation_color * (1.0 - saturate(uv.y));
 		return float4(value_color, tint.a);
@@ -58,7 +58,8 @@ Fragment_Output fragment_main(
 	[[vk::location(0)]] float4 color: COLOR0,
 	[[vk::location(1)]] float2 texcoord: TEXCOORD0,
 	[[vk::location(2)]] float glyph: TEXCOORD1,
-	[[vk::location(3)]] float4 effect: TEXCOORD2) {
+	[[vk::location(3)]] float4 effect: TEXCOORD2,
+	[[vk::location(4)]] float4 material: TEXCOORD3) {
 	Fragment_Output output;
 	if (glyph < -9.5) {
 		output.color = ui_shader_output(texcoord, color, effect, glyph);

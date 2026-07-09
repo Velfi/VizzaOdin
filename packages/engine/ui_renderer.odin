@@ -13,31 +13,39 @@ UI_MAX_DRAW_BATCHES :: 4096
 UI_MAX_TEXTURES :: 32
 UI_BLEND_MODE_COUNT :: 4
 UI_BACKDROP_BLUR_VERTICES_PER_PASS :: 6
-UI_BACKDROP_BLUR_PASS_COUNT :: 2
+UI_BACKDROP_BLUR_PASS_COUNT :: 6
 UI_STROKE_WIDTH :: f32(1)
 UI_IMAGE_GLYPH :: f32(-2)
+UI_GLASS_GLYPH :: f32(-3)
 UI_SHADER_GLYPH_BASE :: f32(-10)
 UI_DEFAULT_EFFECT :: uifw.Color{1, 1, 0, 0}
+UI_DEFAULT_MATERIAL :: uifw.Color{0, 0, 0, 0}
 UI_VERTEX_SHADER_FALLBACK_SPV :: "build/shaders/ui_vertex"
 UI_FRAGMENT_SHADER_FALLBACK_SPV :: "build/shaders/ui"
 UI_BLUR_FRAGMENT_SHADER_FALLBACK_SPV :: "build/shaders/ui_blur"
+UI_GLASS_FRAGMENT_SHADER_FALLBACK_SPV :: "build/shaders/ui_glass"
 UI_VERTEX_SHADER_SOURCE :: "assets/shaders/ui_vertex.slang"
 UI_FRAGMENT_SHADER_SOURCE :: "assets/shaders/ui.slang"
 UI_BLUR_FRAGMENT_SHADER_SOURCE :: "assets/shaders/ui_blur.slang"
+UI_GLASS_FRAGMENT_SHADER_SOURCE :: "assets/shaders/ui_glass.slang"
 UI_VERTEX_ENTRY_POINT :: "main"
 UI_FRAGMENT_ENTRY_POINT :: "fragment_main"
 UI_VERTEX_SPIRV_ENTRY_POINT :: "main"
 UI_FRAGMENT_SPIRV_ENTRY_POINT :: "main"
 UI_EXAMPLE_SCREENSHOT_TEXTURE_ID :: 1
 UI_BACKDROP_SOURCE_TEXTURE_ID :: 2
-UI_BACKDROP_TEMP_TEXTURE_ID :: 3
-UI_BACKDROP_TEXTURE_ID :: 4
-UI_FONT_TEXTURE_FIRST_ID :: 5
+UI_BACKDROP_HALF_TEMP_TEXTURE_ID :: 3
+UI_BACKDROP_HALF_TEXTURE_ID :: 4
+UI_BACKDROP_QUARTER_TEMP_TEXTURE_ID :: 5
+UI_BACKDROP_QUARTER_TEXTURE_ID :: 6
+UI_BACKDROP_EIGHTH_TEMP_TEXTURE_ID :: 7
+UI_BACKDROP_EIGHTH_TEXTURE_ID :: 8
+UI_BACKDROP_TEXTURE_ID :: UI_BACKDROP_EIGHTH_TEXTURE_ID
+UI_FONT_TEXTURE_FIRST_ID :: 9
 UI_FONT_TEXTURE_COUNT :: UI_MAX_TEXTURES - UI_FONT_TEXTURE_FIRST_ID
 UI_FONT_ATLAS_COLUMNS :: 16
 UI_EXAMPLE_SCREENSHOT_PATH :: "vizzaodin-ui-screenshot.png"
 UI_EXAMPLE_SCREENSHOT_MAX_WIDTH :: u32(512)
-UI_BACKDROP_DOWNSAMPLE :: u32(4)
 UI_FONT_GLYPH_COUNT :: 95
 UI_FONT_GLYPH_FIRST :: 32
 UI_FONT_LOGICAL_WIDTH :: 10
@@ -54,6 +62,7 @@ Ui_Vertex :: struct {
 	uv: uifw.Vec2,
 	glyph: f32,
 	effect: uifw.Color,
+	material: uifw.Color,
 }
 
 Ui_Clear_Rect :: struct {
@@ -66,6 +75,7 @@ Ui_Draw_Batch :: struct {
 	vertex_count: u32,
 	texture_index: u32,
 	blend_mode: u32,
+	glass: bool,
 }
 
 Ui_Font_Atlas_Cache_Entry :: struct {
@@ -100,6 +110,8 @@ Ui_Texture :: struct {
 	framebuffer: vk.Framebuffer,
 	sampler: vk.Sampler,
 	descriptor_set: vk.DescriptorSet,
+	width: u32,
+	height: u32,
 	owned: bool,
 	ready: bool,
 }
@@ -108,19 +120,22 @@ Ui_Renderer :: struct {
 	vertex_buffers: [MAX_FRAMES_IN_FLIGHT]Vk_Buffer,
 	vertex_count: u32,
 	active_frame_slot: u32,
-	needs_backdrop_blur: bool,
+	needs_backdrop_capture: bool,
 	clear_rects: [UI_MAX_CLEAR_RECTS]Ui_Clear_Rect,
 	clear_rect_count: u32,
 	batches: [UI_MAX_DRAW_BATCHES]Ui_Draw_Batch,
 	batch_count: u32,
 	descriptor_set_layout: vk.DescriptorSetLayout,
+	glass_descriptor_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool: vk.DescriptorPool,
+	glass_descriptor_set: vk.DescriptorSet,
 	textures: [UI_MAX_TEXTURES]Ui_Texture,
 	backdrop_width: u32,
 	backdrop_height: u32,
 	backdrop_layouts: [UI_MAX_TEXTURES]vk.ImageLayout,
 	backdrop_render_pass: vk.RenderPass,
 	backdrop_blur_pipeline: Vk_Graphics_Pipeline,
+	glass_pipeline: Vk_Graphics_Pipeline,
 	backdrop_vertex_buffers: [MAX_FRAMES_IN_FLIGHT]Vk_Buffer,
 	pipelines: [UI_BLEND_MODE_COUNT]Vk_Graphics_Pipeline,
 	font_atlases: [UI_FONT_TEXTURE_COUNT]Ui_Font_Atlas_Cache_Entry,
@@ -163,6 +178,11 @@ ui_renderer_init :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) -> bool {
 		ui_renderer_destroy(renderer, ctx)
 		return false
 	}
+	if !ui_renderer_create_glass_pipeline(renderer, ctx, &renderer.glass_pipeline) {
+		log_error("ui_renderer_init: glass pipeline creation failed")
+		ui_renderer_destroy(renderer, ctx)
+		return false
+	}
 	for i in 0 ..< UI_BLEND_MODE_COUNT {
 		if !ui_renderer_create_pipeline(renderer, ctx, uifw.Gui_Blend_Mode(i), &renderer.pipelines[i]) {
 			log_error("ui_renderer_init: graphics pipeline creation failed for blend mode index=", i)
@@ -182,6 +202,7 @@ ui_renderer_destroy :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) {
 	for i in 0 ..< len(renderer.pipelines) {
 		vk_destroy_graphics_pipeline(ctx, &renderer.pipelines[i])
 	}
+	vk_destroy_graphics_pipeline(ctx, &renderer.glass_pipeline)
 	vk_destroy_graphics_pipeline(ctx, &renderer.backdrop_blur_pipeline)
 	if renderer.backdrop_render_pass != vk.RenderPass(0) {
 		vk.DestroyRenderPass(ctx.device, renderer.backdrop_render_pass, nil)
@@ -194,6 +215,9 @@ ui_renderer_destroy :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) {
 	}
 	if renderer.descriptor_set_layout != vk.DescriptorSetLayout(0) {
 		vk.DestroyDescriptorSetLayout(ctx.device, renderer.descriptor_set_layout, nil)
+	}
+	if renderer.glass_descriptor_set_layout != vk.DescriptorSetLayout(0) {
+		vk.DestroyDescriptorSetLayout(ctx.device, renderer.glass_descriptor_set_layout, nil)
 	}
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
 		vk_destroy_buffer(ctx, &renderer.backdrop_vertex_buffers[i])
@@ -220,14 +244,30 @@ ui_renderer_create_texture_resources :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Co
 		log_error("ui_renderer_create_texture_resources: descriptor set layout failed")
 		return false
 	}
+	glass_bindings := [?]vk.DescriptorSetLayoutBinding {
+		{binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+		{binding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+		{binding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+		{binding = 3, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+		{binding = 4, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+	}
+	glass_layout_info := vk.DescriptorSetLayoutCreateInfo {
+		sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		bindingCount = u32(len(glass_bindings)),
+		pBindings = raw_data(glass_bindings[:]),
+	}
+	if vk.CreateDescriptorSetLayout(ctx.device, &glass_layout_info, nil, &renderer.glass_descriptor_set_layout) != .SUCCESS {
+		log_error("ui_renderer_create_texture_resources: glass descriptor set layout failed")
+		return false
+	}
 
 	pool_sizes := [?]vk.DescriptorPoolSize {
-		{type = .SAMPLED_IMAGE, descriptorCount = UI_MAX_TEXTURES},
-		{type = .SAMPLER, descriptorCount = UI_MAX_TEXTURES},
+		{type = .SAMPLED_IMAGE, descriptorCount = UI_MAX_TEXTURES + 4},
+		{type = .SAMPLER, descriptorCount = UI_MAX_TEXTURES + 1},
 	}
 	pool_info := vk.DescriptorPoolCreateInfo {
 		sType = .DESCRIPTOR_POOL_CREATE_INFO,
-		maxSets = UI_MAX_TEXTURES,
+		maxSets = UI_MAX_TEXTURES + 1,
 		poolSizeCount = u32(len(pool_sizes)),
 		pPoolSizes = raw_data(pool_sizes[:]),
 	}
@@ -241,6 +281,9 @@ ui_renderer_create_texture_resources :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Co
 		0x78, 0x6b, 0x5f, 0xff, 0x4a, 0x41, 0x3b, 0xff,
 	}
 	if !ui_renderer_create_owned_texture(renderer, ctx, 0, 2, 2, pixels[:]) {
+		return false
+	}
+	if !ui_renderer_update_glass_descriptor(renderer, ctx) {
 		return false
 	}
 	_ = ui_renderer_create_example_screenshot_texture(renderer, ctx)
@@ -417,6 +460,8 @@ ui_renderer_create_owned_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Contex
 		return false
 	}
 	texture.owned = true
+	texture.width = width
+	texture.height = height
 	return ui_renderer_allocate_texture_descriptor(renderer, ctx, index, texture.view, texture.sampler)
 }
 
@@ -434,35 +479,65 @@ ui_renderer_register_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, i
 }
 
 ui_renderer_ensure_backdrop_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) -> bool {
-	width := max(ctx.swapchain_extent.width / UI_BACKDROP_DOWNSAMPLE, u32(1))
-	height := max(ctx.swapchain_extent.height / UI_BACKDROP_DOWNSAMPLE, u32(1))
+	source_w := max(ctx.swapchain_extent.width, u32(1))
+	source_h := max(ctx.swapchain_extent.height, u32(1))
+	half_w := max((source_w + 1) / 2, u32(1))
+	half_h := max((source_h + 1) / 2, u32(1))
+	quarter_w := max((half_w + 1) / 2, u32(1))
+	quarter_h := max((half_h + 1) / 2, u32(1))
+	eighth_w := max((quarter_w + 1) / 2, u32(1))
+	eighth_h := max((quarter_h + 1) / 2, u32(1))
 	if renderer.textures[UI_BACKDROP_SOURCE_TEXTURE_ID].ready &&
-	   renderer.textures[UI_BACKDROP_TEMP_TEXTURE_ID].ready &&
-	   renderer.textures[UI_BACKDROP_TEXTURE_ID].ready &&
-	   renderer.backdrop_width == width && renderer.backdrop_height == height {
+	   renderer.textures[UI_BACKDROP_HALF_TEMP_TEXTURE_ID].ready &&
+	   renderer.textures[UI_BACKDROP_HALF_TEXTURE_ID].ready &&
+	   renderer.textures[UI_BACKDROP_QUARTER_TEMP_TEXTURE_ID].ready &&
+	   renderer.textures[UI_BACKDROP_QUARTER_TEXTURE_ID].ready &&
+	   renderer.textures[UI_BACKDROP_EIGHTH_TEMP_TEXTURE_ID].ready &&
+	   renderer.textures[UI_BACKDROP_EIGHTH_TEXTURE_ID].ready &&
+	   renderer.backdrop_width == source_w && renderer.backdrop_height == source_h {
 		return true
 	}
 
 	ui_renderer_destroy_texture(ctx, &renderer.textures[UI_BACKDROP_SOURCE_TEXTURE_ID])
-	ui_renderer_destroy_texture(ctx, &renderer.textures[UI_BACKDROP_TEMP_TEXTURE_ID])
-	ui_renderer_destroy_texture(ctx, &renderer.textures[UI_BACKDROP_TEXTURE_ID])
+	ui_renderer_destroy_texture(ctx, &renderer.textures[UI_BACKDROP_HALF_TEMP_TEXTURE_ID])
+	ui_renderer_destroy_texture(ctx, &renderer.textures[UI_BACKDROP_HALF_TEXTURE_ID])
+	ui_renderer_destroy_texture(ctx, &renderer.textures[UI_BACKDROP_QUARTER_TEMP_TEXTURE_ID])
+	ui_renderer_destroy_texture(ctx, &renderer.textures[UI_BACKDROP_QUARTER_TEXTURE_ID])
+	ui_renderer_destroy_texture(ctx, &renderer.textures[UI_BACKDROP_EIGHTH_TEMP_TEXTURE_ID])
+	ui_renderer_destroy_texture(ctx, &renderer.textures[UI_BACKDROP_EIGHTH_TEXTURE_ID])
 	renderer.backdrop_width = 0
 	renderer.backdrop_height = 0
 	renderer.backdrop_layouts[UI_BACKDROP_SOURCE_TEXTURE_ID] = .UNDEFINED
-	renderer.backdrop_layouts[UI_BACKDROP_TEMP_TEXTURE_ID] = .UNDEFINED
-	renderer.backdrop_layouts[UI_BACKDROP_TEXTURE_ID] = .UNDEFINED
+	renderer.backdrop_layouts[UI_BACKDROP_HALF_TEMP_TEXTURE_ID] = .UNDEFINED
+	renderer.backdrop_layouts[UI_BACKDROP_HALF_TEXTURE_ID] = .UNDEFINED
+	renderer.backdrop_layouts[UI_BACKDROP_QUARTER_TEMP_TEXTURE_ID] = .UNDEFINED
+	renderer.backdrop_layouts[UI_BACKDROP_QUARTER_TEXTURE_ID] = .UNDEFINED
+	renderer.backdrop_layouts[UI_BACKDROP_EIGHTH_TEMP_TEXTURE_ID] = .UNDEFINED
+	renderer.backdrop_layouts[UI_BACKDROP_EIGHTH_TEXTURE_ID] = .UNDEFINED
 
-	if !ui_renderer_create_backdrop_texture(renderer, ctx, UI_BACKDROP_SOURCE_TEXTURE_ID, width, height, false) {
+	if !ui_renderer_create_backdrop_texture(renderer, ctx, UI_BACKDROP_SOURCE_TEXTURE_ID, source_w, source_h, false) {
 		return false
 	}
-	if !ui_renderer_create_backdrop_texture(renderer, ctx, UI_BACKDROP_TEMP_TEXTURE_ID, width, height, true) {
+	if !ui_renderer_create_backdrop_texture(renderer, ctx, UI_BACKDROP_HALF_TEMP_TEXTURE_ID, half_w, half_h, true) {
 		return false
 	}
-	if !ui_renderer_create_backdrop_texture(renderer, ctx, UI_BACKDROP_TEXTURE_ID, width, height, true) {
+	if !ui_renderer_create_backdrop_texture(renderer, ctx, UI_BACKDROP_HALF_TEXTURE_ID, half_w, half_h, true) {
 		return false
 	}
-	renderer.backdrop_width = width
-	renderer.backdrop_height = height
+	if !ui_renderer_create_backdrop_texture(renderer, ctx, UI_BACKDROP_QUARTER_TEMP_TEXTURE_ID, quarter_w, quarter_h, true) {
+		return false
+	}
+	if !ui_renderer_create_backdrop_texture(renderer, ctx, UI_BACKDROP_QUARTER_TEXTURE_ID, quarter_w, quarter_h, true) {
+		return false
+	}
+	if !ui_renderer_create_backdrop_texture(renderer, ctx, UI_BACKDROP_EIGHTH_TEMP_TEXTURE_ID, eighth_w, eighth_h, true) {
+		return false
+	}
+	if !ui_renderer_create_backdrop_texture(renderer, ctx, UI_BACKDROP_EIGHTH_TEXTURE_ID, eighth_w, eighth_h, true) {
+		return false
+	}
+	renderer.backdrop_width = source_w
+	renderer.backdrop_height = source_h
 	return true
 }
 
@@ -562,6 +637,8 @@ ui_renderer_create_backdrop_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Con
 	}
 
 	texture.owned = true
+	texture.width = width
+	texture.height = height
 	if !ui_renderer_allocate_texture_descriptor(renderer, ctx, index, texture.view, texture.sampler) {
 		ui_renderer_destroy_texture(ctx, texture)
 		return false
@@ -610,6 +687,64 @@ ui_renderer_allocate_texture_descriptor :: proc(renderer: ^Ui_Renderer, ctx: ^Vk
 	vk.UpdateDescriptorSets(ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 	renderer.textures[index].ready = true
 	return true
+}
+
+ui_renderer_update_glass_descriptor :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) -> bool {
+	if renderer.glass_descriptor_set_layout == vk.DescriptorSetLayout(0) {
+		return false
+	}
+	if renderer.glass_descriptor_set == vk.DescriptorSet(0) {
+		layout := renderer.glass_descriptor_set_layout
+		alloc := vk.DescriptorSetAllocateInfo {
+			sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
+			descriptorPool = renderer.descriptor_pool,
+			descriptorSetCount = 1,
+			pSetLayouts = &layout,
+		}
+		if vk.AllocateDescriptorSets(ctx.device, &alloc, &renderer.glass_descriptor_set) != .SUCCESS {
+			log_error("ui_renderer_update_glass_descriptor: descriptor allocation failed")
+			return false
+		}
+	}
+
+	fallback := &renderer.textures[0]
+	source := ui_renderer_descriptor_texture(renderer, UI_BACKDROP_SOURCE_TEXTURE_ID)
+	half := ui_renderer_descriptor_texture(renderer, UI_BACKDROP_HALF_TEXTURE_ID)
+	quarter := ui_renderer_descriptor_texture(renderer, UI_BACKDROP_QUARTER_TEXTURE_ID)
+	eighth := ui_renderer_descriptor_texture(renderer, UI_BACKDROP_EIGHTH_TEXTURE_ID)
+	if source == nil {source = fallback}
+	if half == nil {half = source}
+	if quarter == nil {quarter = half}
+	if eighth == nil {eighth = quarter}
+	if source == nil || source.view == vk.ImageView(0) || source.sampler == vk.Sampler(0) {
+		return false
+	}
+
+	source_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = source.view}
+	half_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = half.view}
+	quarter_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = quarter.view}
+	eighth_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = eighth.view}
+	sampler_info := vk.DescriptorImageInfo{sampler = source.sampler}
+	writes := [?]vk.WriteDescriptorSet {
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = renderer.glass_descriptor_set, dstBinding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &source_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = renderer.glass_descriptor_set, dstBinding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &half_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = renderer.glass_descriptor_set, dstBinding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &quarter_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = renderer.glass_descriptor_set, dstBinding = 3, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &eighth_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = renderer.glass_descriptor_set, dstBinding = 4, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
+	}
+	vk.UpdateDescriptorSets(ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
+	return true
+}
+
+ui_renderer_descriptor_texture :: proc(renderer: ^Ui_Renderer, index: int) -> ^Ui_Texture {
+	if index < 0 || index >= UI_MAX_TEXTURES {
+		return nil
+	}
+	texture := &renderer.textures[index]
+	if !texture.ready || texture.view == vk.ImageView(0) || texture.sampler == vk.Sampler(0) {
+		return nil
+	}
+	return texture
 }
 
 ui_renderer_destroy_texture :: proc(ctx: ^Vk_Context, texture: ^Ui_Texture) {
@@ -707,7 +842,7 @@ ui_renderer_build :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, commands: []
 	count: int
 	renderer.batch_count = 0
 	renderer.clear_rect_count = 0
-	renderer.needs_backdrop_blur = false
+	renderer.needs_backdrop_capture = false
 	scissor_stack: [16]uifw.Rect
 	scissor_depth := 0
 	active_scissor := uifw.Rect{0, 0, f32(ctx.swapchain_extent.width), f32(ctx.swapchain_extent.height)}
@@ -716,6 +851,7 @@ ui_renderer_build :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, commands: []
 		first := count
 		texture_index := u32(0)
 		blend_mode := ui_renderer_blend_index(command.blend)
+		glass_batch := false
 		#partial switch command.kind {
 		case .Filled_Rect:
 			ui_push_rect(out, &count, command.rect, command.color, active_scissor, ctx.swapchain_extent)
@@ -743,15 +879,31 @@ ui_renderer_build :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, commands: []
 			texture_index = ui_renderer_texture_index(renderer, command.image_id)
 			ui_push_image_textured(out, &count, command.rect, command.rect_2, command.color, command.image_filter, active_scissor, ctx.swapchain_extent)
 		case .Backdrop_Blur_Rect:
-			renderer.needs_backdrop_blur = true
-			texture_index = UI_BACKDROP_TEXTURE_ID
-			uv := uifw.Rect {
-				command.rect.x / max(f32(ctx.swapchain_extent.width), 1),
-				command.rect.y / max(f32(ctx.swapchain_extent.height), 1),
-				command.rect.w / max(f32(ctx.swapchain_extent.width), 1),
-				command.rect.h / max(f32(ctx.swapchain_extent.height), 1),
+			if ctx.swapchain_supports_transfer_src {
+				texture_index = UI_BACKDROP_TEXTURE_ID
+				uv := uifw.Rect {
+					command.rect.x / max(f32(ctx.swapchain_extent.width), 1),
+					command.rect.y / max(f32(ctx.swapchain_extent.height), 1),
+					command.rect.w / max(f32(ctx.swapchain_extent.width), 1),
+					command.rect.h / max(f32(ctx.swapchain_extent.height), 1),
+				}
+				ui_push_image_textured(out, &count, command.rect, uv, command.color, command.image_filter, active_scissor, ctx.swapchain_extent)
+				if count > first {
+					renderer.needs_backdrop_capture = true
+				}
+			} else {
+				ui_push_rect(out, &count, command.rect, command.color, active_scissor, ctx.swapchain_extent)
 			}
-			ui_push_image_textured(out, &count, command.rect, uv, command.color, command.image_filter, active_scissor, ctx.swapchain_extent)
+		case .Refractive_Glass_Rect:
+			if ctx.swapchain_supports_transfer_src {
+				glass_batch = true
+				ui_push_refractive_glass_rect(out, &count, command.rect, command.glass_style, active_scissor, ctx.swapchain_extent)
+				if count > first {
+					renderer.needs_backdrop_capture = true
+				}
+			} else {
+				ui_push_rounded_rect(out, &count, command.rect, command.glass_style.radius, command.glass_style.tint, active_scissor, ctx.swapchain_extent)
+			}
 		case .Text:
 			text_scissor := active_scissor
 			if command.rect.w > 0 && command.rect.h > 0 {
@@ -774,7 +926,7 @@ ui_renderer_build :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, commands: []
 				active_scissor = scissor_stack[scissor_depth]
 			}
 		}
-		ui_renderer_add_batch(renderer, u32(first), u32(count - first), texture_index, blend_mode)
+		ui_renderer_add_batch(renderer, u32(first), u32(count - first), texture_index, blend_mode, glass_batch)
 	}
 
 	renderer.vertex_count = u32(count)
@@ -782,11 +934,15 @@ ui_renderer_build :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, commands: []
 }
 
 ui_renderer_needs_backdrop_blur :: proc(renderer: ^Ui_Renderer) -> bool {
-	return renderer.ready && renderer.needs_backdrop_blur
+	return renderer.ready && renderer.needs_backdrop_capture
+}
+
+ui_renderer_needs_backdrop_capture :: proc(renderer: ^Ui_Renderer) -> bool {
+	return renderer.ready && renderer.needs_backdrop_capture
 }
 
 ui_renderer_has_overlay_work :: proc(renderer: ^Ui_Renderer) -> bool {
-	return renderer.ready && (renderer.vertex_count > 0 || renderer.needs_backdrop_blur)
+	return renderer.ready && (renderer.vertex_count > 0 || renderer.needs_backdrop_capture)
 }
 
 ui_renderer_draw :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, cmd: vk.CommandBuffer, extent: vk.Extent2D) {
@@ -819,16 +975,27 @@ ui_renderer_draw :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, cmd: vk.Comma
 	vk_cmd_count_ui_batches(ctx, renderer.batch_count)
 	for i: u32 = 0; i < renderer.batch_count; i += 1 {
 		batch := renderer.batches[i]
-		pipeline := &renderer.pipelines[min(batch.blend_mode, UI_BLEND_MODE_COUNT - 1)]
-		vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
-		vk_cmd_count_pipeline_bind(ctx)
-		texture := &renderer.textures[min(batch.texture_index, UI_MAX_TEXTURES - 1)]
-		if !texture.ready {
-			texture = &renderer.textures[0]
-		}
-		if texture.descriptor_set != vk.DescriptorSet(0) {
-			vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout, 0, 1, &texture.descriptor_set, 0, nil)
+		if batch.glass {
+			pipeline := &renderer.glass_pipeline
+			if pipeline.pipeline == vk.Pipeline(0) || renderer.glass_descriptor_set == vk.DescriptorSet(0) {
+				continue
+			}
+			vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
+			vk_cmd_count_pipeline_bind(ctx)
+			vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout, 0, 1, &renderer.glass_descriptor_set, 0, nil)
 			vk_cmd_count_descriptor_bind(ctx)
+		} else {
+			pipeline := &renderer.pipelines[min(batch.blend_mode, UI_BLEND_MODE_COUNT - 1)]
+			vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
+			vk_cmd_count_pipeline_bind(ctx)
+			texture := &renderer.textures[min(batch.texture_index, UI_MAX_TEXTURES - 1)]
+			if !texture.ready {
+				texture = &renderer.textures[0]
+			}
+			if texture.descriptor_set != vk.DescriptorSet(0) {
+				vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout, 0, 1, &texture.descriptor_set, 0, nil)
+				vk_cmd_count_descriptor_bind(ctx)
+			}
 		}
 		vk.CmdDraw(cmd, batch.vertex_count, 1, batch.first_vertex, 0)
 		vk_cmd_count_draw(ctx)
@@ -836,7 +1003,10 @@ ui_renderer_draw :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, cmd: vk.Comma
 }
 
 ui_renderer_prepare_backdrop_blur :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, frame: Vk_Frame) -> bool {
-	if !renderer.ready || !renderer.needs_backdrop_blur {
+	if !renderer.ready || !renderer.needs_backdrop_capture {
+		return false
+	}
+	if !ctx.swapchain_supports_transfer_src {
 		return false
 	}
 	if !ui_renderer_ensure_backdrop_texture(renderer, ctx) {
@@ -884,7 +1054,7 @@ ui_renderer_prepare_backdrop_blur :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Conte
 	src := vk.Offset3D{i32(0), i32(0), i32(0)}
 	src_max := vk.Offset3D{i32(ctx.swapchain_extent.width), i32(ctx.swapchain_extent.height), i32(1)}
 	dst := vk.Offset3D{i32(0), i32(0), i32(0)}
-	dst_max := vk.Offset3D{i32(renderer.backdrop_width), i32(renderer.backdrop_height), i32(1)}
+	dst_max := vk.Offset3D{i32(source.width), i32(source.height), i32(1)}
 	blit := vk.ImageBlit {
 		srcSubresource = {
 			aspectMask = {.COLOR},
@@ -932,10 +1102,30 @@ ui_renderer_prepare_backdrop_blur :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Conte
 	renderer.backdrop_layouts[UI_BACKDROP_SOURCE_TEXTURE_ID] = .SHADER_READ_ONLY_OPTIMAL
 
 	frame_slot := frame.frame_index % MAX_FRAMES_IN_FLIGHT
-	if !ui_renderer_run_backdrop_blur_pass(renderer, ctx, frame.command_buffer, frame_slot, UI_BACKDROP_SOURCE_TEXTURE_ID, UI_BACKDROP_TEMP_TEXTURE_ID, {1.85 / f32(renderer.backdrop_width), 0}, 0) {
+	if !ui_renderer_run_backdrop_blur_pass(renderer, ctx, frame.command_buffer, frame_slot, UI_BACKDROP_SOURCE_TEXTURE_ID, UI_BACKDROP_HALF_TEMP_TEXTURE_ID, {1.85 / f32(source.width), 0}, 0) {
 		return false
 	}
-	if !ui_renderer_run_backdrop_blur_pass(renderer, ctx, frame.command_buffer, frame_slot, UI_BACKDROP_TEMP_TEXTURE_ID, UI_BACKDROP_TEXTURE_ID, {0, 1.85 / f32(renderer.backdrop_height)}, UI_BACKDROP_BLUR_VERTICES_PER_PASS) {
+	half_temp := &renderer.textures[UI_BACKDROP_HALF_TEMP_TEXTURE_ID]
+	if !ui_renderer_run_backdrop_blur_pass(renderer, ctx, frame.command_buffer, frame_slot, UI_BACKDROP_HALF_TEMP_TEXTURE_ID, UI_BACKDROP_HALF_TEXTURE_ID, {0, 1.85 / f32(half_temp.height)}, UI_BACKDROP_BLUR_VERTICES_PER_PASS) {
+		return false
+	}
+	half := &renderer.textures[UI_BACKDROP_HALF_TEXTURE_ID]
+	if !ui_renderer_run_backdrop_blur_pass(renderer, ctx, frame.command_buffer, frame_slot, UI_BACKDROP_HALF_TEXTURE_ID, UI_BACKDROP_QUARTER_TEMP_TEXTURE_ID, {2.15 / f32(half.width), 0}, UI_BACKDROP_BLUR_VERTICES_PER_PASS * 2) {
+		return false
+	}
+	quarter_temp := &renderer.textures[UI_BACKDROP_QUARTER_TEMP_TEXTURE_ID]
+	if !ui_renderer_run_backdrop_blur_pass(renderer, ctx, frame.command_buffer, frame_slot, UI_BACKDROP_QUARTER_TEMP_TEXTURE_ID, UI_BACKDROP_QUARTER_TEXTURE_ID, {0, 2.15 / f32(quarter_temp.height)}, UI_BACKDROP_BLUR_VERTICES_PER_PASS * 3) {
+		return false
+	}
+	quarter := &renderer.textures[UI_BACKDROP_QUARTER_TEXTURE_ID]
+	if !ui_renderer_run_backdrop_blur_pass(renderer, ctx, frame.command_buffer, frame_slot, UI_BACKDROP_QUARTER_TEXTURE_ID, UI_BACKDROP_EIGHTH_TEMP_TEXTURE_ID, {2.45 / f32(quarter.width), 0}, UI_BACKDROP_BLUR_VERTICES_PER_PASS * 4) {
+		return false
+	}
+	eighth_temp := &renderer.textures[UI_BACKDROP_EIGHTH_TEMP_TEXTURE_ID]
+	if !ui_renderer_run_backdrop_blur_pass(renderer, ctx, frame.command_buffer, frame_slot, UI_BACKDROP_EIGHTH_TEMP_TEXTURE_ID, UI_BACKDROP_EIGHTH_TEXTURE_ID, {0, 2.45 / f32(eighth_temp.height)}, UI_BACKDROP_BLUR_VERTICES_PER_PASS * 5) {
+		return false
+	}
+	if !ui_renderer_update_glass_descriptor(renderer, ctx) {
 		return false
 	}
 	return true
@@ -973,7 +1163,7 @@ ui_renderer_run_backdrop_blur_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Cont
 	clear := vk.ClearValue{color = {float32 = {0, 0, 0, 0}}}
 	render_area := vk.Rect2D {
 		offset = {0, 0},
-		extent = {renderer.backdrop_width, renderer.backdrop_height},
+		extent = {dest.width, dest.height},
 	}
 	begin := vk.RenderPassBeginInfo {
 		sType = .RENDER_PASS_BEGIN_INFO,
@@ -987,8 +1177,8 @@ ui_renderer_run_backdrop_blur_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Cont
 	ctx.command_shape.render_pass_count += 1
 	vk_cmd_count_backdrop_blur_pass(ctx)
 
-	viewport := vk.Viewport{x = 0, y = 0, width = f32(renderer.backdrop_width), height = f32(renderer.backdrop_height), minDepth = 0, maxDepth = 1}
-	scissor := vk.Rect2D{offset = {0, 0}, extent = {renderer.backdrop_width, renderer.backdrop_height}}
+	viewport := vk.Viewport{x = 0, y = 0, width = f32(dest.width), height = f32(dest.height), minDepth = 0, maxDepth = 1}
+	scissor := vk.Rect2D{offset = {0, 0}, extent = {dest.width, dest.height}}
 	vk.CmdSetViewport(cmd, 0, 1, &viewport)
 	vk.CmdSetScissor(cmd, 0, 1, &scissor)
 
@@ -1036,12 +1226,12 @@ ui_renderer_write_blur_quad :: proc(renderer: ^Ui_Renderer, frame_slot, vertex_o
 	out := cast([^]Ui_Vertex)buffer.mapped
 	effect := uifw.Color{texel_step.x, texel_step.y, 0, 0}
 	verts := [?]Ui_Vertex {
-		{{-1, -1}, {1, 1, 1, 1}, {0, 1}, UI_IMAGE_GLYPH, effect},
-		{{ 1, -1}, {1, 1, 1, 1}, {1, 1}, UI_IMAGE_GLYPH, effect},
-		{{ 1,  1}, {1, 1, 1, 1}, {1, 0}, UI_IMAGE_GLYPH, effect},
-		{{-1, -1}, {1, 1, 1, 1}, {0, 1}, UI_IMAGE_GLYPH, effect},
-		{{ 1,  1}, {1, 1, 1, 1}, {1, 0}, UI_IMAGE_GLYPH, effect},
-		{{-1,  1}, {1, 1, 1, 1}, {0, 0}, UI_IMAGE_GLYPH, effect},
+		{{-1, -1}, {1, 1, 1, 1}, {0, 1}, UI_IMAGE_GLYPH, effect, UI_DEFAULT_MATERIAL},
+		{{ 1, -1}, {1, 1, 1, 1}, {1, 1}, UI_IMAGE_GLYPH, effect, UI_DEFAULT_MATERIAL},
+		{{ 1,  1}, {1, 1, 1, 1}, {1, 0}, UI_IMAGE_GLYPH, effect, UI_DEFAULT_MATERIAL},
+		{{-1, -1}, {1, 1, 1, 1}, {0, 1}, UI_IMAGE_GLYPH, effect, UI_DEFAULT_MATERIAL},
+		{{ 1,  1}, {1, 1, 1, 1}, {1, 0}, UI_IMAGE_GLYPH, effect, UI_DEFAULT_MATERIAL},
+		{{-1,  1}, {1, 1, 1, 1}, {0, 0}, UI_IMAGE_GLYPH, effect, UI_DEFAULT_MATERIAL},
 	}
 	for vertex, i in verts {
 		out[int(vertex_offset) + i] = vertex
@@ -1145,6 +1335,12 @@ ui_renderer_create_pipeline :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, bl
 			format = .R32G32B32A32_SFLOAT,
 			offset = u32(offset_of(Ui_Vertex, effect)),
 		},
+		{
+			location = 5,
+			binding = 0,
+			format = .R32G32B32A32_SFLOAT,
+			offset = u32(offset_of(Ui_Vertex, material)),
+		},
 	}
 	vertex_input := vk.PipelineVertexInputStateCreateInfo {
 		sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -1239,6 +1435,7 @@ ui_renderer_create_blur_pipeline :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Contex
 		{location = 2, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Ui_Vertex, uv))},
 		{location = 3, binding = 0, format = .R32_SFLOAT, offset = u32(offset_of(Ui_Vertex, glyph))},
 		{location = 4, binding = 0, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Ui_Vertex, effect))},
+		{location = 5, binding = 0, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Ui_Vertex, material))},
 	}
 	vertex_input := vk.PipelineVertexInputStateCreateInfo {
 		sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -1268,6 +1465,74 @@ ui_renderer_create_blur_pipeline :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Contex
 		pDynamicState = &dynamic_state_info,
 		layout = pipeline.layout,
 		renderPass = renderer.backdrop_render_pass,
+		subpass = 0,
+	}
+	return vk.CreateGraphicsPipelines(ctx.device, vk.PipelineCache(0), 1, &info, nil, &pipeline.pipeline) == .SUCCESS
+}
+
+ui_renderer_create_glass_pipeline :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, pipeline: ^Vk_Graphics_Pipeline) -> bool {
+	vert: Vk_Shader_Module
+	frag: Vk_Shader_Module
+	if !vk_load_shader_module_with_fallback(ctx, UI_VERTEX_SHADER_SOURCE, UI_VERTEX_SHADER_FALLBACK_SPV, .Vertex, UI_VERTEX_ENTRY_POINT, &vert) {
+		return false
+	}
+	defer vk_destroy_shader_module(ctx, &vert)
+	if !vk_load_shader_module_with_fallback(ctx, UI_GLASS_FRAGMENT_SHADER_SOURCE, UI_GLASS_FRAGMENT_SHADER_FALLBACK_SPV, .Fragment, UI_FRAGMENT_ENTRY_POINT, &frag) {
+		return false
+	}
+	defer vk_destroy_shader_module(ctx, &frag)
+
+	set_layouts := [?]vk.DescriptorSetLayout{renderer.glass_descriptor_set_layout}
+	layout_info := vk.PipelineLayoutCreateInfo{
+		sType = .PIPELINE_LAYOUT_CREATE_INFO,
+		setLayoutCount = u32(len(set_layouts)),
+		pSetLayouts = raw_data(set_layouts[:]),
+	}
+	if vk.CreatePipelineLayout(ctx.device, &layout_info, nil, &pipeline.layout) != .SUCCESS {
+		return false
+	}
+
+	stages := [?]vk.PipelineShaderStageCreateInfo {
+		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.VERTEX}, module = vert.handle, pName = UI_VERTEX_SPIRV_ENTRY_POINT},
+		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.FRAGMENT}, module = frag.handle, pName = UI_FRAGMENT_SPIRV_ENTRY_POINT},
+	}
+	binding := vk.VertexInputBindingDescription{binding = 0, stride = u32(size_of(Ui_Vertex)), inputRate = .VERTEX}
+	attributes := [?]vk.VertexInputAttributeDescription {
+		{location = 0, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Ui_Vertex, pos))},
+		{location = 1, binding = 0, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Ui_Vertex, color))},
+		{location = 2, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Ui_Vertex, uv))},
+		{location = 3, binding = 0, format = .R32_SFLOAT, offset = u32(offset_of(Ui_Vertex, glyph))},
+		{location = 4, binding = 0, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Ui_Vertex, effect))},
+		{location = 5, binding = 0, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Ui_Vertex, material))},
+	}
+	vertex_input := vk.PipelineVertexInputStateCreateInfo {
+		sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+		vertexBindingDescriptionCount = 1,
+		pVertexBindingDescriptions = &binding,
+		vertexAttributeDescriptionCount = u32(len(attributes)),
+		pVertexAttributeDescriptions = raw_data(attributes[:]),
+	}
+	input_assembly := vk.PipelineInputAssemblyStateCreateInfo{sType = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, topology = .TRIANGLE_LIST}
+	viewport_state := vk.PipelineViewportStateCreateInfo{sType = .PIPELINE_VIEWPORT_STATE_CREATE_INFO, viewportCount = 1, scissorCount = 1}
+	raster := vk.PipelineRasterizationStateCreateInfo{sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO, polygonMode = .FILL, cullMode = {}, frontFace = .COUNTER_CLOCKWISE, lineWidth = 1}
+	multisample := vk.PipelineMultisampleStateCreateInfo{sType = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, rasterizationSamples = {._1}}
+	blend_attachment := ui_blend_attachment(.Alpha)
+	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
+	dynamic_states := [?]vk.DynamicState{.VIEWPORT, .SCISSOR}
+	dynamic_state_info := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = u32(len(dynamic_states)), pDynamicStates = raw_data(dynamic_states[:])}
+	info := vk.GraphicsPipelineCreateInfo {
+		sType = .GRAPHICS_PIPELINE_CREATE_INFO,
+		stageCount = u32(len(stages)),
+		pStages = raw_data(stages[:]),
+		pVertexInputState = &vertex_input,
+		pInputAssemblyState = &input_assembly,
+		pViewportState = &viewport_state,
+		pRasterizationState = &raster,
+		pMultisampleState = &multisample,
+		pColorBlendState = &blend,
+		pDynamicState = &dynamic_state_info,
+		layout = pipeline.layout,
+		renderPass = ctx.render_pass,
 		subpass = 0,
 	}
 	return vk.CreateGraphicsPipelines(ctx.device, vk.PipelineCache(0), 1, &info, nil, &pipeline.pipeline) == .SUCCESS
@@ -1407,13 +1672,13 @@ ui_renderer_active_frame_slot :: proc(ctx: ^Vk_Context) -> u32 {
 	return ctx.current_frame % MAX_FRAMES_IN_FLIGHT
 }
 
-ui_renderer_add_batch :: proc(renderer: ^Ui_Renderer, first, count, texture_index, blend_mode: u32) {
+ui_renderer_add_batch :: proc(renderer: ^Ui_Renderer, first, count, texture_index, blend_mode: u32, glass: bool) {
 	if count == 0 {
 		return
 	}
 	if renderer.batch_count > 0 {
 		last := &renderer.batches[renderer.batch_count - 1]
-		if last.texture_index == texture_index && last.blend_mode == blend_mode && last.first_vertex + last.vertex_count == first {
+		if last.texture_index == texture_index && last.blend_mode == blend_mode && last.glass == glass && last.first_vertex + last.vertex_count == first {
 			last.vertex_count += count
 			return
 		}
@@ -1421,7 +1686,7 @@ ui_renderer_add_batch :: proc(renderer: ^Ui_Renderer, first, count, texture_inde
 	if renderer.batch_count >= UI_MAX_DRAW_BATCHES {
 		return
 	}
-	renderer.batches[renderer.batch_count] = {first_vertex = first, vertex_count = count, texture_index = texture_index, blend_mode = blend_mode}
+	renderer.batches[renderer.batch_count] = {first_vertex = first, vertex_count = count, texture_index = texture_index, blend_mode = blend_mode, glass = glass}
 	renderer.batch_count += 1
 }
 
@@ -1761,12 +2026,12 @@ ui_push_image_textured :: proc(out: [^]Ui_Vertex, count: ^int, rect, uv_rect: ui
 	y1 := ui_screen_to_ndc_y(clipped.y + clipped.h, extent.height)
 
 	verts := [?]Ui_Vertex {
-		{{x0, y0}, color, {u0, v0}, UI_IMAGE_GLYPH, effect},
-		{{x1, y0}, color, {u1, v0}, UI_IMAGE_GLYPH, effect},
-		{{x1, y1}, color, {u1, v1}, UI_IMAGE_GLYPH, effect},
-		{{x0, y0}, color, {u0, v0}, UI_IMAGE_GLYPH, effect},
-		{{x1, y1}, color, {u1, v1}, UI_IMAGE_GLYPH, effect},
-		{{x0, y1}, color, {u0, v1}, UI_IMAGE_GLYPH, effect},
+		{{x0, y0}, color, {u0, v0}, UI_IMAGE_GLYPH, effect, UI_DEFAULT_MATERIAL},
+		{{x1, y0}, color, {u1, v0}, UI_IMAGE_GLYPH, effect, UI_DEFAULT_MATERIAL},
+		{{x1, y1}, color, {u1, v1}, UI_IMAGE_GLYPH, effect, UI_DEFAULT_MATERIAL},
+		{{x0, y0}, color, {u0, v0}, UI_IMAGE_GLYPH, effect, UI_DEFAULT_MATERIAL},
+		{{x1, y1}, color, {u1, v1}, UI_IMAGE_GLYPH, effect, UI_DEFAULT_MATERIAL},
+		{{x0, y1}, color, {u0, v1}, UI_IMAGE_GLYPH, effect, UI_DEFAULT_MATERIAL},
 	}
 	for vertex in verts {
 		out[count^] = vertex
@@ -1799,12 +2064,57 @@ ui_push_shader_rect :: proc(out: [^]Ui_Vertex, count: ^int, rect: uifw.Rect, tin
 	effect := params
 
 	verts := [?]Ui_Vertex {
-		{{x0, y0}, color, {u0, v0}, glyph, effect},
-		{{x1, y0}, color, {u1, v0}, glyph, effect},
-		{{x1, y1}, color, {u1, v1}, glyph, effect},
-		{{x0, y0}, color, {u0, v0}, glyph, effect},
-		{{x1, y1}, color, {u1, v1}, glyph, effect},
-		{{x0, y1}, color, {u0, v1}, glyph, effect},
+		{{x0, y0}, color, {u0, v0}, glyph, effect, UI_DEFAULT_MATERIAL},
+		{{x1, y0}, color, {u1, v0}, glyph, effect, UI_DEFAULT_MATERIAL},
+		{{x1, y1}, color, {u1, v1}, glyph, effect, UI_DEFAULT_MATERIAL},
+		{{x0, y0}, color, {u0, v0}, glyph, effect, UI_DEFAULT_MATERIAL},
+		{{x1, y1}, color, {u1, v1}, glyph, effect, UI_DEFAULT_MATERIAL},
+		{{x0, y1}, color, {u0, v1}, glyph, effect, UI_DEFAULT_MATERIAL},
+	}
+	for vertex in verts {
+		out[count^] = vertex
+		count^ += 1
+	}
+}
+
+ui_push_refractive_glass_rect :: proc(out: [^]Ui_Vertex, count: ^int, rect: uifw.Rect, style: uifw.Gui_Glass_Style, scissor: uifw.Rect, extent: vk.Extent2D) {
+	if count^ + 6 > UI_MAX_VERTICES {
+		return
+	}
+	clipped := ui_rect_intersection(rect, scissor)
+	if clipped.w <= 0 || clipped.h <= 0 {
+		return
+	}
+
+	u0 := (clipped.x - rect.x) / max(rect.w, 0.00001)
+	v0 := (clipped.y - rect.y) / max(rect.h, 0.00001)
+	u1 := (clipped.x + clipped.w - rect.x) / max(rect.w, 0.00001)
+	v1 := (clipped.y + clipped.h - rect.y) / max(rect.h, 0.00001)
+
+	x0 := ui_screen_to_ndc_x(clipped.x, extent.width)
+	y0 := ui_screen_to_ndc_y(clipped.y, extent.height)
+	x1 := ui_screen_to_ndc_x(clipped.x + clipped.w, extent.width)
+	y1 := ui_screen_to_ndc_y(clipped.y + clipped.h, extent.height)
+
+	radius := min(max(style.radius, 0), min(rect.w, rect.h) * 0.5)
+	thickness := max(style.thickness, f32(0))
+	roughness := min(max(style.roughness, 0), 1)
+	bevel := max(style.bevel, f32(0))
+	ior := max(style.ior, f32(1.0))
+	dispersion := max(style.dispersion, f32(0))
+	border := min(max(style.border, 0), 1)
+	highlight := min(max(style.highlight, 0), 1)
+	effect := uifw.Color{thickness, roughness, bevel, radius}
+	material := uifw.Color{ior, dispersion, border, highlight}
+	color := style.tint
+
+	verts := [?]Ui_Vertex {
+		{{x0, y0}, color, {u0, v0}, UI_GLASS_GLYPH, effect, material},
+		{{x1, y0}, color, {u1, v0}, UI_GLASS_GLYPH, effect, material},
+		{{x1, y1}, color, {u1, v1}, UI_GLASS_GLYPH, effect, material},
+		{{x0, y0}, color, {u0, v0}, UI_GLASS_GLYPH, effect, material},
+		{{x1, y1}, color, {u1, v1}, UI_GLASS_GLYPH, effect, material},
+		{{x0, y1}, color, {u0, v1}, UI_GLASS_GLYPH, effect, material},
 	}
 	for vertex in verts {
 		out[count^] = vertex
@@ -2162,12 +2472,12 @@ ui_push_text_glyph :: proc(
 	v1 := uv_rect.y + local_v1 * uv_rect.h
 
 	verts := [?]Ui_Vertex {
-		{{clip_x0, clip_y0}, color, {u0, v0}, glyph, UI_DEFAULT_EFFECT},
-		{{clip_x1, clip_y0}, color, {u1, v0}, glyph, UI_DEFAULT_EFFECT},
-		{{clip_x1, clip_y1}, color, {u1, v1}, glyph, UI_DEFAULT_EFFECT},
-		{{clip_x0, clip_y0}, color, {u0, v0}, glyph, UI_DEFAULT_EFFECT},
-		{{clip_x1, clip_y1}, color, {u1, v1}, glyph, UI_DEFAULT_EFFECT},
-		{{clip_x0, clip_y1}, color, {u0, v1}, glyph, UI_DEFAULT_EFFECT},
+		{{clip_x0, clip_y0}, color, {u0, v0}, glyph, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL},
+		{{clip_x1, clip_y0}, color, {u1, v0}, glyph, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL},
+		{{clip_x1, clip_y1}, color, {u1, v1}, glyph, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL},
+		{{clip_x0, clip_y0}, color, {u0, v0}, glyph, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL},
+		{{clip_x1, clip_y1}, color, {u1, v1}, glyph, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL},
+		{{clip_x0, clip_y1}, color, {u0, v1}, glyph, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL},
 	}
 	for vertex in verts {
 		out[count^] = vertex
@@ -2218,12 +2528,12 @@ ui_push_rect :: proc(out: [^]Ui_Vertex, count: ^int, rect: uifw.Rect, color: uif
 	y1 := ui_screen_to_ndc_y(clipped.y + clipped.h, extent.height)
 
 	verts := [?]Ui_Vertex {
-		{{x0, y0}, color, {0, 0}, -1, UI_DEFAULT_EFFECT},
-		{{x1, y0}, color, {0, 0}, -1, UI_DEFAULT_EFFECT},
-		{{x1, y1}, color, {0, 0}, -1, UI_DEFAULT_EFFECT},
-		{{x0, y0}, color, {0, 0}, -1, UI_DEFAULT_EFFECT},
-		{{x1, y1}, color, {0, 0}, -1, UI_DEFAULT_EFFECT},
-		{{x0, y1}, color, {0, 0}, -1, UI_DEFAULT_EFFECT},
+		{{x0, y0}, color, {0, 0}, -1, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL},
+		{{x1, y0}, color, {0, 0}, -1, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL},
+		{{x1, y1}, color, {0, 0}, -1, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL},
+		{{x0, y0}, color, {0, 0}, -1, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL},
+		{{x1, y1}, color, {0, 0}, -1, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL},
+		{{x0, y1}, color, {0, 0}, -1, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL},
 	}
 	for vertex in verts {
 		out[count^] = vertex
@@ -2241,11 +2551,11 @@ ui_push_triangle_screen :: proc(
 	if count^ + 3 > UI_MAX_VERTICES {
 		return
 	}
-	out[count^] = {{ui_screen_to_ndc_x(a.x, extent.width), ui_screen_to_ndc_y(a.y, extent.height)}, color_a, {0, 0}, -1, UI_DEFAULT_EFFECT}
+	out[count^] = {{ui_screen_to_ndc_x(a.x, extent.width), ui_screen_to_ndc_y(a.y, extent.height)}, color_a, {0, 0}, -1, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL}
 	count^ += 1
-	out[count^] = {{ui_screen_to_ndc_x(b.x, extent.width), ui_screen_to_ndc_y(b.y, extent.height)}, color_b, {0, 0}, -1, UI_DEFAULT_EFFECT}
+	out[count^] = {{ui_screen_to_ndc_x(b.x, extent.width), ui_screen_to_ndc_y(b.y, extent.height)}, color_b, {0, 0}, -1, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL}
 	count^ += 1
-	out[count^] = {{ui_screen_to_ndc_x(c.x, extent.width), ui_screen_to_ndc_y(c.y, extent.height)}, color_c, {0, 0}, -1, UI_DEFAULT_EFFECT}
+	out[count^] = {{ui_screen_to_ndc_x(c.x, extent.width), ui_screen_to_ndc_y(c.y, extent.height)}, color_c, {0, 0}, -1, UI_DEFAULT_EFFECT, UI_DEFAULT_MATERIAL}
 	count^ += 1
 }
 

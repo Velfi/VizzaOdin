@@ -289,6 +289,9 @@ post_processing_apply_blur :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^eng
 	if settings == nil || !settings.blur_enabled || settings.blur_radius <= 0 {
 		return false
 	}
+	if !vk_ctx.swapchain_supports_transfer_src {
+		return false
+	}
 	if !post_processing_gpu_ensure(gpu, vk_ctx) {
 		return false
 	}

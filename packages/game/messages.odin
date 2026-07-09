@@ -4,7 +4,7 @@ import uifw "../ui"
 import engine "../engine"
 
 MAX_PRESET_NAME :: 64
-MAX_ERROR_TEXT :: 256
+MAX_ERROR_TEXT :: 512
 MAX_FILE_PATH :: 512
 
 Ui_Frame_Input :: struct {
@@ -74,6 +74,9 @@ Ui_Frame_Input :: struct {
 	key_c: bool,
 	key_slash: bool,
 	key_space: bool,
+	key_space_down: bool,
+	key_space_pressed: bool,
+	key_space_released: bool,
 }
 
 Ui_To_Render_Command_Kind :: enum {
@@ -84,7 +87,13 @@ Ui_To_Render_Command_Kind :: enum {
 	Save_Preset,
 	Delete_Preset,
 	Apply_Gray_Scott_Settings,
+	Apply_Particle_Life_Settings,
+	Apply_Flow_Settings,
+	Apply_Remaining_Settings,
 	Set_App_Mode,
+	Apply_Builtin_Preset,
+	Set_Color_Scheme,
+	Hide_Ui,
 	Reset_Gray_Scott,
 	Randomize_Gray_Scott,
 	Seed_Noise_Gray_Scott,
@@ -115,7 +124,24 @@ Ui_To_Render_Command :: struct {
 	preset_name: [MAX_PRESET_NAME]u8,
 	file_path: [MAX_FILE_PATH]u8,
 	app_mode: App_Mode,
+	builtin_preset_index: int,
+	color_scheme_name: Color_Scheme_Name,
+	color_scheme_reversed: bool,
+	color_scheme_reversed_set: bool,
 	gray_scott_settings: Gray_Scott_Settings,
+	particle_life_settings: Particle_Life_Settings,
+	particle_life_randomize_forces: bool,
+	particle_life_reset: bool,
+	flow_settings: Flow_Settings,
+	flow_reset: bool,
+	remaining_kind: Remaining_Sim_Kind,
+	remaining_reset: bool,
+	moire_settings: Moire_Settings,
+	vectors_settings: Vectors_Settings,
+	primordial_settings: Primordial_Settings,
+	voronoi_settings: Voronoi_Settings,
+	pellets_settings: Pellets_Settings,
+	slime_settings: Slime_Settings,
 }
 
 Render_To_Ui_Message_Kind :: enum {

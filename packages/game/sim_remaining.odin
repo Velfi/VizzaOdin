@@ -39,6 +39,8 @@ Remaining_Sim_State :: struct {
 	flow_image_dialog_requested: bool,
 	slime_mask_image_dialog_requested: bool,
 	slime_position_image_dialog_requested: bool,
+	slime_reset_requested: bool,
+	slime_clear_trails_requested: bool,
 	moire: Moire_Settings,
 	vectors: Vectors_Settings,
 	primordial: Primordial_Settings,
@@ -918,6 +920,65 @@ remaining_sim_init :: proc(sim: ^Remaining_Sim_State) {
 		flow = flow_settings_default(),
 		slime = slime_settings_default(),
 	}
+}
+
+slime_request_reset :: proc(sim: ^Remaining_Sim_State) {
+	if sim == nil {
+		return
+	}
+	sim.slime_reset_requested = true
+}
+
+slime_request_clear_trails :: proc(sim: ^Remaining_Sim_State) {
+	if sim == nil {
+		return
+	}
+	sim.slime_clear_trails_requested = true
+}
+
+slime_random01 :: proc(seed: ^u32) -> f32 {
+	seed^ = seed^ * 1664525 + 1013904223
+	return f32(seed^ & 0x00ffffff) / f32(0x01000000)
+}
+
+slime_random_range :: proc(seed: ^u32, min_value, max_value: f32) -> f32 {
+	return min_value + (max_value - min_value) * slime_random01(seed)
+}
+
+slime_randomize_seed :: proc(sim: ^Remaining_Sim_State) {
+	if sim == nil {
+		return
+	}
+	seed := sim.slime.random_seed
+	if seed == 0 {
+		seed = 0x6d2b79f5
+	}
+	seed = seed * 1664525 + 1013904223
+	sim.slime.random_seed = seed
+	slime_request_reset(sim)
+}
+
+slime_randomize_settings :: proc(sim: ^Remaining_Sim_State) {
+	if sim == nil {
+		return
+	}
+	settings := &sim.slime
+	seed := settings.random_seed
+	if seed == 0 {
+		seed = 0x9e3779b9
+	}
+	seed += 0x6d2b79f5
+	settings.agent_jitter = slime_random_range(&seed, 0.0, 4.0)
+	settings.agent_sensor_angle = slime_random_range(&seed, 0.15, 2.4)
+	settings.agent_sensor_distance = slime_random_range(&seed, 4.0, 260.0)
+	settings.agent_speed_min = slime_random_range(&seed, 0.0, 430.0)
+	settings.agent_speed_max = slime_random_range(&seed, max(settings.agent_speed_min + 1.0, 20.0), 500.0)
+	settings.agent_turn_rate = slime_random_range(&seed, 0.02, 5.5)
+	settings.pheromone_decay_rate = slime_random_range(&seed, 4.0, 140.0)
+	settings.pheromone_deposition_rate = slime_random_range(&seed, 15.0, 160.0)
+	settings.pheromone_diffusion_rate = slime_random_range(&seed, 0.0, 130.0)
+	settings.random_seed = seed
+	slime_request_reset(sim)
 }
 
 remaining_sim_apply_frame_input :: proc(sim: ^Remaining_Sim_State, input: Ui_Frame_Input) {

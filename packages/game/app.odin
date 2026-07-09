@@ -100,7 +100,12 @@ app_run :: proc(config: App_Run_Config = {}) -> int {
 	app.mcp_enabled = config.mcp_enabled
 	app.theme_preview = config.theme_preview
 
-	app.settings, _ = settings_load_app("config/app.toml")
+	settings_path := settings_app_config_path()
+	settings_loaded: bool
+	app.settings, settings_loaded = settings_load_app(settings_path)
+	if !settings_loaded && settings_path != "config/app.toml" {
+		app.settings, _ = settings_load_app("config/app.toml")
+	}
 	steam_config := steam_config_resolve(app.settings, config)
 	steam_state := steam_client_init(&app.steam, steam_config)
 	defer steam_client_shutdown(&app.steam)
@@ -216,6 +221,8 @@ app_poll_events :: proc(app: ^App_State) {
 	app.input.key_end = false
 	app.input.key_slash = false
 	app.input.key_space = false
+	app.input.key_space_pressed = false
+	app.input.key_space_released = false
 	app.input.accept = false
 	app.input.back = false
 	app.input.pause = false
@@ -380,7 +387,13 @@ app_apply_key_event :: proc(app: ^App_State, key: sdl.Keycode, scancode: sdl.Sca
 	} else if app_key_matches(key, scancode, sdl.K_SLASH, .SLASH) {
 		app.input.key_slash = down
 	} else if app_key_matches(key, scancode, sdl.K_SPACE, .SPACE) {
-		app.input.key_space = down
+		if down && !app.input.key_space_down {
+			app.input.key_space = true
+			app.input.key_space_pressed = true
+		} else if !down && app.input.key_space_down {
+			app.input.key_space_released = true
+		}
+		app.input.key_space_down = down
 	} else if key == sdl.K_LSHIFT || key == sdl.K_RSHIFT || scancode == .LSHIFT || scancode == .RSHIFT {
 		app.input.key_shift = down
 	} else if key == sdl.K_LCTRL || key == sdl.K_RCTRL || scancode == .LCTRL || scancode == .RCTRL {
@@ -746,6 +759,9 @@ app_send_frame :: proc(app: ^App_State) {
 		key_c = app.input.key_c,
 		key_slash = app.input.key_slash,
 		key_space = app.input.key_space,
+		key_space_down = app.input.key_space_down,
+		key_space_pressed = app.input.key_space_pressed,
+		key_space_released = app.input.key_space_released,
 	}
 	_ = engine.queue_try_push(&app.ui_to_render, cmd)
 	if app.controller_disconnected_this_frame && app.active_device == .Controller {

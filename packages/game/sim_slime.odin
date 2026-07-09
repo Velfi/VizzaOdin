@@ -3,6 +3,7 @@ package game
 import engine "../engine"
 import uifw "../ui"
 
+import "core:fmt"
 import "core:math"
 import vk "vendor:vulkan"
 
@@ -237,13 +238,35 @@ slime_clear_host_buffers :: proc(gpu: ^Slime_Gpu_State) {
 	}
 }
 
-slime_load_image_to_mask_buffer :: proc(gpu: ^Slime_Gpu_State, path: string, fit_mode: Vector_Image_Fit_Mode) -> bool {
-	if len(path) == 0 || gpu.mask_buffer.mapped == nil || gpu.width == 0 || gpu.height == 0 {
-		return false
+slime_clear_trail_buffer :: proc(gpu: ^Slime_Gpu_State) {
+	if gpu.trail_buffer.mapped == nil {
+		return
 	}
-	img, ok := shared_image_load_rgba8(path)
-	if !ok {
-		return false
+	data := (cast([^]f32)gpu.trail_buffer.mapped)[:int(gpu.width * gpu.height)]
+	for i in 0 ..< len(data) {
+		data[i] = 0
+	}
+}
+
+slime_load_image_to_mask_buffer :: proc(gpu: ^Slime_Gpu_State, path: string, fit_mode: Vector_Image_Fit_Mode) -> bool {
+	ok, reason := slime_load_image_to_mask_buffer_diagnostic(gpu, path, fit_mode)
+	_ = reason
+	return ok
+}
+
+slime_load_image_to_mask_buffer_diagnostic :: proc(gpu: ^Slime_Gpu_State, path: string, fit_mode: Vector_Image_Fit_Mode) -> (ok: bool, reason: string) {
+	if len(path) == 0 || gpu.mask_buffer.mapped == nil || gpu.width == 0 || gpu.height == 0 {
+		if len(path) == 0 {
+			return false, "empty path"
+		}
+		if gpu.mask_buffer.mapped == nil {
+			return false, "Slime mask buffer is not mapped; GPU resources are not ready"
+		}
+		return false, fmt.tprintf("Slime GPU target size is invalid: width=%d height=%d", gpu.width, gpu.height)
+	}
+	img, image_reason := shared_image_load_rgba8_diagnostic(path)
+	if img == nil {
+		return false, image_reason
 	}
 	defer shared_image_destroy(img)
 	target_width := int(max(gpu.width, 1))
@@ -260,17 +283,24 @@ slime_load_image_to_mask_buffer :: proc(gpu: ^Slime_Gpu_State, path: string, fit
 			values[y * target_width + x] = f32(value) / 255.0
 		}
 	}
-	return true
+	return true, ""
 }
 
 slime_gpu_load_mask_image_path :: proc(gpu: ^Slime_Gpu_State, path: string, settings: ^Slime_Settings) -> bool {
-	if slime_load_image_to_mask_buffer(gpu, path, settings.mask_image_fit_mode) {
+	ok, reason := slime_gpu_load_mask_image_path_diagnostic(gpu, path, settings)
+	_ = reason
+	return ok
+}
+
+slime_gpu_load_mask_image_path_diagnostic :: proc(gpu: ^Slime_Gpu_State, path: string, settings: ^Slime_Settings) -> (ok: bool, reason: string) {
+	buffer_ok, buffer_reason := slime_load_image_to_mask_buffer_diagnostic(gpu, path, settings.mask_image_fit_mode)
+	if buffer_ok {
 		write_fixed_string(settings.mask_image_path[:], path)
 		settings.mask_pattern = .Image
 		settings.mask_pattern_index = int(Slime_Mask_Pattern.Image)
-		return true
+		return true, ""
 	}
-	return false
+	return false, buffer_reason
 }
 
 slime_gpu_load_position_image_path :: proc(gpu: ^Slime_Gpu_State, path: string, settings: ^Slime_Settings) -> bool {
@@ -563,6 +593,14 @@ slime_gpu_step_preview :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context
 slime_gpu_step_ready :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State) {
 	settings := &sim_state.slime
 	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
+	if sim_state.slime_clear_trails_requested {
+		slime_clear_trail_buffer(gpu)
+		sim_state.slime_clear_trails_requested = false
+	}
+	if sim_state.slime_reset_requested {
+		gpu.needs_reset = true
+		sim_state.slime_reset_requested = false
+	}
 	slime_upload_lut(gpu, settings)
 	slime_upload_render_params(gpu, frame_slot, settings)
 	slime_write_uniforms(gpu, frame_slot, settings, sim_state.cursor_active, sim_state.cursor_pixel, sim_state.cursor_size, sim_state.cursor_strength)

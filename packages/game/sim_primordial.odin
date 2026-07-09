@@ -374,21 +374,24 @@ primordial_upload_background_params :: proc(gpu: ^Primordial_Gpu_State, frame_sl
 		return
 	}
 	params := cast(^Primordial_Background_Params)gpu.background_params_buffers[frame_slot].mapped
-	color: [4]f32
+	color := primordial_background_color(settings)
+	params^ = {background_color = color}
+}
+
+primordial_background_color :: proc(settings: ^Primordial_Settings) -> [4]f32 {
 	#partial switch settings.background_color_mode {
 	case .Black:
-		color = {0, 0, 0, 1}
+		return {0, 0, 0, 1}
 	case .White:
-		color = {1, 1, 1, 1}
+		return {1, 1, 1, 1}
 	case .Gray18:
-		color = {0.18, 0.18, 0.18, 1}
+		return {0.18, 0.18, 0.18, 1}
 	case .Color_Scheme:
 		scheme := color_scheme_effective(&settings.color_scheme, settings.color_scheme_reversed)
-		color = color_scheme_color_at(scheme, 0)
+		return color_scheme_color_at(scheme, 0)
 	case:
-		color = {0, 0, 0, 1}
+		return {0, 0, 0, 1}
 	}
-	params^ = {background_color = color}
 }
 
 primordial_upload_render_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int, settings: ^Primordial_Settings) {
@@ -1003,7 +1006,7 @@ primordial_set_viewport :: proc(cmd: vk.CommandBuffer, width, height: u32) {
 
 primordial_gpu_present_direct :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, sim: ^Remaining_Sim_State, ui: ^engine.Ui_Renderer = nil) {
 	settings := &sim.primordial
-	engine.vk_cmd_begin_swapchain_render_pass(vk_ctx, frame, primordial_clear_color())
+	engine.vk_cmd_begin_swapchain_render_pass(vk_ctx, frame, primordial_clear_color(settings))
 	cmd := frame.command_buffer
 	frame_slot := int(frame.frame_index)
 	primordial_set_viewport(cmd, vk_ctx.swapchain_extent.width, vk_ctx.swapchain_extent.height)
@@ -1011,7 +1014,6 @@ primordial_gpu_present_direct :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 	primordial_draw_particles(gpu, vk_ctx, cmd, frame_slot, &gpu.render_pipeline)
 	primordial_draw_ui_overlay(vk_ctx, frame, ui)
 	engine.vk_cmd_end_swapchain_render_pass(frame)
-	_ = settings
 }
 
 primordial_gpu_present_traces :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, sim: ^Remaining_Sim_State, ui: ^engine.Ui_Renderer = nil) {
@@ -1031,7 +1033,7 @@ primordial_gpu_present_traces :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 		primordial_transition_trace_image(gpu, vk_ctx, cmd, read_index, .SHADER_READ_ONLY_OPTIMAL)
 		primordial_upload_fade_params(gpu, frame_slot, settings)
 	}
-	clear := primordial_clear_color()
+	clear := primordial_clear_color(settings)
 	clear_value := vk.ClearValue{color = {float32 = {clear.r, clear.g, clear.b, clear.a}}}
 	begin := vk.RenderPassBeginInfo{sType = .RENDER_PASS_BEGIN_INFO, renderPass = gpu.trace_render_pass, framebuffer = gpu.trace_images[write_index].framebuffer, renderArea = {offset = {0, 0}, extent = {gpu.trace_width, gpu.trace_height}}, clearValueCount = 1, pClearValues = &clear_value}
 	vk.CmdBeginRenderPass(cmd, &begin, .INLINE)
@@ -1052,7 +1054,7 @@ primordial_gpu_present_traces :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 	gpu.trace_initialized = true
 	primordial_transition_trace_image(gpu, vk_ctx, cmd, write_index, .SHADER_READ_ONLY_OPTIMAL)
 
-	engine.vk_cmd_begin_swapchain_render_pass(vk_ctx, frame, primordial_clear_color())
+	engine.vk_cmd_begin_swapchain_render_pass(vk_ctx, frame, primordial_clear_color(settings))
 	primordial_set_viewport(cmd, vk_ctx.swapchain_extent.width, vk_ctx.swapchain_extent.height)
 	vk.CmdBindPipeline(cmd, .GRAPHICS, gpu.blit_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
@@ -1122,8 +1124,9 @@ primordial_gpu_draw_prepared_viewport :: proc(gpu: ^Primordial_Gpu_State, vk_ctx
 	primordial_draw_particles(gpu, vk_ctx, cmd, frame_slot, &gpu.render_pipeline)
 }
 
-primordial_clear_color :: proc() -> uifw.Color {
-	return {0.02, 0.018, 0.025, 1}
+primordial_clear_color :: proc(settings: ^Primordial_Settings) -> uifw.Color {
+	color := primordial_background_color(settings)
+	return {color[0], color[1], color[2], color[3]}
 }
 
 primordial_gpu_destroy :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context) {

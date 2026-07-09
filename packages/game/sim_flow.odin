@@ -501,18 +501,22 @@ flow_upload_background_color :: proc(gpu: ^Flow_Gpu_State, frame_slot: int, sett
 		return
 	}
 	color := cast(^[4]f32)gpu.background_color_buffers[frame_slot].mapped
+	color^ = flow_background_color(settings)
+}
+
+flow_background_color :: proc(settings: ^Flow_Settings) -> [4]f32 {
 	#partial switch settings.background_color_mode {
 	case .Black:
-		color^ = {0, 0, 0, 1}
+		return {0, 0, 0, 1}
 	case .White:
-		color^ = {1, 1, 1, 1}
+		return {1, 1, 1, 1}
 	case .Gray18:
-		color^ = {0.18, 0.18, 0.18, 1}
+		return {0.18, 0.18, 0.18, 1}
 	case .Color_Scheme:
 		scheme := color_scheme_effective(&settings.color_scheme, settings.color_scheme_reversed)
-		color^ = color_scheme_color_at(scheme, COLOR_SCHEME_SIZE - 1)
+		return color_scheme_color_at(scheme, COLOR_SCHEME_SIZE - 1)
 	case:
-		color^ = {0, 0, 0, 1}
+		return {0, 0, 0, 1}
 	}
 }
 
@@ -869,7 +873,8 @@ flow_gpu_step_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd
 	}
 	flow_transition_image(vk_ctx, cmd, &gpu.default_image, .SHADER_READ_ONLY_OPTIMAL)
 	if !gpu.trail_cleared {
-		clear := vk.ClearColorValue{float32 = {0, 0, 0, 0}}
+		background_color := flow_background_color(settings)
+		clear := vk.ClearColorValue{float32 = {background_color[0], background_color[1], background_color[2], background_color[3]}}
 		range := vk.ImageSubresourceRange{aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}
 		vk.CmdClearColorImage(cmd, gpu.trail_image.handle, .GENERAL, &clear, 1, &range)
 		gpu.trail_cleared = true

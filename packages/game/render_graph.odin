@@ -309,6 +309,9 @@ vk_cmd_capture_swapchain_to_buffer :: proc(ctx: ^engine.Vk_Context, frame: engin
 	if width == 0 || height == 0 {
 		return false
 	}
+	if !ctx.swapchain_supports_transfer_src {
+		return false
+	}
 	size := vk.DeviceSize(width * height * 4)
 	if !engine.vk_create_host_buffer(ctx, size, {.TRANSFER_DST}, out) {
 		return false
@@ -1087,7 +1090,7 @@ render_pass_simulation_present :: proc(ctx: ^Render_Context, pass: ^Render_Pass_
 	defer engine.vk_cmd_label_end(ctx.vk_ctx, ctx.frame.command_buffer)
 	clear_color := uifw.Color{0.09, 0.105, 0.125, 1}
 	force_late_ui_overlay := video_recorder_is_recording(ctx.video_recorder) || render_context_scene_blur_enabled(ctx)
-	draw_ui_in_pass := engine.ui_renderer_has_overlay_work(&ctx.backend.ui) && !engine.ui_renderer_needs_backdrop_blur(&ctx.backend.ui) && !force_late_ui_overlay
+	draw_ui_in_pass := engine.ui_renderer_has_overlay_work(&ctx.backend.ui) && !engine.ui_renderer_needs_backdrop_capture(&ctx.backend.ui) && !force_late_ui_overlay
 	if ctx.app_mode == .Main_Menu {
 		engine.vk_cmd_begin_swapchain_render_pass(ctx.vk_ctx, ctx.frame, clear_color)
 		main_menu_backdrop_draw(&ctx.backend.main_menu_backdrop, ctx.vk_ctx, ctx.frame, ctx.dt)
@@ -1246,7 +1249,7 @@ render_pass_ui_overlay :: proc(ctx: ^Render_Context, pass: ^Render_Pass_Node) ->
 		return true
 	}
 	force_late_ui_overlay := video_recorder_is_recording(ctx.video_recorder) || render_context_scene_blur_enabled(ctx)
-	if !force_late_ui_overlay && !engine.ui_renderer_needs_backdrop_blur(&ctx.backend.ui) {
+	if !force_late_ui_overlay && !engine.ui_renderer_needs_backdrop_capture(&ctx.backend.ui) {
 		return true
 	}
 	start := time.tick_now()

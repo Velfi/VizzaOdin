@@ -315,6 +315,8 @@ test_particle_life_toml_round_trip_through_tomlc17 :: proc(t: ^testing.T) {
 	settings.camera_y = -0.5
 	settings.camera_zoom = 3.5
 	settings.color_mode = .White
+	settings.background_color_mode = .White
+	settings.background_index = int(game.Vector_Background_Mode.White)
 	game.color_scheme_name_set(&settings.color_scheme, "MATPLOTLIB_viridis")
 	settings.color_scheme_reversed = true
 	settings.background_color = {0.12, 0.23, 0.34, 1}
@@ -347,6 +349,8 @@ test_particle_life_toml_round_trip_through_tomlc17 :: proc(t: ^testing.T) {
 	testing.expect_value(t, loaded.camera_y, settings.camera_y)
 	testing.expect_value(t, loaded.camera_zoom, settings.camera_zoom)
 	testing.expect_value(t, loaded.color_mode, settings.color_mode)
+	testing.expect_value(t, loaded.background_color_mode, settings.background_color_mode)
+	testing.expect_value(t, loaded.background_index, int(game.Vector_Background_Mode.White))
 	testing.expect_value(t, game.color_scheme_name_get(&loaded.color_scheme), "MATPLOTLIB_viridis")
 	testing.expect_value(t, loaded.color_scheme_reversed, settings.color_scheme_reversed)
 	testing.expect_value(t, loaded.background_color[0], settings.background_color[0])
@@ -400,10 +404,45 @@ test_particle_life_default_preset_matches_original_builtin :: proc(t: ^testing.T
 	testing.expect_value(t, settings.beta, f32(0.5))
 	testing.expect_value(t, settings.brownian_motion, f32(0.5))
 	testing.expect_value(t, settings.wrap_edges, true)
+	testing.expect_value(t, settings.background_color_mode, game.Vector_Background_Mode.Color_Scheme)
+	testing.expect_value(t, settings.background_index, int(game.Vector_Background_Mode.Color_Scheme))
 	testing.expect_value(t, settings.force_matrix[0 * game.PARTICLE_LIFE_MAX_SPECIES + 0], f32(-0.1))
 	testing.expect_value(t, settings.force_matrix[0 * game.PARTICLE_LIFE_MAX_SPECIES + 1], f32(0.2))
 	testing.expect_value(t, settings.force_matrix[1 * game.PARTICLE_LIFE_MAX_SPECIES + 2], f32(0.3))
 	testing.expect_value(t, settings.force_matrix[3 * game.PARTICLE_LIFE_MAX_SPECIES + 3], f32(-0.1))
+}
+
+@(test)
+test_particle_life_background_color_mode_matches_old_lut_endpoint :: proc(t: ^testing.T) {
+	settings := game.particle_life_default_settings()
+	game.color_scheme_name_set(&settings.color_scheme, "MATPLOTLIB_viridis")
+	settings.color_scheme_reversed = false
+	settings.background_color_mode = .Color_Scheme
+	settings.background_index = int(game.Vector_Background_Mode.Color_Scheme)
+
+	scheme := game.color_scheme_effective(&settings.color_scheme, settings.color_scheme_reversed)
+	expected := game.color_scheme_color_at(scheme, 0)
+	actual := game.particle_life_background_color(&settings)
+	testing.expect_value(t, actual[0], expected[0])
+	testing.expect_value(t, actual[1], expected[1])
+	testing.expect_value(t, actual[2], expected[2])
+	testing.expect_value(t, actual[3], expected[3])
+
+	settings.color_scheme_reversed = true
+	scheme = game.color_scheme_effective(&settings.color_scheme, settings.color_scheme_reversed)
+	expected = game.color_scheme_color_at(scheme, 0)
+	actual = game.particle_life_background_color(&settings)
+	testing.expect_value(t, actual[0], expected[0])
+	testing.expect_value(t, actual[1], expected[1])
+	testing.expect_value(t, actual[2], expected[2])
+	testing.expect_value(t, actual[3], expected[3])
+
+	settings.background_color_mode = .Gray18
+	actual = game.particle_life_background_color(&settings)
+	testing.expect_value(t, actual[0], f32(0.18))
+	testing.expect_value(t, actual[1], f32(0.18))
+	testing.expect_value(t, actual[2], f32(0.18))
+	testing.expect_value(t, actual[3], f32(1))
 }
 
 @(test)
@@ -1005,6 +1044,23 @@ test_flow_defaults_keep_particles_visible_with_color_scheme_background :: proc(t
 }
 
 @(test)
+test_flow_color_scheme_background_uses_old_lut_tail :: proc(t: ^testing.T) {
+	settings := game.flow_settings_default()
+	settings.background_color_mode = .Color_Scheme
+	settings.background_index = int(game.Vector_Background_Mode.Color_Scheme)
+	game.color_scheme_name_set(&settings.color_scheme, "MATPLOTLIB_viridis")
+	settings.color_scheme_reversed = false
+
+	scheme := game.color_scheme_effective(&settings.color_scheme, settings.color_scheme_reversed)
+	expected := game.color_scheme_color_at(scheme, game.COLOR_SCHEME_SIZE - 1)
+	actual := game.flow_background_color(&settings)
+	testing.expect_value(t, actual[0], expected[0])
+	testing.expect_value(t, actual[1], expected[1])
+	testing.expect_value(t, actual[2], expected[2])
+	testing.expect_value(t, actual[3], expected[3])
+}
+
+@(test)
 test_vectors_color_scheme_background_uses_active_lut :: proc(t: ^testing.T) {
 	settings := game.vectors_settings_default()
 	settings.background_color_mode = .Color_Scheme
@@ -1024,6 +1080,41 @@ test_vectors_color_scheme_background_uses_active_lut :: proc(t: ^testing.T) {
 	clear = game.vectors_clear_color(&settings)
 	scheme = game.color_scheme_effective(&settings.color_scheme, settings.color_scheme_reversed)
 	expected = game.color_scheme_color_at(scheme, 0)
+	testing.expect_value(t, clear.r, expected[0])
+	testing.expect_value(t, clear.g, expected[1])
+	testing.expect_value(t, clear.b, expected[2])
+	testing.expect_value(t, clear.a, expected[3])
+}
+
+@(test)
+test_pellets_and_primordial_color_scheme_backgrounds_use_old_lut_head :: proc(t: ^testing.T) {
+	pellets := game.pellets_settings_default()
+	pellets.background_color_mode = .Color_Scheme
+	pellets.background_index = int(game.Vector_Background_Mode.Color_Scheme)
+	game.color_scheme_name_set(&pellets.color_scheme, "MATPLOTLIB_viridis")
+	pellets.color_scheme_reversed = false
+	scheme := game.color_scheme_effective(&pellets.color_scheme, pellets.color_scheme_reversed)
+	expected := game.color_scheme_color_at(scheme, 0)
+	actual := game.pellets_background_color(&pellets)
+	testing.expect_value(t, actual[0], expected[0])
+	testing.expect_value(t, actual[1], expected[1])
+	testing.expect_value(t, actual[2], expected[2])
+	testing.expect_value(t, actual[3], expected[3])
+
+	primordial := game.primordial_settings_default()
+	primordial.background_color_mode = .Color_Scheme
+	primordial.background_index = int(game.Vector_Background_Mode.Color_Scheme)
+	game.color_scheme_name_set(&primordial.color_scheme, "MATPLOTLIB_viridis")
+	primordial.color_scheme_reversed = true
+	scheme = game.color_scheme_effective(&primordial.color_scheme, primordial.color_scheme_reversed)
+	expected = game.color_scheme_color_at(scheme, 0)
+	actual = game.primordial_background_color(&primordial)
+	testing.expect_value(t, actual[0], expected[0])
+	testing.expect_value(t, actual[1], expected[1])
+	testing.expect_value(t, actual[2], expected[2])
+	testing.expect_value(t, actual[3], expected[3])
+
+	clear := game.primordial_clear_color(&primordial)
 	testing.expect_value(t, clear.r, expected[0])
 	testing.expect_value(t, clear.g, expected[1])
 	testing.expect_value(t, clear.b, expected[2])
@@ -1786,6 +1877,21 @@ test_render_worker_main_menu_launch_applies_current_menu_palette_once :: proc(t:
 }
 
 @(test)
+test_render_worker_set_color_scheme_preserves_reversed_when_omitted :: proc(t: ^testing.T) {
+	runtime := new(game.Render_Worker_Runtime)
+	defer free(runtime)
+	game.app_ui_init(&runtime.app_ui, game.settings_default())
+
+	runtime.app_ui.slime_mold.slime.color_scheme_reversed = false
+	testing.expect(t, game.render_worker_set_color_scheme(runtime, .Slime_Mold, "MATPLOTLIB_viridis", false, false))
+	test_expect_color_scheme(t, &runtime.app_ui.slime_mold.slime.color_scheme, runtime.app_ui.slime_mold.slime.color_scheme_reversed, "MATPLOTLIB_viridis", false)
+
+	runtime.app_ui.slime_mold.slime.color_scheme_reversed = true
+	testing.expect(t, game.render_worker_set_color_scheme(runtime, .Slime_Mold, "ZELDA_Aqua", false, true))
+	test_expect_color_scheme(t, &runtime.app_ui.slime_mold.slime.color_scheme, runtime.app_ui.slime_mold.slime.color_scheme_reversed, "ZELDA_Aqua", false)
+}
+
+@(test)
 test_app_settings_round_trip_options_fields :: proc(t: ^testing.T) {
 	path := "/tmp/vizzaodin_app_settings_roundtrip.toml"
 	settings := game.settings_default()
@@ -1796,6 +1902,7 @@ test_app_settings_round_trip_options_fields :: proc(t: ^testing.T) {
 	settings.auto_hide_ui = false
 	settings.auto_hide_delay = 4500
 	settings.menu_position = "right"
+	settings.experimental_controller_ui = false
 	settings.default_camera_sensitivity = 2.2
 	settings.texture_filtering = "Nearest"
 
@@ -1812,8 +1919,464 @@ test_app_settings_round_trip_options_fields :: proc(t: ^testing.T) {
 	testing.expect_value(t, loaded.auto_hide_ui, settings.auto_hide_ui)
 	testing.expect_value(t, loaded.auto_hide_delay, settings.auto_hide_delay)
 	testing.expect_value(t, loaded.menu_position, settings.menu_position)
+	testing.expect_value(t, loaded.experimental_controller_ui, settings.experimental_controller_ui)
 	testing.expect_value(t, loaded.default_camera_sensitivity, settings.default_camera_sensitivity)
 	testing.expect_value(t, loaded.texture_filtering, settings.texture_filtering)
+}
+
+@(test)
+test_slime_control_descriptors_validate_couch_ui :: proc(t: ^testing.T) {
+	testing.expect(t, game.slime_control_couch_validation_passes())
+	testing.expect(t, game.slime_control_visible_descriptor_count(.Couch) > 0)
+
+	required := [?]game.Control_Instrument{.Play, .Look, .Brush, .Motion, .Awareness, .Field, .Birth, .World}
+	for instrument in required {
+		testing.expect(t, game.slime_control_instrument_has_visible_controls(instrument, .Couch))
+	}
+}
+
+@(test)
+test_slime_descriptor_hides_known_ineffective_controls_from_couch :: proc(t: ^testing.T) {
+	ids := [?]game.Control_Id{
+		.Field_Decay_Frequency,
+		.Field_Diffusion_Frequency,
+		.Mask_Reversed,
+		.Initialization_Heading_Range,
+	}
+	for id in ids {
+		desc, ok := game.slime_control_descriptor_by_id(id)
+		testing.expect(t, ok)
+		testing.expect(t, game.control_is_broken_or_deprecated(desc))
+		testing.expect(t, !game.control_is_visible_in_couch_ui(desc))
+	}
+}
+
+@(test)
+test_slime_visible_descriptor_validation_rejects_missing_metadata :: proc(t: ^testing.T) {
+	desc, ok := game.slime_control_descriptor_by_id(.Brush_Radius)
+	testing.expect(t, ok)
+	testing.expect(t, game.control_descriptor_is_valid_for_visible_ui(desc))
+
+	bad := desc
+	bad.label = ""
+	testing.expect(t, !game.control_descriptor_is_valid_for_visible_ui(bad))
+
+	bad = desc
+	bad.semantic_group = game.Semantic_Group(999)
+	testing.expect(t, !game.control_descriptor_is_valid_for_visible_ui(bad))
+
+	bad = desc
+	bad.range.max = bad.range.min
+	testing.expect(t, !game.control_descriptor_is_valid_for_visible_ui(bad))
+
+	bad = desc
+	bad.wiring_status = .ExposedIneffective
+	testing.expect(t, !game.control_descriptor_is_valid_for_visible_ui(bad))
+}
+
+@(test)
+test_slime_controller_deck_draw_does_not_steal_panel_focus :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default())
+	ui.mode = .Slime_Mold
+	ui.slime_controller.deck_visible = true
+	ui.slime_controller.panel_open = true
+	ui.slime_controller.focused_index = 2
+	ui.slime_controller.active_index = 2
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1280, 720, ui.settings.ui_scale)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720})
+	panel_focus := uifw.gui_make_id(&ctx, "panel_control")
+	ctx.focused = panel_focus
+	worker: game.Render_Worker_State
+	game.slime_controller_ui_draw(&ui, &ctx, &ui.slime_mold, 1280, 720, &worker)
+
+	testing.expect_value(t, ctx.focused, panel_focus)
+}
+
+@(test)
+test_slime_controller_deck_accept_ignores_non_deck_panel_focus :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default())
+	ui.mode = .Slime_Mold
+	ui.slime_controller.deck_visible = true
+	ui.slime_controller.panel_open = true
+	ui.slime_controller.focused_index = 1
+	ui.slime_controller.active_index = 2
+
+	uifw.gui_begin_frame(&ctx, {accept = true})
+	ctx.focused = uifw.gui_make_id(&ctx, "panel_control")
+	_ = game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1280, 720)
+
+	testing.expect_value(t, ui.slime_controller.active_index, 2)
+}
+
+@(test)
+test_slime_controller_long_world_panel_scrolls :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default())
+	ui.mode = .Slime_Mold
+	ui.slime_mold.slime.mask_pattern = .Image
+	ui.slime_mold.slime.mask_pattern_index = int(game.Slime_Mask_Pattern.Image)
+	ui.slime_controller.panel_open = true
+	ui.slime_controller.deck_visible = true
+	ui.slime_controller.focused_index = 6
+	ui.slime_controller.active_index = 6
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 800, 360, ui.settings.ui_scale)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 800, window_height = 360, mouse_pos = {40, 110}, wheel_delta = -5})
+	worker: game.Render_Worker_State
+	game.slime_controller_ui_draw_panel(&ui, &ctx, &ui.slime_mold, {0, 0, 620, 180}, &worker)
+
+	testing.expect(t, ui.slime_controller.panel_scroll > 0)
+}
+
+@(test)
+test_slime_controller_ui_replaces_old_slime_panel_when_enabled :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	settings := game.settings_default()
+	settings.experimental_controller_ui = true
+	game.app_ui_init(&ui, settings)
+	ui.mode = .Slime_Mold
+	ui.simulation_shell.show_ui = true
+	ui.slime_controller.deck_visible = true
+	vk_ctx: engine.Vk_Context
+	vk_ctx.swapchain_extent = {width = 1200, height = 800}
+	worker: game.Render_Worker_State
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1200, 800, ui.settings.ui_scale)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1200, window_height = 800})
+	game.app_ui_draw_remaining_sim(&ui, &ctx, .Slime_Mold, &ui.slime_mold, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "About this simulation") < 0)
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "Play") >= 0)
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "Look") >= 0)
+}
+
+@(test)
+test_slime_controller_ui_disables_hidden_old_panel_hit_test :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	settings := game.settings_default()
+	settings.experimental_controller_ui = true
+	game.app_ui_init(&ui, settings)
+	ui.mode = .Slime_Mold
+	ui.simulation_shell.show_ui = true
+	ui.simulation_shell.controls_visible = true
+	ui.slime_controller.deck_visible = false
+	ui.slime_controller.panel_open = false
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1600, 900, ui.settings.ui_scale)
+
+	old_panel := game.app_ui_simulation_menu_panel(&ui, &ctx, 1600, 900)
+	input := game.Ui_Frame_Input {
+		window_width = 1600,
+		window_height = 900,
+		mouse_pos = {old_panel.x + old_panel.w * 0.5, old_panel.y + old_panel.h * 0.5},
+		mouse_pressed = true,
+		mouse_down = true,
+	}
+	filtered := game.app_ui_simulation_filter_input(&ui, &ctx, input)
+
+	testing.expect(t, filtered.mouse_pressed)
+	testing.expect(t, filtered.mouse_down)
+	testing.expect(t, ui.simulation_shell.mouse_pressed)
+}
+
+@(test)
+test_slime_controller_deck_tabs_bound_key_and_label_text :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	settings := game.settings_default()
+	settings.experimental_controller_ui = true
+	game.app_ui_init(&ui, settings)
+	ui.mode = .Slime_Mold
+	ui.slime_controller.deck_visible = true
+	ui.slime_controller.panel_open = false
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 2048, 1152, ui.settings.ui_scale)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 2048, window_height = 1152})
+	worker: game.Render_Worker_State
+	game.slime_controller_ui_draw(&ui, &ctx, &ui.slime_mold, 2048, 1152, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	labels := [?]string{"Play", "Look", "Brush", "Motion", "Awareness", "Field", "World", "Birth", "Capture"}
+	found := 0
+	active_clip: uifw.Rect
+	clip_active := false
+	for command in ctx.commands {
+		#partial switch command.kind {
+		case .Scissor_Begin:
+			active_clip = command.rect
+			clip_active = true
+		case .Scissor_End:
+			clip_active = false
+		case .Text:
+			for label in labels {
+				if command.text == label {
+					testing.expect(t, clip_active)
+					testing.expect(t, command.rect.x >= active_clip.x)
+					testing.expect(t, command.rect.y >= active_clip.y)
+					testing.expect(t, command.rect.x + command.rect.w <= active_clip.x + active_clip.w + 0.5)
+					testing.expect(t, command.rect.y + command.rect.h <= active_clip.y + active_clip.h + 0.5)
+					found += 1
+				}
+			}
+		case:
+		}
+	}
+	testing.expect_value(t, found, len(labels))
+}
+
+@(test)
+test_slime_controller_deck_tab_focus_moves_between_tabs :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	settings := game.settings_default()
+	settings.experimental_controller_ui = true
+	game.app_ui_init(&ui, settings)
+	ui.mode = .Slime_Mold
+	ui.slime_controller.deck_visible = true
+	ui.slime_controller.panel_open = false
+	ui.slime_controller.focused_index = 0
+	ui.slime_controller.active_index = 0
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1280, 720, ui.settings.ui_scale)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, key_tab = true})
+	_ = game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1280, 720)
+	worker: game.Render_Worker_State
+	game.slime_controller_ui_draw(&ui, &ctx, &ui.slime_mold, 1280, 720, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect(t, ui.slime_controller.deck_visible)
+	testing.expect(t, !ui.slime_controller.panel_open)
+	testing.expect_value(t, ui.slime_controller.focused_index, 1)
+	testing.expect_value(t, ui.slime_controller.active_index, 0)
+	testing.expect_value(t, ctx.focused, uifw.gui_make_id(&ctx, "slime_deck_1"))
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, key_tab = true, key_shift = true})
+	_ = game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1280, 720)
+	game.slime_controller_ui_draw(&ui, &ctx, &ui.slime_mold, 1280, 720, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect_value(t, ui.slime_controller.focused_index, 0)
+	testing.expect_value(t, ctx.focused, uifw.gui_make_id(&ctx, "slime_deck_0"))
+}
+
+@(test)
+test_slime_controller_deck_arrow_focus_moves_once :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	settings := game.settings_default()
+	settings.experimental_controller_ui = true
+	game.app_ui_init(&ui, settings)
+	ui.mode = .Slime_Mold
+	ui.slime_controller.deck_visible = true
+	ui.slime_controller.panel_open = false
+	ui.slime_controller.focused_index = 0
+	ui.slime_controller.active_index = 0
+	ctx.focused = uifw.gui_make_id(&ctx, "slime_deck_0")
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1280, 720, ui.settings.ui_scale)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, key_right = true})
+	_ = game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1280, 720)
+	worker: game.Render_Worker_State
+	game.slime_controller_ui_draw(&ui, &ctx, &ui.slime_mold, 1280, 720, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect_value(t, ui.slime_controller.focused_index, 1)
+	testing.expect_value(t, ctx.focused, uifw.gui_make_id(&ctx, "slime_deck_1"))
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, key_left = true})
+	_ = game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1280, 720)
+	game.slime_controller_ui_draw(&ui, &ctx, &ui.slime_mold, 1280, 720, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect_value(t, ui.slime_controller.focused_index, 0)
+	testing.expect_value(t, ctx.focused, uifw.gui_make_id(&ctx, "slime_deck_0"))
+}
+
+@(test)
+test_slime_controller_deck_tab_opens_hidden_deck_without_skipping_tab :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	settings := game.settings_default()
+	settings.experimental_controller_ui = true
+	game.app_ui_init(&ui, settings)
+	ui.mode = .Slime_Mold
+	ui.slime_controller.deck_visible = false
+	ui.slime_controller.panel_open = false
+	ui.slime_controller.active_index = 2
+	ui.slime_controller.focused_index = 2
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1280, 720, ui.settings.ui_scale)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, key_tab = true})
+	_ = game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1280, 720)
+	worker: game.Render_Worker_State
+	game.slime_controller_ui_draw(&ui, &ctx, &ui.slime_mold, 1280, 720, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect(t, ui.slime_controller.deck_visible)
+	testing.expect(t, !ui.slime_controller.panel_open)
+	testing.expect_value(t, ui.slime_controller.focused_index, 2)
+	testing.expect_value(t, ui.slime_controller.active_index, 2)
+	testing.expect_value(t, ctx.focused, uifw.gui_make_id(&ctx, "slime_deck_2"))
+}
+
+@(test)
+test_slime_controller_deck_click_selects_tab_with_panel_focus :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	settings := game.settings_default()
+	settings.experimental_controller_ui = true
+	game.app_ui_init(&ui, settings)
+	ui.mode = .Slime_Mold
+	ui.slime_controller.deck_visible = true
+	ui.slime_controller.panel_open = true
+	ui.slime_controller.active_index = 0
+	ui.slime_controller.focused_index = 0
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1280, 720, ui.settings.ui_scale)
+
+	deck := game.slime_controller_ui_deck_rect(&ctx, 1280, 720, ui.slime_controller.mode)
+	count := game.slime_controller_ui_visible_instrument_count(ui.slime_controller.mode)
+	gap := ctx.style.spacing
+	tab_w := max((deck.w - gap * f32(count + 1)) / f32(count), f32(1))
+	tab_h := max(deck.h - gap * 2, f32(1))
+	target_index := 1
+	tab := uifw.Rect{deck.x + gap + f32(target_index) * (tab_w + gap), deck.y + gap, tab_w, tab_h}
+	click := uifw.Vec2{tab.x + tab.w * 0.5, tab.y + tab.h * 0.5}
+	panel_focus := uifw.gui_make_id(&ctx, "panel_control")
+	worker: game.Render_Worker_State
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, mouse_pos = click, mouse_down = true, mouse_pressed = true})
+	ctx.focused = panel_focus
+	_ = game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1280, 720)
+	game.slime_controller_ui_draw(&ui, &ctx, &ui.slime_mold, 1280, 720, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, mouse_pos = click, mouse_released = true})
+	_ = game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1280, 720)
+	game.slime_controller_ui_draw(&ui, &ctx, &ui.slime_mold, 1280, 720, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect(t, ui.slime_controller.panel_open)
+	testing.expect_value(t, ui.slime_controller.focused_index, target_index)
+	testing.expect_value(t, ui.slime_controller.active_index, target_index)
+	testing.expect_value(t, ctx.focused, uifw.gui_make_id(&ctx, "slime_deck_1"))
+}
+
+@(test)
+test_slime_controller_space_focuses_bottom_bar :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	settings := game.settings_default()
+	settings.experimental_controller_ui = true
+	game.app_ui_init(&ui, settings)
+	ui.mode = .Slime_Mold
+	ui.slime_controller.deck_visible = false
+	ui.slime_controller.panel_open = false
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1024, 768, ui.settings.ui_scale)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1024, window_height = 768, key_space = true})
+	consumed := game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1024, 768)
+
+	testing.expect(t, consumed)
+	testing.expect(t, ui.slime_controller.deck_visible)
+	testing.expect_value(t, ui.slime_controller.focused_index, ui.slime_controller.active_index)
+	testing.expect_value(t, ctx.focused, uifw.gui_make_id(&ctx, "slime_deck_0"))
+}
+
+@(test)
+test_slime_controller_select_focuses_bottom_bar_without_toggling_shell :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	settings := game.settings_default()
+	settings.experimental_controller_ui = true
+	game.app_ui_init(&ui, settings)
+	ui.mode = .Slime_Mold
+	ui.simulation_shell.show_ui = true
+	ui.slime_controller.deck_visible = false
+	ui.slime_controller.panel_open = false
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1024, 768, ui.settings.ui_scale)
+
+	game_input := game.Ui_Frame_Input{window_width = 1024, window_height = 768, active_device = .Controller, toggle_ui = true}
+	game.app_ui_simulation_shell_update(&ui, game_input)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1024, window_height = 768, active_device = .Controller, toggle_ui = true})
+	consumed := game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1024, 768)
+
+	testing.expect(t, consumed)
+	testing.expect(t, ui.simulation_shell.show_ui)
+	testing.expect(t, ui.slime_controller.deck_visible)
+	testing.expect_value(t, ctx.focused, uifw.gui_make_id(&ctx, "slime_deck_0"))
+}
+
+@(test)
+test_slime_controller_pause_focuses_header_bar :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	settings := game.settings_default()
+	settings.experimental_controller_ui = true
+	game.app_ui_init(&ui, settings)
+	ui.mode = .Slime_Mold
+	ui.slime_mold.paused = false
+	vk_ctx: engine.Vk_Context
+	vk_ctx.swapchain_extent = {width = 1024, height = 768}
+	worker: game.Render_Worker_State
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1024, 768, ui.settings.ui_scale)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1024, window_height = 768, active_device = .Controller, pause = true})
+	game.app_ui_draw_remaining_sim(&ui, &ctx, .Slime_Mold, &ui.slime_mold, &vk_ctx, &worker)
+
+	uifw.gui_push_id(&ctx, "simulation_bar")
+	pause_id := uifw.gui_make_id(&ctx, "pause")
+	uifw.gui_pop_id(&ctx)
+
+	testing.expect_value(t, ctx.focused, pause_id)
+	testing.expect(t, !ui.slime_mold.paused)
 }
 
 @(test)
@@ -1854,6 +2417,29 @@ test_app_options_screen_uses_plain_toggle_labels_and_sticky_footer :: proc(t: ^t
 	testing.expect(t, found_scroll_clip)
 	testing.expect(t, save_index >= 0)
 	testing.expect(t, ctx.commands[save_index].rect.y > scroll_clip.y + scroll_clip.h)
+}
+
+@(test)
+test_app_options_controller_ui_toggle_is_configurable :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default())
+	ui.settings.experimental_controller_ui = true
+	vk_ctx: engine.Vk_Context
+	vk_ctx.swapchain_extent = {width = 1600, height = 1200}
+	worker: game.Render_Worker_State
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1600, 1200, ui.settings.ui_scale)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1600, window_height = 1200, mouse_pos = {-1000, -1000}})
+	game.app_ui_draw_options(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	label_index := test_first_text_command_index(ctx.commands[:], "Controller UI")
+	testing.expect(t, label_index >= 0)
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "Controller UI: true") < 0)
 }
 
 @(test)
@@ -2711,6 +3297,41 @@ test_app_ui_main_menu_no_longer_emits_red_backdrop_gradients :: proc(t: ^testing
 }
 
 @(test)
+test_app_ui_main_menu_uses_refractive_glass_surfaces :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default())
+
+	vk_ctx: engine.Vk_Context
+	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
+	worker: game.Render_Worker_State
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}})
+	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	glass_count := 0
+	found_fixed_red_surface := false
+	for command in ctx.commands {
+		if command.kind == uifw.Draw_Command_Kind.Refractive_Glass_Rect {
+			glass_count += 1
+			testing.expect(t, command.glass_style.ior > 1)
+			testing.expect(t, command.glass_style.dispersion > 0)
+		}
+		if command.kind == uifw.Draw_Command_Kind.Filled_Rounded_Rect &&
+		   command.color.r > 0.50 && command.color.g < 0.08 && command.color.b < 0.08 &&
+		   command.rect.w > 200 && command.rect.h > 80 {
+			found_fixed_red_surface = true
+		}
+	}
+	testing.expect(t, glass_count > 0)
+	testing.expect(t, !found_fixed_red_surface)
+}
+
+@(test)
 test_app_ui_main_menu_preview_slots_skip_gradient_editor :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
@@ -3556,6 +4177,7 @@ test_gui_primitive_commands_are_renderer_neutral :: proc(t: ^testing.T) {
 	uifw.gui_image_filtered(&ctx, {0, 0, 40, 30}, 7, ctx.style.control, {brightness = 1.2, contrast = 0.8, grayscale = 0.4, blur = 0.003})
 	uifw.gui_rect_blend(&ctx, {0, 0, 10, 10}, ctx.style.accent, .Screen)
 	uifw.gui_shader_rect(&ctx, {0, 0, 32, 32}, .SV_Grid, {0.5, 0, 0, 1}, {1, 1, 1, 1})
+	uifw.gui_refractive_glass_rect(&ctx, {0, 0, 48, 36}, uifw.gui_default_glass_style(&ctx, 6))
 
 	testing.expect_value(t, ctx.commands[0].kind, uifw.Draw_Command_Kind.Line)
 	testing.expect_value(t, ctx.commands[1].kind, uifw.Draw_Command_Kind.Filled_Quad)
@@ -3567,6 +4189,9 @@ test_gui_primitive_commands_are_renderer_neutral :: proc(t: ^testing.T) {
 	testing.expect_value(t, ctx.commands[6].kind, uifw.Draw_Command_Kind.Shader_Rect)
 	testing.expect_value(t, ctx.commands[6].shader_kind, uifw.Gui_Shader_Kind.SV_Grid)
 	testing.expect_value(t, ctx.commands[6].color.a, f32(1))
+	testing.expect_value(t, ctx.commands[7].kind, uifw.Draw_Command_Kind.Refractive_Glass_Rect)
+	testing.expect(t, ctx.commands[7].glass_style.ior > 1)
+	testing.expect(t, ctx.commands[7].glass_style.roughness > 0)
 }
 
 @(test)
@@ -4009,7 +4634,7 @@ test_gui_panel_emits_panel_and_text_commands :: proc(t: ^testing.T) {
 
 	testing.expect(t, len(ctx.commands) >= 8)
 	testing.expect_value(t, ctx.commands[0].kind, uifw.Draw_Command_Kind.Filled_Rounded_Rect)
-	testing.expect_value(t, ctx.commands[5].kind, uifw.Draw_Command_Kind.Filled_Rounded_Rect)
+	testing.expect_value(t, ctx.commands[5].kind, uifw.Draw_Command_Kind.Refractive_Glass_Rect)
 	testing.expect_value(t, ctx.commands[6].kind, uifw.Draw_Command_Kind.Stroked_Rounded_Rect)
 	testing.expect_value(t, text_count, 2)
 	testing.expect_value(t, scissor_begin_count, 2)

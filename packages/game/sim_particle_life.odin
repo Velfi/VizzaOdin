@@ -377,6 +377,8 @@ Particle_Life_Settings :: struct {
 	color_mode: Particle_Life_Color_Mode,
 	color_scheme: Color_Scheme_Name,
 	color_scheme_reversed: bool,
+	background_color_mode: Vector_Background_Mode,
+	background_index: int,
 	background_color: [4]f32,
 	post_processing: Post_Processing_Settings,
 	brightness: f32,
@@ -729,6 +731,8 @@ particle_life_default_settings :: proc() -> Particle_Life_Settings {
 		force_random_max = 1.0,
 		camera_zoom = 1,
 		color_mode = .Color_Scheme,
+		background_color_mode = .Color_Scheme,
+		background_index = int(Vector_Background_Mode.Color_Scheme),
 		background_color = {0.015, 0.018, 0.024, 1},
 		post_processing = post_processing_default_settings(),
 		brightness = 1,
@@ -2824,11 +2828,15 @@ particle_life_upload_static_uniforms :: proc(sim: ^Particle_Life_Simulation) {
 		if sim.settings.color_scheme_reversed {
 			color_scheme_reverse(&scheme)
 		}
+		species_count := int(particle_life_target_species_count(sim.settings))
 		for i in 0 ..< PARTICLE_LIFE_MAX_SPECIES {
-			t := i
-			if PARTICLE_LIFE_MAX_SPECIES > 1 {
+			t := 0
+			if sim.settings.background_color_mode == .Color_Scheme && species_count > 0 {
+				t = int(((i + 1) * (COLOR_SCHEME_SIZE - 1)) / species_count)
+			} else if PARTICLE_LIFE_MAX_SPECIES > 1 {
 				t = int((i * (COLOR_SCHEME_SIZE - 1)) / (PARTICLE_LIFE_MAX_SPECIES - 1))
 			}
+			t = max(min(t, COLOR_SCHEME_SIZE - 1), 0)
 			colors.colors[i] = {
 				f32(scheme.red[t]) / 255.0,
 				f32(scheme.green[t]) / 255.0,
@@ -2836,7 +2844,7 @@ particle_life_upload_static_uniforms :: proc(sim: ^Particle_Life_Simulation) {
 				1,
 			}
 		}
-		colors.colors[PARTICLE_LIFE_MAX_SPECIES] = sim.settings.background_color
+		colors.colors[PARTICLE_LIFE_MAX_SPECIES] = particle_life_background_color(&sim.settings)
 	}
 	if sim.gpu.color_mode_buffers[frame_slot].mapped != nil {
 		mode := cast(^Particle_Life_Color_Mode_Params)sim.gpu.color_mode_buffers[frame_slot].mapped
@@ -3022,7 +3030,7 @@ particle_life_write_background_uniforms :: proc(sim: ^Particle_Life_Simulation) 
 		return
 	}
 	params := cast(^Particle_Life_Background_Params)sim.gpu.background_params_buffers[frame_slot].mapped
-	params^ = {background_color = sim.settings.background_color}
+	params^ = {background_color = particle_life_background_color(&sim.settings)}
 }
 
 particle_life_write_post_uniforms :: proc(sim: ^Particle_Life_Simulation) {
@@ -4382,11 +4390,23 @@ particle_life_save_settings :: proc(sim: ^Particle_Life_Simulation) -> Particle_
 }
 
 particle_life_clear_color :: proc(sim: ^Particle_Life_Simulation) -> uifw.Color {
-	return {
-		sim.settings.background_color[0],
-		sim.settings.background_color[1],
-		sim.settings.background_color[2],
-		sim.settings.background_color[3],
+	color := particle_life_background_color(&sim.settings)
+	return {color[0], color[1], color[2], color[3]}
+}
+
+particle_life_background_color :: proc(settings: ^Particle_Life_Settings) -> [4]f32 {
+	#partial switch settings.background_color_mode {
+	case .Black:
+		return {0, 0, 0, 1}
+	case .White:
+		return {1, 1, 1, 1}
+	case .Gray18:
+		return {0.18, 0.18, 0.18, 1}
+	case .Color_Scheme:
+		scheme := color_scheme_effective(&settings.color_scheme, settings.color_scheme_reversed)
+		return color_scheme_color_at(scheme, 0)
+	case:
+		return settings.background_color
 	}
 }
 
@@ -4915,10 +4935,13 @@ particle_life_draw_controls :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.G
 
 	uifw.gui_heading(ctx, "Display Settings")
 	color_mode_index := int(u32(sim.settings.color_mode))
-	if uifw.gui_selector(ctx, fmt.tprintf("Background Color Mode: %s", PARTICLE_LIFE_COLOR_MODE_NAMES[color_mode_index]), "pl_color_mode", &color_mode_index, PARTICLE_LIFE_COLOR_MODE_NAMES[:]) {
+	if uifw.gui_selector(ctx, fmt.tprintf("Particle Color Mode: %s", PARTICLE_LIFE_COLOR_MODE_NAMES[color_mode_index]), "pl_color_mode", &color_mode_index, PARTICLE_LIFE_COLOR_MODE_NAMES[:]) {
 		sim.settings.color_mode = Particle_Life_Color_Mode(u32(max(min(color_mode_index, len(PARTICLE_LIFE_COLOR_MODE_NAMES) - 1), 0)))
 	}
 	_ = color_scheme_editor_draw_selector(ctx, color_editor, "particle_life_color_scheme", &sim.settings.color_scheme, &sim.settings.color_scheme_reversed)
+	if uifw.gui_selector(ctx, fmt.tprintf("Background Color Mode: %s", VECTOR_BACKGROUND_MODE_NAMES[sim.settings.background_index]), "pl_background", &sim.settings.background_index, VECTOR_BACKGROUND_MODE_NAMES[:]) {
+		sim.settings.background_color_mode = Vector_Background_Mode(sim.settings.background_index)
+	}
 	_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Background R: %.2f", sim.settings.background_color[0]), "pl_bg_r", &sim.settings.background_color[0], 0, 1)
 	_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Background G: %.2f", sim.settings.background_color[1]), "pl_bg_g", &sim.settings.background_color[1], 0, 1)
 	_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Background B: %.2f", sim.settings.background_color[2]), "pl_bg_b", &sim.settings.background_color[2], 0, 1)
