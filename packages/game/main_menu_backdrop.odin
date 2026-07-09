@@ -17,14 +17,15 @@ Main_Menu_Backdrop_Gpu_State :: struct {
 	vertex_shader: engine.Vk_Shader_Module,
 	fragment_shader: engine.Vk_Shader_Module,
 	pipeline: engine.Vk_Graphics_Pipeline,
-	time_buffer: engine.Vk_Buffer,
+	time_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	lut_buffer: engine.Vk_Buffer,
 	time_set_layout: vk.DescriptorSetLayout,
 	lut_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool: vk.DescriptorPool,
-	time_set: vk.DescriptorSet,
+	time_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 	lut_set: vk.DescriptorSet,
 	time_seconds: f32,
+	active_frame_slot: u32,
 	palette_name: Color_Scheme_Name,
 	palette_index: int,
 	palette_seed: u32,
@@ -45,8 +46,14 @@ main_menu_backdrop_ensure :: proc(gpu: ^Main_Menu_Backdrop_Gpu_State, vk_ctx: ^e
 		main_menu_backdrop_destroy(gpu, vk_ctx)
 		return false
 	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(f32)), {.UNIFORM_BUFFER}, &gpu.time_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT), {.STORAGE_BUFFER}, &gpu.lut_buffer) {
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(f32)), {.UNIFORM_BUFFER}, &gpu.time_buffers[i]) {
+			engine.log_error("main_menu_backdrop_ensure: time buffer creation failed")
+			main_menu_backdrop_destroy(gpu, vk_ctx)
+			return false
+		}
+	}
+	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT), {.STORAGE_BUFFER}, &gpu.lut_buffer) {
 		engine.log_error("main_menu_backdrop_ensure: buffer creation failed")
 		main_menu_backdrop_destroy(gpu, vk_ctx)
 		return false
@@ -149,30 +156,35 @@ main_menu_backdrop_create_descriptors :: proc(gpu: ^Main_Menu_Backdrop_Gpu_State
 	}
 
 	pool_sizes := [2]vk.DescriptorPoolSize{
-		{type = .UNIFORM_BUFFER, descriptorCount = 1},
+		{type = .UNIFORM_BUFFER, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT},
 		{type = .STORAGE_BUFFER, descriptorCount = 1},
 	}
-	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 2}
+	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = engine.MAX_FRAMES_IN_FLIGHT + 1}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {
 		return false
 	}
 
-	layouts := [2]vk.DescriptorSetLayout{gpu.time_set_layout, gpu.lut_set_layout}
-	sets: [2]vk.DescriptorSet
+	layouts: [engine.MAX_FRAMES_IN_FLIGHT + 1]vk.DescriptorSetLayout
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		layouts[i] = gpu.time_set_layout
+	}
+	layouts[engine.MAX_FRAMES_IN_FLIGHT] = gpu.lut_set_layout
+	sets: [engine.MAX_FRAMES_IN_FLIGHT + 1]vk.DescriptorSet
 	alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = u32(len(layouts)), pSetLayouts = raw_data(layouts[:])}
 	if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {
 		return false
 	}
-	gpu.time_set = sets[0]
-	gpu.lut_set = sets[1]
-
-	time_info := vk.DescriptorBufferInfo{buffer = gpu.time_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(f32))}
-	lut_info := vk.DescriptorBufferInfo{buffer = gpu.lut_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT)}
-	writes := [2]vk.WriteDescriptorSet{
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.time_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &time_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.lut_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		gpu.time_sets[i] = sets[i]
+		time_info := vk.DescriptorBufferInfo{buffer = gpu.time_buffers[i].handle, offset = 0, range = vk.DeviceSize(size_of(f32))}
+		write := vk.WriteDescriptorSet{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.time_sets[i], dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &time_info}
+		vk.UpdateDescriptorSets(vk_ctx.device, 1, &write, 0, nil)
 	}
-	vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
+	gpu.lut_set = sets[engine.MAX_FRAMES_IN_FLIGHT]
+
+	lut_info := vk.DescriptorBufferInfo{buffer = gpu.lut_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT)}
+	lut_write := vk.WriteDescriptorSet{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.lut_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info}
+	vk.UpdateDescriptorSets(vk_ctx.device, 1, &lut_write, 0, nil)
 	return true
 }
 
@@ -208,8 +220,12 @@ main_menu_backdrop_draw :: proc(gpu: ^Main_Menu_Backdrop_Gpu_State, vk_ctx: ^eng
 		main_menu_backdrop_upload_lut(gpu)
 	}
 	gpu.time_seconds += max(dt, 0) * MAIN_MENU_BACKDROP_TIME_SCALE
-	if gpu.time_buffer.mapped != nil {
-		(cast(^f32)gpu.time_buffer.mapped)^ = gpu.time_seconds
+	frame_slot := frame.frame_index % engine.MAX_FRAMES_IN_FLIGHT
+	gpu.active_frame_slot = frame_slot
+	time_buffer := &gpu.time_buffers[frame_slot]
+	time_set := gpu.time_sets[frame_slot]
+	if time_buffer.mapped != nil {
+		(cast(^f32)time_buffer.mapped)^ = gpu.time_seconds
 	}
 
 	cmd := frame.command_buffer
@@ -219,7 +235,7 @@ main_menu_backdrop_draw :: proc(gpu: ^Main_Menu_Backdrop_Gpu_State, vk_ctx: ^eng
 	vk.CmdSetScissor(cmd, 0, 1, &scissor)
 	vk.CmdBindPipeline(cmd, .GRAPHICS, gpu.pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.pipeline.layout, 0, 1, &gpu.time_set, 0, nil)
+	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.pipeline.layout, 0, 1, &time_set, 0, nil)
 	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.pipeline.layout, 1, 1, &gpu.lut_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
@@ -245,7 +261,9 @@ main_menu_backdrop_destroy :: proc(gpu: ^Main_Menu_Backdrop_Gpu_State, vk_ctx: ^
 	if gpu.lut_set_layout != vk.DescriptorSetLayout(0) {
 		vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.lut_set_layout, nil)
 	}
-	engine.vk_destroy_buffer(vk_ctx, &gpu.time_buffer)
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		engine.vk_destroy_buffer(vk_ctx, &gpu.time_buffers[i])
+	}
 	engine.vk_destroy_buffer(vk_ctx, &gpu.lut_buffer)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.vertex_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.fragment_shader)

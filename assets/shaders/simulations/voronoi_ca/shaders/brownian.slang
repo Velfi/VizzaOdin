@@ -6,7 +6,7 @@ float4 LoadTexture(RWTexture2D<float4> tex, int2 p) { return tex[p]; }
 float4 LoadTexture(Texture2D<float4> tex, int2 p) { return tex.Load(int3(p, 0)); }
 void StoreTexture(RWTexture2D<float4> tex, int2 p, float4 v) { tex[p] = v; }
 
-// Brownian motion compute shader
+// Brownian motion compute shader for Voronoi sites.
 // Bindings:
 //  @binding(0) storage buffer (vertices) - read/write
 //  @binding(1) uniform (uniforms)
@@ -15,11 +15,11 @@ void StoreTexture(RWTexture2D<float4> tex, int2 p, float4 v) { tex[p] = v; }
 struct Vertex {
 
   float2 position;
-  float state;
+  float color;
   float pad0;
-  float age;
-  uint alive_neighbors;
-  uint dead_neighbors;
+  float phase;
+  uint seed;
+  uint pad1;
   uint random_state;
 };
 
@@ -28,10 +28,10 @@ struct Uniforms {
   float2 resolution;
   float time;
   float drift;
-  uint rule_type;
   uint _pad0;
   uint _pad1;
   uint _pad2;
+  uint _pad3;
 };
 
 struct BrownianParams {

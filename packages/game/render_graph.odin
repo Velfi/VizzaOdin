@@ -634,6 +634,7 @@ render_pass_main_menu_preview_prepare_slot :: proc(ctx: ^Render_Context, slot: M
 		return
 	}
 	cmd := ctx.frame.command_buffer
+	frame_slot := int(ctx.frame.frame_index)
 	#partial switch slot.mode {
 	case .Gray_Scott:
 		sim := ctx.preview_gray_scott
@@ -646,12 +647,13 @@ render_pass_main_menu_preview_prepare_slot :: proc(ctx: ^Render_Context, slot: M
 			slime_transition_image(ctx.vk_ctx, cmd, &gpu.display_image, .SHADER_READ_ONLY_OPTIMAL)
 		}
 		if gpu != nil && gpu.ready {
-			slime_upload_camera(gpu)
+			slime_upload_camera(gpu, frame_slot)
 		}
 	case .Flow_Field:
 		gpu := ctx.preview_flow_gpu
 		if gpu != nil && gpu.ready {
-			flow_upload_camera_size(gpu, viewport.width, viewport.height)
+			flow_upload_camera_size(gpu, frame_slot, viewport.width, viewport.height)
+			flow_update_descriptors_for_slot(gpu, ctx.vk_ctx, frame_slot)
 			if gpu.trail_pipeline.pipeline != vk.Pipeline(0) && gpu.trail_image.handle != vk.Image(0) {
 				flow_transition_image(ctx.vk_ctx, cmd, &gpu.trail_image, .GENERAL)
 			}
@@ -662,7 +664,8 @@ render_pass_main_menu_preview_prepare_slot :: proc(ctx: ^Render_Context, slot: M
 			preview_pellets := render_main_menu_pellets_preview_state(&ctx.app_ui.pellets)
 			render_main_menu_apply_pellets_palette(&preview_pellets.pellets, render_main_menu_preview_palette_name(ctx))
 			pellets_upload_lut(gpu, &preview_pellets.pellets)
-			pellets_write_static_params_size(gpu, viewport.width * 2, viewport.height * 2, &preview_pellets.pellets)
+			pellets_write_static_params_size(gpu, frame_slot, viewport.width * 2, viewport.height * 2, &preview_pellets.pellets)
+			pellets_update_descriptors_for_slot(gpu, ctx.vk_ctx, frame_slot)
 		}
 	case .Voronoi_CA:
 		gpu := ctx.preview_voronoi_gpu
@@ -676,10 +679,10 @@ render_pass_main_menu_preview_prepare_slot :: proc(ctx: ^Render_Context, slot: M
 			if gpu.images[index].handle != vk.Image(0) && gpu.images[index].layout != .SHADER_READ_ONLY_OPTIMAL {
 				moire_transition_image(gpu, ctx.vk_ctx, index, .SHADER_READ_ONLY_OPTIMAL, cmd)
 			}
-			moire_update_texture_descriptor(gpu, ctx.vk_ctx, index)
+			moire_update_texture_descriptor(gpu, ctx.vk_ctx, frame_slot, index)
 		}
 		if gpu != nil && gpu.ready {
-			moire_upload_camera(gpu)
+			moire_upload_camera(gpu, frame_slot)
 		}
 	case .Primordial:
 		gpu := ctx.preview_primordial_gpu
@@ -687,8 +690,10 @@ render_pass_main_menu_preview_prepare_slot :: proc(ctx: ^Render_Context, slot: M
 			preview_primordial := render_main_menu_primordial_preview_state(&ctx.app_ui.primordial)
 			render_main_menu_apply_primordial_palette(&preview_primordial.primordial, render_main_menu_preview_palette_name(ctx))
 			primordial_upload_lut(gpu, &preview_primordial.primordial)
-			primordial_upload_render_params_for_extent(gpu, &preview_primordial.primordial, viewport.width, viewport.height)
-			primordial_upload_background_params(gpu, &preview_primordial.primordial)
+			primordial_upload_camera(gpu, frame_slot, viewport.width, viewport.height)
+			primordial_upload_render_params_for_extent(gpu, frame_slot, &preview_primordial.primordial, viewport.width, viewport.height)
+			primordial_upload_background_params(gpu, frame_slot, &preview_primordial.primordial)
+			primordial_update_descriptors_for_slot(gpu, ctx.vk_ctx, frame_slot)
 		}
 	}
 }
@@ -751,6 +756,41 @@ render_main_menu_apply_flow_palette :: proc(settings: ^Flow_Settings, palette_na
 
 render_main_menu_apply_slime_palette :: proc(settings: ^Slime_Settings, palette_name: string) {
 	render_main_menu_apply_preview_palette(&settings.color_scheme, &settings.color_scheme_reversed, palette_name)
+}
+
+render_main_menu_apply_palette_to_mode :: proc(app_ui: ^App_Ui_State, gray_scott: ^Gray_Scott_Settings, particle_life: ^Particle_Life_Settings, mode: App_Mode, palette_name: string) -> bool {
+	#partial switch mode {
+	case .Slime_Mold:
+		if app_ui == nil {return false}
+		render_main_menu_apply_slime_palette(&app_ui.slime_mold.slime, palette_name)
+	case .Gray_Scott:
+		if gray_scott == nil {return false}
+		render_main_menu_apply_gray_scott_palette(gray_scott, palette_name)
+	case .Particle_Life:
+		if particle_life == nil {return false}
+		render_main_menu_apply_particle_life_palette(particle_life, palette_name)
+	case .Flow_Field:
+		if app_ui == nil {return false}
+		render_main_menu_apply_flow_palette(&app_ui.flow_field.flow, palette_name)
+	case .Pellets:
+		if app_ui == nil {return false}
+		render_main_menu_apply_pellets_palette(&app_ui.pellets.pellets, palette_name)
+	case .Voronoi_CA:
+		if app_ui == nil {return false}
+		render_main_menu_apply_voronoi_palette(&app_ui.voronoi_ca.voronoi, palette_name)
+	case .Moire:
+		if app_ui == nil {return false}
+		render_main_menu_apply_moire_palette(&app_ui.moire.moire, palette_name)
+	case .Vectors:
+		if app_ui == nil {return false}
+		render_main_menu_apply_vectors_palette(&app_ui.vectors.vectors, palette_name)
+	case .Primordial:
+		if app_ui == nil {return false}
+		render_main_menu_apply_primordial_palette(&app_ui.primordial.primordial, palette_name)
+	case:
+		return false
+	}
+	return true
 }
 
 render_main_menu_particle_life_preview_settings :: proc(source: Particle_Life_Settings) -> Particle_Life_Settings {
@@ -941,7 +981,7 @@ render_pass_main_menu_preview_present_slot :: proc(ctx: ^Render_Context, slot: M
 		}
 	case .Pellets:
 		if ctx.preview_pellets_gpu != nil && ctx.preview_pellets_gpu.ready {
-			pellets_gpu_draw_scene_viewport(ctx.preview_pellets_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.preview_pellets_gpu.background_pipeline, &ctx.preview_pellets_gpu.render_pipeline, viewport, scissor)
+			pellets_gpu_draw_scene_viewport(ctx.preview_pellets_gpu, ctx.vk_ctx, ctx.frame.command_buffer, int(ctx.frame.frame_index), &ctx.preview_pellets_gpu.background_pipeline, &ctx.preview_pellets_gpu.render_pipeline, viewport, scissor)
 		} else {
 			ctx.backend.last_main_menu_preview_skipped_present_count += 1
 		}

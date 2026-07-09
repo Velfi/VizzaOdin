@@ -327,6 +327,7 @@ MAX_GUI_OVERLAY_INPUT_RECTS :: 16
 GUI_TEXT_WIDTH_CACHE_SLOTS :: 512
 GUI_TEXT_WIDTH_CACHE_MAX_BYTES :: 128
 GUI_FONT_KIND_CAP :: 4
+GUI_COMBO_SHORT_POPUP_ROWS :: 5
 GUI_BODY_FONT_PATH :: "assets/fonts/ZeldaSans-Regular-v1.otf"
 GUI_DISPLAY_FONT_PATH :: "assets/fonts/ZeldaSerif-Regular-v0_1.otf"
 GUI_SIM_START_FONT_PATH :: "assets/fonts/MomoTrustDisplay-Regular.ttf"
@@ -1279,31 +1280,42 @@ gui_button_content_width :: proc(ctx: ^Gui_Context, label: string) -> f32 {
 gui_button_at :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, label: string, enabled: bool) -> bool {
 	control := gui_control(ctx, id, bounds, enabled)
 
-	color := Color{0.118, 0.125, 0.157, 0.92}
+	color := ctx.style.control
 	border := ctx.style.panel_border
+	stroke_width := ctx.style.border_width
+	text_color := enabled ? ctx.style.text : ctx.style.text_muted
 	if !enabled {
 		color = ctx.style.control_disabled
 	} else if ctx.active == id {
-		color = {0.392, 0.424, 1.0, 0.24}
-		border = {0.392, 0.424, 1.0, 0.55}
+		color = gui_lerp_color(ctx.style.control_hot, ctx.style.accent, 0.18)
+		border = gui_apply_opacity(ctx.style.accent, 0.62)
+		stroke_width = max(ctx.style.border_width * 2, 2)
 	} else if ctx.hot == id || control.focused {
-		color = {0.157, 0.173, 0.235, 0.98}
-		border = {1, 1, 1, 0.50}
+		color = ctx.style.control_hot
+		border = control.focused ? gui_apply_opacity(ctx.style.accent, 0.78) : gui_apply_opacity(ctx.style.text, 0.46)
+		if control.focused {
+			stroke_width = max(ctx.style.border_width * 2, 2)
+		}
 	}
 	if enabled && ctx.input.delta_time > 0 {
 		hot_t := gui_animate_value(ctx, id, (ctx.hot == id || ctx.active == id) ? f32(1) : f32(0), 10)
-		target := ctx.active == id ? Color{0.392, 0.424, 1.0, 0.24} : Color{0.157, 0.173, 0.235, 0.98}
-		color = gui_lerp_color({0.118, 0.125, 0.157, 0.92}, target, hot_t)
+		target := ctx.active == id ? gui_lerp_color(ctx.style.control_hot, ctx.style.accent, 0.18) : ctx.style.control_hot
+		color = gui_lerp_color(ctx.style.control, target, hot_t)
 	}
 
-	gui_shadow(ctx, bounds, ctx.style.radius_control, ctx.style.shadow_offset, ctx.style.shadow_blur, {0, 0, 0, enabled ? f32(0.28) : f32(0.10)})
+	gui_shadow(ctx, bounds, ctx.style.radius_control, ctx.style.shadow_offset, ctx.style.shadow_blur * 0.42, {0, 0, 0, enabled ? f32(0.18) : f32(0.08)})
 	gui_round_rect(ctx, bounds, ctx.style.radius_control, color)
-	gui_round_stroke(ctx, bounds, ctx.style.radius_control, border, ctx.style.border_width * 2)
+	gui_round_stroke(ctx, bounds, ctx.style.radius_control, border, stroke_width)
 	if ctx.focused == id {
 		gui_focus_ring(ctx, bounds)
 	}
 	inset := ctx.style.control_padding
-	gui_text_clipped(ctx, gui_inset(bounds, inset), {bounds.x + inset * 1.5, bounds.y + max((bounds.h - ctx.style.body_text_height) * 0.5, 0)}, label, enabled ? ctx.style.text : ctx.style.text_muted)
+	if len(label) > 0 {
+		text_rect := gui_inset(bounds, inset)
+		gui_scissor_begin(ctx, text_rect)
+		gui_text_centered(ctx, text_rect, label, text_color)
+		gui_scissor_end(ctx)
+	}
 
 	return control.activated || (enabled && control.hovered && ctx.active == id && ctx.input.mouse_released)
 }
@@ -1325,18 +1337,30 @@ gui_card_button_keyed :: proc(ctx: ^Gui_Context, bounds: Rect, title, key, subti
 gui_toggle :: gui_toggle_keyed
 
 gui_toggle_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: ^bool) -> bool {
-	if gui_button_keyed(ctx, label, key) {
-		value^ = !value^
-		return true
-	}
-	return false
+	return gui_switch_keyed(ctx, label, key, value)
 }
 
 gui_number_drag_f32 :: gui_number_drag_f32_keyed
 
-gui_number_drag_f32_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: ^f32, speed, min, max_value: f32) -> bool {
+gui_number_drag_f32_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: ^f32, speed, min, max_value: f32, enabled := true) -> bool {
 	id := gui_make_id(ctx, key)
 	bounds := gui_next_rect(ctx)
+	if !enabled {
+		if ctx.focused == id {
+			ctx.focused = GUI_ID_NONE
+		}
+		if ctx.active == id {
+			ctx.active = GUI_ID_NONE
+		}
+		if ctx.text_edit_id == id {
+			ctx.text_edit_id = GUI_ID_NONE
+			ctx.text_edit_len = 0
+		}
+		gui_round_rect(ctx, bounds, ctx.style.radius_control, ctx.style.control_disabled)
+		gui_round_stroke(ctx, bounds, ctx.style.radius_control, ctx.style.panel_border, ctx.style.border_width)
+		gui_text_clipped(ctx, gui_inset(bounds, ctx.style.control_padding), {bounds.x + ctx.style.control_padding * 1.5, bounds.y + max((bounds.h - ctx.style.body_text_height) * 0.5, 0)}, label, ctx.style.text_muted)
+		return false
+	}
 	control := gui_control(ctx, id, bounds, true)
 	changed := false
 	editing := ctx.text_edit_id == id
@@ -1780,14 +1804,14 @@ gui_text_edit_keep_caret_visible :: proc(ctx: ^Gui_Context, buffer: []u8, length
 	ctx.text_edit_scroll_x = max(ctx.text_edit_scroll_x, 0)
 }
 
-gui_text_edit_draw :: proc(ctx: ^Gui_Context, rect: Rect, text_pos: Vec2, buffer: []u8, length: int, placeholder: string, focused: bool) {
+gui_text_edit_draw :: proc(ctx: ^Gui_Context, rect: Rect, text_pos: Vec2, buffer: []u8, length: int, placeholder: string, focused: bool, trailing_inset := f32(0)) {
 	display := string(buffer[:length])
 	text_color := ctx.style.text
 	if length == 0 {
 		display = placeholder
 		text_color = ctx.style.text_muted
 	}
-	clip := gui_inset(rect, ctx.style.control_padding)
+	clip := gui_inset_edges(rect, {left = ctx.style.control_padding, top = ctx.style.control_padding, right = ctx.style.control_padding + trailing_inset, bottom = ctx.style.control_padding})
 	draw_pos := Vec2{text_pos.x - ctx.text_edit_scroll_x, text_pos.y}
 	if focused && length > 0 && gui_text_edit_has_selection(ctx) {
 		start, end := gui_text_edit_selection(ctx)
@@ -1815,12 +1839,12 @@ gui_text_field_chrome :: proc(ctx: ^Gui_Context, bounds: Rect, active, hot, focu
 	color := ctx.style.control
 	border := ctx.style.panel_border
 	stroke_width := ctx.style.border_width
-	if active {
-		color = ctx.style.control_active
-	} else if focused {
-		color = gui_apply_opacity(ctx.style.accent, 0.18)
+	if focused {
+		color = gui_lerp_color(ctx.style.control, ctx.style.control_hot, active ? f32(0.45) : f32(0.22))
 		border = gui_apply_opacity(ctx.style.accent, 0.78)
 		stroke_width = max(ctx.style.border_width * 2, 2)
+	} else if active {
+		color = ctx.style.control_hot
 	} else if hot {
 		color = ctx.style.control_hot
 	}
@@ -1829,6 +1853,42 @@ gui_text_field_chrome :: proc(ctx: ^Gui_Context, bounds: Rect, active, hot, focu
 	if focused {
 		gui_focus_ring(ctx, bounds)
 	}
+}
+
+gui_text_input_clear_rect :: proc(ctx: ^Gui_Context, bounds: Rect) -> Rect {
+	size := min(max(bounds.h * 0.45, f32(18)), max(bounds.h - ctx.style.control_padding * 2, f32(12)))
+	x := bounds.x + bounds.w - ctx.style.control_padding * 1.5 - size
+	y := bounds.y + (bounds.h - size) * 0.5
+	return {x, y, size, size}
+}
+
+gui_text_input_clear_hit_rect :: proc(ctx: ^Gui_Context, bounds: Rect) -> Rect {
+	size := min(max(bounds.h * 0.72, f32(28)), bounds.h)
+	x := bounds.x + bounds.w - ctx.style.control_padding - size
+	y := bounds.y + (bounds.h - size) * 0.5
+	return {x, y, size, size}
+}
+
+gui_text_input_body_rect :: proc(bounds, clear_hit: Rect, clear_visible: bool) -> Rect {
+	if !clear_visible {
+		return bounds
+	}
+	return {bounds.x, bounds.y, max(clear_hit.x - bounds.x, 0), bounds.h}
+}
+
+gui_text_input_draw_clear_button :: proc(ctx: ^Gui_Context, rect: Rect, hot, active: bool) {
+	fill := Color{1, 1, 1, 0.24}
+	if active {
+		fill = Color{1, 1, 1, 0.36}
+	} else if hot {
+		fill = Color{1, 1, 1, 0.31}
+	}
+	gui_ellipse(ctx, rect, fill)
+	center := Vec2{rect.x + rect.w * 0.5, rect.y + rect.h * 0.5}
+	size := rect.w * 0.22
+	line_color := Color{0.02, 0.025, 0.035, 0.82}
+	gui_line(ctx, {center.x - size, center.y - size}, {center.x + size, center.y + size}, line_color, max(ctx.style.border_width * 1.6, 2))
+	gui_line(ctx, {center.x + size, center.y - size}, {center.x - size, center.y + size}, line_color, max(ctx.style.border_width * 1.6, 2))
 }
 
 gui_text_input_keyed :: proc(ctx: ^Gui_Context, label, key: string, buffer: []u8, length: ^int) -> bool {
@@ -1844,19 +1904,46 @@ gui_text_input_keyed :: proc(ctx: ^Gui_Context, label, key: string, buffer: []u8
 		length^ = len(buffer)
 	}
 
+	clear_visual := gui_text_input_clear_rect(ctx, bounds)
+	clear_hit := gui_text_input_clear_hit_rect(ctx, bounds)
+	clear_visible := length^ > 0 && (control.focused || control.hovered)
+	clear_hot := clear_visible && gui_mouse_contains(ctx, clear_hit)
+	clear_active := clear_hot && ctx.active == id && ctx.input.mouse_down
+	clear_clicked := clear_hot && ctx.active == id && ctx.input.mouse_released
+	body := gui_text_input_body_rect(bounds, clear_hit, clear_visible)
+	text_pos := Vec2{bounds.x + ctx.style.control_padding * 1.5, bounds.y + max((bounds.h - ctx.style.body_text_height) * 0.5, 0)}
+
 	if control.focused {
 		gui_text_edit_begin(ctx, id, length^)
-		text_pos := Vec2{bounds.x + ctx.style.control_padding * 1.5, bounds.y + max((bounds.h - ctx.style.body_text_height) * 0.5, 0)}
-		gui_text_edit_handle_mouse(ctx, id, buffer, length^, bounds, text_pos)
-		changed = gui_text_edit_process(ctx, id, buffer, length) || changed
-		gui_text_edit_keep_caret_visible(ctx, buffer, length^, gui_inset(bounds, ctx.style.control_padding * 2))
+		if clear_clicked {
+			length^ = 0
+			if len(buffer) > 0 {
+				buffer[0] = 0
+			}
+			ctx.text_edit_caret = 0
+			ctx.text_edit_anchor = 0
+			ctx.text_edit_scroll_x = 0
+			ctx.text_edit_blink = 0
+			changed = true
+			clear_visible = false
+		} else {
+			gui_text_edit_handle_mouse(ctx, id, buffer, length^, body, text_pos)
+			changed = gui_text_edit_process(ctx, id, buffer, length) || changed
+		}
+		trailing_inset := clear_visible ? max(bounds.x + bounds.w - clear_hit.x, 0) : f32(0)
+		edit_view := gui_inset_edges(bounds, {left = ctx.style.control_padding * 2, top = ctx.style.control_padding * 2, right = ctx.style.control_padding * 2 + trailing_inset, bottom = ctx.style.control_padding * 2})
+		gui_text_edit_keep_caret_visible(ctx, buffer, length^, edit_view)
 	} else if ctx.text_edit_id == id {
 		ctx.text_edit_id = GUI_ID_NONE
 		ctx.text_edit_selecting = false
 	}
 
 	gui_text_field_chrome(ctx, bounds, ctx.active == id, ctx.hot == id, control.focused)
-	gui_text_edit_draw(ctx, bounds, {bounds.x + ctx.style.control_padding * 1.5, bounds.y + max((bounds.h - ctx.style.body_text_height) * 0.5, 0)}, buffer, length^, label, control.focused)
+	trailing_inset := clear_visible ? max(bounds.x + bounds.w - clear_hit.x, 0) : f32(0)
+	gui_text_edit_draw(ctx, bounds, text_pos, buffer, length^, label, control.focused, trailing_inset)
+	if clear_visible {
+		gui_text_input_draw_clear_button(ctx, clear_visual, clear_hot, clear_active)
+	}
 	return changed
 }
 
@@ -1927,22 +2014,34 @@ gui_checkbox_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: ^bool) 
 	}
 
 	fill := ctx.style.control
+	border := ctx.style.panel_border
 	if ctx.hot == id {
 		fill = ctx.style.control_hot
 	}
 	if ctx.active == id {
 		fill = ctx.style.control_active
 	}
-	gui_round_rect(ctx, box, 4, fill)
-	gui_round_stroke(ctx, box, 4, ctx.style.panel_border, ctx.style.border_width)
 	if value^ {
-		gui_line(ctx, {box.x + box.w * 0.23, box.y + box.h * 0.52}, {box.x + box.w * 0.43, box.y + box.h * 0.72}, ctx.style.accent, 3)
-		gui_line(ctx, {box.x + box.w * 0.43, box.y + box.h * 0.72}, {box.x + box.w * 0.78, box.y + box.h * 0.28}, ctx.style.accent, 3)
+		fill = ctx.style.accent
+		border = gui_apply_opacity(ctx.style.accent, 0.88)
+		if ctx.hot == id || ctx.focused == id {
+			fill = gui_lighten(ctx.style.accent, 0.08)
+		}
+		if ctx.active == id {
+			fill = gui_lighten(ctx.style.accent, 0.14)
+		}
+	}
+	gui_round_rect(ctx, box, 4, fill)
+	gui_round_stroke(ctx, box, 4, border, ctx.style.border_width)
+	if value^ {
+		check_color := Color{1, 1, 1, 0.95}
+		gui_line(ctx, {box.x + box.w * 0.23, box.y + box.h * 0.52}, {box.x + box.w * 0.43, box.y + box.h * 0.72}, check_color, max(ctx.style.border_width * 2, 2))
+		gui_line(ctx, {box.x + box.w * 0.43, box.y + box.h * 0.72}, {box.x + box.w * 0.78, box.y + box.h * 0.28}, check_color, max(ctx.style.border_width * 2, 2))
 	}
 	if ctx.focused == id {
 		gui_focus_ring(ctx, bounds)
 	}
-	gui_text_clipped(ctx, gui_inset_edges(bounds, {left = box_size + 20, top = 0, right = 8, bottom = 0}), {bounds.x + box_size + 24, bounds.y + 6}, label, ctx.style.text)
+	gui_text_clipped(ctx, gui_inset_edges(bounds, {left = box_size + 20, top = 0, right = 8, bottom = 0}), {bounds.x + box_size + 24, bounds.y + max((bounds.h - ctx.style.body_text_height) * 0.5, 0)}, label, ctx.style.text)
 	return clicked
 }
 
@@ -1951,7 +2050,9 @@ gui_switch :: gui_switch_keyed
 gui_switch_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: ^bool) -> bool {
 	id := gui_make_id(ctx, key)
 	bounds := gui_next_rect(ctx)
-	track := Rect{bounds.x + 8, bounds.y + (bounds.h - 28) * 0.5, 54, 28}
+	track_h := min(max(bounds.h * 0.64, f32(28)), max(bounds.h - ctx.style.control_padding, f32(24)))
+	track_w := max(track_h * 1.85, f32(54))
+	track := Rect{bounds.x + 8, bounds.y + (bounds.h - track_h) * 0.5, track_w, track_h}
 	clicked := gui_button_behavior(ctx, id, bounds, true)
 	if clicked {
 		value^ = !value^
@@ -1962,18 +2063,30 @@ gui_switch_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: ^bool) ->
 		t = gui_animate_value(ctx, gui_id_child(id, "switch-track"), t, 14)
 	}
 	track_color := gui_lerp_color(ctx.style.control, ctx.style.accent, t)
-	if ctx.hot == id && !value^ {
-		track_color = ctx.style.control_hot
+	track_border := ctx.style.panel_border
+	if value^ {
+		track_border = gui_apply_opacity(ctx.style.accent, 0.78)
+	}
+	if ctx.hot == id {
+		track_color = value^ ? gui_lighten(ctx.style.accent, 0.08) : ctx.style.control_hot
+	}
+	if ctx.active == id {
+		track_color = value^ ? gui_lighten(ctx.style.accent, 0.14) : ctx.style.control_active
 	}
 	gui_round_rect(ctx, track, track.h * 0.5, track_color)
-	gui_round_stroke(ctx, track, track.h * 0.5, ctx.style.panel_border, ctx.style.border_width)
-	knob_size := track.h - 8
-	knob_x := track.x + 4 + (track.w - knob_size - 8) * t
-	gui_ellipse(ctx, {knob_x, track.y + 4, knob_size, knob_size}, ctx.style.text)
+	gui_round_stroke(ctx, track, track.h * 0.5, track_border, ctx.style.border_width)
+	knob_padding := max(track.h * 0.14, f32(4))
+	knob_size := max(track.h - knob_padding * 2, f32(12))
+	knob_x := track.x + knob_padding + (track.w - knob_size - knob_padding * 2) * t
+	knob := Rect{knob_x, track.y + knob_padding, knob_size, knob_size}
+	gui_shadow(ctx, knob, knob_size * 0.5, {0, max(ctx.style.border_width, f32(1))}, ctx.style.shadow_blur * 0.35, {0, 0, 0, 0.26})
+	gui_ellipse(ctx, knob, Color{1, 1, 1, 0.96})
+	gui_ellipse_stroke(ctx, knob, gui_apply_opacity(ctx.style.panel_border, 0.68), ctx.style.border_width)
 	if ctx.focused == id {
 		gui_focus_ring(ctx, bounds)
 	}
-	gui_text_clipped(ctx, gui_inset_edges(bounds, {left = 72, top = 0, right = 8, bottom = 0}), {bounds.x + 78, bounds.y + 6}, label, ctx.style.text)
+	label_left := track.x + track.w + ctx.style.spacing_2
+	gui_text_clipped(ctx, gui_inset_edges(bounds, {left = label_left - bounds.x, top = 0, right = 8, bottom = 0}), {label_left, bounds.y + max((bounds.h - ctx.style.body_text_height) * 0.5, 0)}, label, ctx.style.text)
 	return clicked
 }
 
@@ -1986,21 +2099,28 @@ gui_radio_keyed :: proc(ctx: ^Gui_Context, label, key: string, selected: bool) -
 	circle := Rect{bounds.x + 8, bounds.y + (bounds.h - size) * 0.5, size, size}
 	clicked := gui_button_behavior(ctx, id, bounds, true)
 	fill := ctx.style.control
+	border := ctx.style.panel_border
 	if ctx.hot == id {
 		fill = ctx.style.control_hot
 	}
 	if ctx.active == id {
 		fill = ctx.style.control_active
 	}
-	gui_ellipse(ctx, circle, fill)
-	gui_ellipse_stroke(ctx, circle, ctx.style.panel_border, ctx.style.border_width)
 	if selected {
-		gui_ellipse(ctx, gui_inset(circle, 7), ctx.style.accent)
+		border = gui_apply_opacity(ctx.style.accent, 0.88)
+		if ctx.hot == id || ctx.focused == id {
+			fill = gui_lerp_color(ctx.style.control, ctx.style.control_hot, 0.55)
+		}
+	}
+	gui_ellipse(ctx, circle, fill)
+	gui_ellipse_stroke(ctx, circle, border, selected ? max(ctx.style.border_width * 2, 2) : ctx.style.border_width)
+	if selected {
+		gui_ellipse(ctx, gui_inset(circle, max(size * 0.30, f32(6))), ctx.style.accent)
 	}
 	if ctx.focused == id {
 		gui_focus_ring(ctx, bounds)
 	}
-	gui_text_clipped(ctx, gui_inset_edges(bounds, {left = size + 20, top = 0, right = 8, bottom = 0}), {bounds.x + size + 24, bounds.y + 6}, label, ctx.style.text)
+	gui_text_clipped(ctx, gui_inset_edges(bounds, {left = size + 20, top = 0, right = 8, bottom = 0}), {bounds.x + size + 24, bounds.y + max((bounds.h - ctx.style.body_text_height) * 0.5, 0)}, label, ctx.style.text)
 	return clicked
 }
 
@@ -2049,12 +2169,26 @@ gui_radio_group_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^i
 			ctx.focused = group_id
 			changed = true
 		}
-		gui_ellipse(ctx, circle, (ctx.hot == id || ctx.active == id) ? ctx.style.control_hot : ctx.style.control)
-		gui_ellipse_stroke(ctx, circle, ctx.style.panel_border, ctx.style.border_width)
-		if current^ == i {
-			gui_ellipse(ctx, gui_inset(circle, 7), ctx.style.accent)
+		fill := ctx.style.control
+		border := ctx.style.panel_border
+		if ctx.hot == id {
+			fill = ctx.style.control_hot
 		}
-		gui_text_clipped(ctx, gui_inset_edges(bounds, {left = size + 20, top = 0, right = 8, bottom = 0}), {bounds.x + size + 24, bounds.y + 6}, option, ctx.style.text)
+		if ctx.active == group_id {
+			fill = ctx.style.control_active
+		}
+		if current^ == i {
+			border = gui_apply_opacity(ctx.style.accent, 0.88)
+			if ctx.hot == id || ctx.focused == group_id {
+				fill = gui_lerp_color(ctx.style.control, ctx.style.control_hot, 0.55)
+			}
+		}
+		gui_ellipse(ctx, circle, fill)
+		gui_ellipse_stroke(ctx, circle, border, current^ == i ? max(ctx.style.border_width * 2, 2) : ctx.style.border_width)
+		if current^ == i {
+			gui_ellipse(ctx, gui_inset(circle, max(size * 0.30, f32(6))), ctx.style.accent)
+		}
+		gui_text_clipped(ctx, gui_inset_edges(bounds, {left = size + 20, top = 0, right = 8, bottom = 0}), {bounds.x + size + 24, bounds.y + max((bounds.h - ctx.style.body_text_height) * 0.5, 0)}, option, ctx.style.text)
 	}
 	group_control := gui_control(ctx, group_id, group_bounds, true)
 	if group_control.activated {
@@ -2331,9 +2465,9 @@ gui_chevron :: proc(ctx: ^Gui_Context, center: Vec2, size: f32, up: bool, color:
 	}
 }
 
-gui_combo_popup_rect :: proc(ctx: ^Gui_Context, bounds: Rect, options: []string, query: string, match_count: int) -> Rect {
+gui_combo_popup_rect :: proc(ctx: ^Gui_Context, bounds: Rect, options: []string, query: string, match_count, selected_index: int) -> Rect {
 	query_height := len(query) > 0 ? ctx.style.row_height : f32(0)
-	visible_rows := min(max(match_count, 1), 5)
+	visible_rows := min(max(match_count, 1), GUI_COMBO_SHORT_POPUP_ROWS)
 	list_height := f32(visible_rows) * ctx.style.row_height
 	width := max(bounds.w, gui_combo_popup_content_width(ctx, options))
 	max_width := f32(ctx.input.window_width) > 0 ? max(f32(ctx.input.window_width) - ctx.style.spacing_1 * 2, bounds.w) : width
@@ -2345,6 +2479,17 @@ gui_combo_popup_rect :: proc(ctx: ^Gui_Context, bounds: Rect, options: []string,
 		return below
 	}
 	margin := ctx.style.spacing_1
+	viewport_h := max(f32(ctx.input.window_height) - margin * 2, 0)
+	if match_count > GUI_COMBO_SHORT_POPUP_ROWS && viewport_h > 0 {
+		content_height := f32(max(match_count, 1)) * ctx.style.row_height
+		popup_height = min(query_height + content_height, viewport_h)
+		popup_height = max(popup_height, min(query_height + ctx.style.row_height, viewport_h))
+		selected_rank := gui_combo_match_rank(options, query, selected_index)
+		selected_center_y := bounds.y + bounds.h * 0.5
+		y := selected_center_y - query_height - (f32(selected_rank) + 0.5) * ctx.style.row_height
+		return gui_overlay_nudge_into_view(ctx, {bounds.x, y, width, popup_height})
+	}
+
 	space_below := f32(ctx.input.window_height) - margin - (bounds.y + bounds.h + ctx.style.spacing_1)
 	space_above := bounds.y - ctx.style.spacing_1 - margin
 	if space_below < popup_height && space_above > space_below {
@@ -2372,6 +2517,20 @@ gui_combo_match_count :: proc(options: []string, query: string) -> int {
 	return count
 }
 
+gui_combo_match_rank :: proc(options: []string, query: string, selected_index: int) -> int {
+	rank := 0
+	for option, i in options {
+		if !gui_string_contains_fold(option, query) {
+			continue
+		}
+		if i == selected_index {
+			return rank
+		}
+		rank += 1
+	}
+	return 0
+}
+
 gui_combo_scroll_highlight_into_view :: proc(ctx: ^Gui_Context, matches: []int, viewport_height: f32) {
 	if ctx.combo_highlight < 0 || viewport_height <= 0 {
 		return
@@ -2395,6 +2554,27 @@ gui_combo_scroll_highlight_into_view :: proc(ctx: ^Gui_Context, matches: []int, 
 	}
 }
 
+gui_combo_scroll_highlight_to_anchor :: proc(ctx: ^Gui_Context, matches: []int, list_viewport: Rect, bounds: Rect) {
+	if ctx.combo_highlight < 0 || list_viewport.h <= 0 {
+		return
+	}
+	highlight_index := -1
+	for match, i in matches {
+		if match == ctx.combo_highlight {
+			highlight_index = i
+			break
+		}
+	}
+	if highlight_index < 0 {
+		return
+	}
+	content_height := f32(len(matches)) * ctx.style.row_height
+	max_scroll := max(content_height - list_viewport.h, 0)
+	anchor_center_y := bounds.y + bounds.h * 0.5
+	row_center := f32(highlight_index) * ctx.style.row_height + ctx.style.row_height * 0.5
+	ctx.combo_scroll = min(max(row_center - (anchor_center_y - list_viewport.y), 0), max_scroll)
+}
+
 gui_combobox_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int, options: []string, query_buffer: []u8) -> bool {
 	if len(options) == 0 {
 		return false
@@ -2409,6 +2589,14 @@ gui_combobox_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int,
 	clicked := control.activated || (control.hovered && ctx.active == id && ctx.input.mouse_released)
 	if open && ctx.input.accept {
 		clicked = false
+	}
+	if open && clicked {
+		query := gui_query_string(query_buffer)
+		matches_count := gui_combo_match_count(options, query)
+		popup := gui_combo_popup_rect(ctx, bounds, options, query, matches_count, ctx.combo_highlight)
+		if gui_contains(popup, ctx.input.mouse_pos) {
+			clicked = false
+		}
 	}
 	if !open && control.focused && ctx.input.key_space {
 		clicked = true
@@ -2429,7 +2617,7 @@ gui_combobox_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int,
 	if open && ctx.input.mouse_pressed && !gui_contains(bounds, ctx.input.mouse_pos) {
 		query := gui_query_string(query_buffer)
 		matches_count := gui_combo_match_count(options, query)
-		popup := gui_combo_popup_rect(ctx, bounds, options, query, matches_count)
+		popup := gui_combo_popup_rect(ctx, bounds, options, query, matches_count, ctx.combo_highlight)
 		if !gui_contains(popup, ctx.input.mouse_pos) {
 			ctx.open_panel = GUI_ID_NONE
 			open = false
@@ -2490,12 +2678,16 @@ gui_combobox_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int,
 		}
 	}
 
-	popup := gui_combo_popup_rect(ctx, bounds, options, query, len(matches))
+	popup := gui_combo_popup_rect(ctx, bounds, options, query, len(matches), ctx.combo_highlight)
 	query_height := len(query) > 0 ? ctx.style.row_height : f32(0)
 	list_viewport := Rect{popup.x, popup.y + query_height, popup.w, max(popup.h - query_height, 0)}
 	content_height := f32(len(matches)) * ctx.style.row_height
 	max_scroll := max(content_height - list_viewport.h, 0)
-	gui_combo_scroll_highlight_into_view(ctx, matches[:], list_viewport.h)
+	if opened_this_frame && len(matches) > GUI_COMBO_SHORT_POPUP_ROWS {
+		gui_combo_scroll_highlight_to_anchor(ctx, matches[:], list_viewport, bounds)
+	} else {
+		gui_combo_scroll_highlight_into_view(ctx, matches[:], list_viewport.h)
+	}
 	combo_scroll := ctx.combo_scroll
 	_, _ = gui_apply_wheel_scroll(ctx, popup, &combo_scroll, max_scroll, ctx.style.row_height, ctx.scroll_depth)
 	ctx.combo_scroll = combo_scroll
@@ -2508,7 +2700,7 @@ gui_combobox_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int,
 		row := Rect{popup.x, y, popup.w, ctx.style.row_height}
 		visible_row := y + ctx.style.row_height > list_viewport.y && y < list_viewport.y + list_viewport.h
 		row_id := gui_id_child_int(id, match)
-		if visible_row && gui_pointer_enabled(ctx) && gui_contains(list_viewport, ctx.input.mouse_pos) && gui_contains(row, ctx.input.mouse_pos) {
+		if visible_row && !opened_this_frame && gui_pointer_enabled(ctx) && gui_contains(list_viewport, ctx.input.mouse_pos) && gui_contains(row, ctx.input.mouse_pos) {
 			ctx.hot = row_id
 			ctx.combo_highlight = match
 			if ctx.input.mouse_released {

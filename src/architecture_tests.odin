@@ -894,6 +894,47 @@ test_pellets_input_preserves_old_mouse_y_flip :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_pellets_throw_velocity_survives_release_frame :: proc(t: ^testing.T) {
+	sim: game.Remaining_Sim_State
+	game.remaining_sim_init(&sim)
+
+	game.remaining_sim_apply_frame_input_for_kind(&sim, .Pellets, {
+		window_width = 100,
+		window_height = 100,
+		mouse_pos = {50, 50},
+		mouse_down = true,
+		mouse_button = 1,
+		delta_time = 1.0 / 60.0,
+	})
+	game.remaining_sim_apply_frame_input_for_kind(&sim, .Pellets, {
+		window_width = 100,
+		window_height = 100,
+		mouse_pos = {75, 50},
+		mouse_down = true,
+		mouse_button = 1,
+		delta_time = 1.0 / 60.0,
+	})
+
+	drag_velocity := sim.cursor_world_velocity
+	testing.expect(t, drag_velocity[0] > 20)
+	testing.expect(t, drag_velocity[0] < 30)
+
+	game.remaining_sim_apply_frame_input_for_kind(&sim, .Pellets, {
+		window_width = 100,
+		window_height = 100,
+		mouse_pos = {75, 50},
+		mouse_down = false,
+		mouse_button = 1,
+		delta_time = 1.0 / 60.0,
+	})
+
+	testing.expect_value(t, sim.cursor_active, u32(0))
+	testing.expect_value(t, sim.cursor_mode, u32(0))
+	testing.expect(t, sim.cursor_world_velocity[0] > 0)
+	testing.expect(t, test_approx_f32(sim.cursor_world_velocity[0], drag_velocity[0] * 0.95))
+}
+
+@(test)
 test_slime_mold_cursor_pixel_y_matches_shader_coordinates :: proc(t: ^testing.T) {
 	sim: game.Remaining_Sim_State
 	game.remaining_sim_init(&sim)
@@ -1381,19 +1422,11 @@ test_remaining_core_settings_round_trip_through_tomlc17 :: proc(t: ^testing.T) {
 
 	voronoi_path := "/tmp/vizzaodin_voronoi_remaining_roundtrip.toml"
 	voronoi := game.voronoi_settings_default()
-	game.write_fixed_string(voronoi.rulestring[:], "B36/S23")
 	voronoi.point_count = 1234
 	voronoi.time_scale = 2.5
 	voronoi.drift = 0.75
 	voronoi.brownian_speed = 42.5
-	voronoi.timestep = 0.25
-	voronoi.steps_per_frame = 8
 	voronoi.random_seed = 44
-	voronoi.brush_radius = 25
-	voronoi.brush_strength = 2.5
-	voronoi.auto_reseed_enabled = true
-	voronoi.auto_reseed_interval_secs = 7.5
-	voronoi.border_threshold = 0.4
 	voronoi.borders_enabled = true
 	voronoi.border_width = 6.5
 	voronoi.color_mode = 2
@@ -1401,19 +1434,11 @@ test_remaining_core_settings_round_trip_through_tomlc17 :: proc(t: ^testing.T) {
 	testing.expect(t, game.settings_save_voronoi(voronoi_path, voronoi))
 	loaded_voronoi, voronoi_ok := game.settings_load_voronoi(voronoi_path, game.voronoi_settings_default())
 	testing.expect(t, voronoi_ok)
-	testing.expect_value(t, game.fixed_string(loaded_voronoi.rulestring[:]), "B36/S23")
 	testing.expect_value(t, loaded_voronoi.point_count, u32(1234))
 	testing.expect_value(t, loaded_voronoi.time_scale, f32(2.5))
 	testing.expect_value(t, loaded_voronoi.drift, f32(0.75))
 	testing.expect_value(t, loaded_voronoi.brownian_speed, f32(42.5))
-	testing.expect_value(t, loaded_voronoi.timestep, f32(0.25))
-	testing.expect_value(t, loaded_voronoi.steps_per_frame, u32(8))
 	testing.expect_value(t, loaded_voronoi.random_seed, u32(44))
-	testing.expect_value(t, loaded_voronoi.brush_radius, f32(25))
-	testing.expect_value(t, loaded_voronoi.brush_strength, f32(2.5))
-	testing.expect_value(t, loaded_voronoi.auto_reseed_enabled, true)
-	testing.expect_value(t, loaded_voronoi.auto_reseed_interval_secs, f32(7.5))
-	testing.expect_value(t, loaded_voronoi.border_threshold, f32(0.4))
 	testing.expect_value(t, loaded_voronoi.borders_enabled, true)
 	testing.expect_value(t, loaded_voronoi.border_width, f32(6.5))
 	testing.expect_value(t, loaded_voronoi.color_mode, u32(2))
@@ -1716,6 +1741,51 @@ test_main_menu_preview_palette_helper_sets_reversed_scheme :: proc(t: ^testing.T
 }
 
 @(test)
+test_main_menu_launch_palette_helper_sets_live_sim_schemes :: proc(t: ^testing.T) {
+	palette := "ZELDA_Aqua"
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default())
+	gray_scott := game.gray_scott_default_settings()
+	particle_life := game.particle_life_default_settings()
+
+	testing.expect(t, game.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Slime_Mold, palette))
+	test_expect_color_scheme(t, &ui.slime_mold.slime.color_scheme, ui.slime_mold.slime.color_scheme_reversed, palette, true)
+	testing.expect(t, game.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Gray_Scott, palette))
+	test_expect_color_scheme(t, &gray_scott.color_scheme, gray_scott.color_scheme_reversed, palette, true)
+	testing.expect(t, game.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Particle_Life, palette))
+	test_expect_color_scheme(t, &particle_life.color_scheme, particle_life.color_scheme_reversed, palette, true)
+	testing.expect(t, game.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Flow_Field, palette))
+	test_expect_color_scheme(t, &ui.flow_field.flow.color_scheme, ui.flow_field.flow.color_scheme_reversed, palette, true)
+	testing.expect(t, game.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Pellets, palette))
+	test_expect_color_scheme(t, &ui.pellets.pellets.color_scheme, ui.pellets.pellets.color_scheme_reversed, palette, true)
+	testing.expect(t, game.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Voronoi_CA, palette))
+	test_expect_color_scheme(t, &ui.voronoi_ca.voronoi.color_scheme, ui.voronoi_ca.voronoi.color_scheme_reversed, palette, true)
+	testing.expect(t, game.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Moire, palette))
+	test_expect_color_scheme(t, &ui.moire.moire.color_scheme, ui.moire.moire.color_scheme_reversed, palette, true)
+	testing.expect(t, game.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Vectors, palette))
+	test_expect_color_scheme(t, &ui.vectors.vectors.color_scheme, ui.vectors.vectors.color_scheme_reversed, palette, true)
+	testing.expect(t, game.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Primordial, palette))
+	test_expect_color_scheme(t, &ui.primordial.primordial.color_scheme, ui.primordial.primordial.color_scheme_reversed, palette, true)
+	testing.expect(t, !game.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Gradient_Editor, palette))
+}
+
+@(test)
+test_render_worker_main_menu_launch_applies_current_menu_palette_once :: proc(t: ^testing.T) {
+	palette := "MATPLOTLIB_viridis"
+	runtime := new(game.Render_Worker_Runtime)
+	defer free(runtime)
+	game.app_ui_init(&runtime.app_ui, game.settings_default())
+	game.color_scheme_name_set(&runtime.render_backend.main_menu_backdrop.palette_name, palette)
+
+	runtime.app_ui.mode = .Flow_Field
+	game.render_worker_apply_main_menu_palette_after_navigation(runtime, .Options)
+	test_expect_color_scheme(t, &runtime.app_ui.flow_field.flow.color_scheme, runtime.app_ui.flow_field.flow.color_scheme_reversed, "MATPLOTLIB_cubehelix", true)
+
+	game.render_worker_apply_main_menu_palette_after_navigation(runtime, .Main_Menu)
+	test_expect_color_scheme(t, &runtime.app_ui.flow_field.flow.color_scheme, runtime.app_ui.flow_field.flow.color_scheme_reversed, palette, true)
+}
+
+@(test)
 test_app_settings_round_trip_options_fields :: proc(t: ^testing.T) {
 	path := "/tmp/vizzaodin_app_settings_roundtrip.toml"
 	settings := game.settings_default()
@@ -1744,6 +1814,109 @@ test_app_settings_round_trip_options_fields :: proc(t: ^testing.T) {
 	testing.expect_value(t, loaded.menu_position, settings.menu_position)
 	testing.expect_value(t, loaded.default_camera_sensitivity, settings.default_camera_sensitivity)
 	testing.expect_value(t, loaded.texture_filtering, settings.texture_filtering)
+}
+
+@(test)
+test_app_options_screen_uses_plain_toggle_labels_and_sticky_footer :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default())
+	vk_ctx: engine.Vk_Context
+	vk_ctx.swapchain_extent = {width = 1200, height = 800}
+	worker: game.Render_Worker_State
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1200, 800, ui.settings.ui_scale)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1200, window_height = 800, mouse_pos = {-1000, -1000}})
+	game.app_ui_draw_options(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "Options") >= 0)
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "FPS Limiter") >= 0)
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "FPS Limiter: false") < 0)
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "Start Maximized") >= 0)
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "Start Maximized: true") < 0)
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "Auto-hide UI") >= 0)
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "Auto-hide UI: true") < 0)
+
+	scroll_clip: uifw.Rect
+	found_scroll_clip := false
+	for command in ctx.commands {
+		if command.kind == uifw.Draw_Command_Kind.Scissor_Begin {
+			scroll_clip = command.rect
+			found_scroll_clip = true
+			break
+		}
+	}
+	save_index := test_first_text_command_index(ctx.commands[:], "Save")
+	testing.expect(t, found_scroll_clip)
+	testing.expect(t, save_index >= 0)
+	testing.expect(t, ctx.commands[save_index].rect.y > scroll_clip.y + scroll_clip.h)
+}
+
+@(test)
+test_app_options_screen_mutes_disabled_dependent_fields :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	settings := game.settings_default()
+	settings.default_fps_limit_enabled = false
+	settings.auto_hide_ui = false
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, settings)
+	vk_ctx: engine.Vk_Context
+	vk_ctx.swapchain_extent = {width = 1200, height = 800}
+	worker: game.Render_Worker_State
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1200, 800, ui.settings.ui_scale)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1200, window_height = 800, mouse_pos = {-1000, -1000}})
+	game.app_ui_draw_options(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	saw_muted_fps_limit := false
+	saw_muted_auto_hide_delay := false
+	for command in ctx.commands {
+		if command.kind == uifw.Draw_Command_Kind.Text && command.text == "FPS Limit: 60" && command.color.a == ctx.style.text_muted.a {
+			saw_muted_fps_limit = true
+		}
+		if command.kind == uifw.Draw_Command_Kind.Text && command.text == "Auto-hide Delay: 3000 ms" && command.color.a == ctx.style.text_muted.a {
+			saw_muted_auto_hide_delay = true
+		}
+	}
+	testing.expect(t, saw_muted_fps_limit)
+	testing.expect(t, saw_muted_auto_hide_delay)
+}
+
+@(test)
+test_app_options_reset_defaults_stays_unsaved_and_publishes_change :: proc(t: ^testing.T) {
+	render_to_ui := new(game.Render_To_Ui_Queue)
+	defer free(render_to_ui)
+	worker: game.Render_Worker_State
+	worker.render_to_ui = render_to_ui
+	ui: game.App_Ui_State
+	settings := game.settings_default()
+	settings.ui_scale = 1.8
+	settings.default_fps_limit_enabled = true
+	settings.menu_position = "right"
+	settings.texture_filtering = "Nearest"
+	game.app_ui_init(&ui, settings)
+	ui.settings_dirty = false
+
+	game.app_ui_reset_settings_to_defaults(&ui, &worker)
+
+	testing.expect(t, ui.settings_dirty)
+	testing.expect_value(t, ui.settings.ui_scale, f32(1.0))
+	testing.expect_value(t, ui.settings.default_fps_limit_enabled, false)
+	testing.expect_value(t, ui.menu_position_index, game.option_index(ui.settings.menu_position, game.MENU_POSITION_OPTIONS[:], 1))
+	testing.expect_value(t, ui.texture_filtering_index, game.option_index(ui.settings.texture_filtering, game.TEXTURE_FILTERING_OPTIONS[:], 0))
+
+	msg: game.Render_To_Ui_Message
+	testing.expect(t, engine.queue_try_pop(render_to_ui, &msg))
+	testing.expect_value(t, msg.kind, game.Render_To_Ui_Message_Kind.App_Settings_Changed)
+	testing.expect(t, !engine.queue_try_pop(render_to_ui, &msg))
 }
 
 @(test)
@@ -3105,6 +3278,37 @@ test_gray_scott_and_particle_life_menus_follow_old_section_order :: proc(t: ^tes
 }
 
 @(test)
+test_preset_selector_side_arrows_cycle_and_apply_builtin_presets :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	gray: game.Gray_Scott_Simulation
+	game.gray_scott_init(&gray, 320, 240)
+	state: game.Preset_Fieldset_State
+
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {240, 22}, mouse_pressed = true, mouse_released = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 260, 120}, .Column, 0, 44)
+	game.preset_fieldset_draw(&ctx, &state, nil, "gray_scott", game.GRAY_SCOTT_BUILTIN_PRESET_NAMES[:], 1, {
+		kind = .Gray_Scott,
+		gray_scott = &gray,
+	})
+	uifw.gui_layout_end(&ctx)
+	testing.expect_value(t, state.selected_index, 2)
+	testing.expect_value(t, gray.runtime.current_preset_index, 2)
+
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {20, 22}, mouse_pressed = true, mouse_released = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 260, 120}, .Column, 0, 44)
+	game.preset_fieldset_draw(&ctx, &state, nil, "gray_scott", game.GRAY_SCOTT_BUILTIN_PRESET_NAMES[:], gray.runtime.current_preset_index, {
+		kind = .Gray_Scott,
+		gray_scott = &gray,
+	})
+	uifw.gui_layout_end(&ctx)
+	testing.expect_value(t, state.selected_index, 1)
+	testing.expect_value(t, gray.runtime.current_preset_index, 1)
+}
+
+@(test)
 test_gui_column_layout_allocates_rows :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
@@ -3599,6 +3803,37 @@ test_gui_stable_id_label_preserves_focus_across_value_change :: proc(t: ^testing
 }
 
 @(test)
+test_gui_number_input_disabled_draws_muted_and_ignores_input :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	id := uifw.gui_make_id(&ctx, "value")
+	ctx.focused = id
+	ctx.active = id
+	value := f32(10)
+
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {12, 12}, mouse_down = true, mouse_pressed = true, wheel_delta = 1})
+	uifw.gui_layout_begin(&ctx, {0, 0, 220, 44}, .Column, 0, 44)
+	changed := uifw.gui_number_drag_f32(&ctx, "Value: 10", "value", &value, 1, 0, 100, false)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect(t, !changed)
+	testing.expect_value(t, value, f32(10))
+	testing.expect_value(t, ctx.focused, uifw.GUI_ID_NONE)
+	testing.expect_value(t, ctx.active, uifw.GUI_ID_NONE)
+
+	saw_muted_label := false
+	for command in ctx.commands {
+		if command.kind == uifw.Draw_Command_Kind.Text && command.text == "Value: 10" && command.color.a == ctx.style.text_muted.a {
+			saw_muted_label = true
+		}
+	}
+	testing.expect(t, saw_muted_label)
+}
+
+@(test)
 test_gui_scoped_ids_disambiguate_same_local_key :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
@@ -3889,6 +4124,111 @@ test_gui_checkbox_switch_and_radio_group_update_state :: proc(t: ^testing.T) {
 	testing.expect(t, uifw.gui_radio_group(&ctx, "Group", "group", &current, options[:]))
 	uifw.gui_layout_end(&ctx)
 	testing.expect_value(t, current, 1)
+}
+
+@(test)
+test_gui_button_uses_centered_hig_style_label_and_focus_border :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	id := uifw.gui_make_id(&ctx, "go")
+	ctx.focused = id
+
+	uifw.gui_begin_frame(&ctx, {})
+	_ = uifw.gui_button_at(&ctx, id, {0, 0, 100, 44}, "Go", true)
+
+	saw_centered_label := false
+	saw_focus_border := false
+	for command in ctx.commands {
+		if command.kind == uifw.Draw_Command_Kind.Text && command.text == "Go" {
+			saw_centered_label = command.text_align == .Center
+		}
+		if command.kind == uifw.Draw_Command_Kind.Stroked_Rounded_Rect && command.color.b == ctx.style.accent.b && command.stroke_width > ctx.style.border_width {
+			saw_focus_border = true
+		}
+	}
+	testing.expect(t, saw_centered_label)
+	testing.expect(t, saw_focus_border)
+}
+
+@(test)
+test_gui_checkbox_selected_state_uses_accent_fill_and_contrast_check :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	checked := true
+	uifw.gui_begin_frame(&ctx, {})
+	uifw.gui_layout_begin(&ctx, {0, 0, 220, 44}, .Column, 0, 44)
+	_ = uifw.gui_checkbox(&ctx, "Check", "check", &checked)
+	uifw.gui_layout_end(&ctx)
+
+	saw_accent_box := false
+	check_line_count := 0
+	for command in ctx.commands {
+		if command.kind == uifw.Draw_Command_Kind.Filled_Rounded_Rect && command.rect.w <= 30 && command.color.b == ctx.style.accent.b {
+			saw_accent_box = true
+		}
+		if command.kind == uifw.Draw_Command_Kind.Line && command.color.r == f32(1) && command.color.g == f32(1) && command.color.b == f32(1) {
+			check_line_count += 1
+		}
+	}
+	testing.expect(t, saw_accent_box)
+	testing.expect(t, check_line_count >= 2)
+}
+
+@(test)
+test_gui_toggle_renders_as_switch_control :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	enabled := true
+	uifw.gui_begin_frame(&ctx, {})
+	uifw.gui_layout_begin(&ctx, {0, 0, 220, 44}, .Column, 0, 44)
+	_ = uifw.gui_toggle(&ctx, "Enabled: true", "enabled", &enabled)
+	uifw.gui_layout_end(&ctx)
+
+	saw_switch_track := false
+	saw_switch_knob := false
+	for command in ctx.commands {
+		if command.kind == uifw.Draw_Command_Kind.Filled_Rounded_Rect && command.rect.x == f32(8) && command.rect.w >= 54 && command.color.b == ctx.style.accent.b {
+			saw_switch_track = true
+		}
+		if command.kind == uifw.Draw_Command_Kind.Filled_Ellipse && command.rect.x > 20 && command.rect.w > 12 {
+			saw_switch_knob = true
+		}
+	}
+	testing.expect(t, saw_switch_track)
+	testing.expect(t, saw_switch_knob)
+}
+
+@(test)
+test_gui_radio_group_selected_option_uses_accent_ring_and_dot :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	options := [?]string{"One", "Two", "Three"}
+	current := 1
+	uifw.gui_begin_frame(&ctx, {})
+	uifw.gui_layout_begin(&ctx, {0, 0, 220, 240}, .Column, 0, 44)
+	_ = uifw.gui_radio_group(&ctx, "Group", "group", &current, options[:])
+	uifw.gui_layout_end(&ctx)
+
+	saw_accent_ring := false
+	saw_accent_dot := false
+	for command in ctx.commands {
+		if command.kind == uifw.Draw_Command_Kind.Stroked_Ellipse && command.color.b == ctx.style.accent.b && command.stroke_width > ctx.style.border_width {
+			saw_accent_ring = true
+		}
+		if command.kind == uifw.Draw_Command_Kind.Filled_Ellipse && command.rect.w < 14 && command.color.b == ctx.style.accent.b {
+			saw_accent_dot = true
+		}
+	}
+	testing.expect(t, saw_accent_ring)
+	testing.expect(t, saw_accent_dot)
 }
 
 @(test)
@@ -4254,6 +4594,59 @@ test_gui_combobox_popup_opens_above_when_below_is_cramped :: proc(t: ^testing.T)
 
 	testing.expect(t, ctx.combo_popup_visible)
 	testing.expect(t, ctx.combo_popup_rect.y < 132)
+}
+
+@(test)
+test_gui_combobox_long_popup_uses_available_viewport_height :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	options := [?]string{"One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve"}
+	current := 5
+	query: [32]u8
+
+	uifw.gui_begin_frame(&ctx, {window_width = 300, window_height = 360, mouse_pos = {10, 162}, mouse_pressed = true, mouse_released = true})
+	uifw.gui_layout_begin(&ctx, {0, 140, 220, 44}, .Column, 0, 44)
+	_ = uifw.gui_combobox(&ctx, "Pick", "pick", &current, options[:], query[:])
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect(t, ctx.combo_popup_visible)
+	testing.expect(t, ctx.combo_popup_rect.h > ctx.style.row_height * 5)
+	testing.expect(t, ctx.combo_popup_rect.y >= ctx.style.spacing_1)
+	testing.expect(t, ctx.combo_popup_rect.y + ctx.combo_popup_rect.h <= f32(360) - ctx.style.spacing_1)
+}
+
+@(test)
+test_gui_combobox_long_popup_aligns_selected_row_to_control :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	options := [?]string{"One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve"}
+	current := 5
+	query: [32]u8
+	control_y := f32(140)
+	row_h := f32(44)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 300, window_height = 360, mouse_pos = {10, control_y + row_h * 0.5}, mouse_pressed = true, mouse_released = true})
+	uifw.gui_layout_begin(&ctx, {0, control_y, 220, row_h}, .Column, 0, row_h)
+	_ = uifw.gui_combobox(&ctx, "Pick", "pick", &current, options[:], query[:])
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+
+	expected_text_y := control_y + max((row_h - ctx.style.body_text_height) * 0.5, 0)
+	selected_row_count := 0
+	for command in ctx.commands {
+		if command.kind == uifw.Draw_Command_Kind.Text && command.text == "Six" {
+			if test_approx_f32(command.rect.y, expected_text_y) {
+				selected_row_count += 1
+			}
+		}
+	}
+	testing.expect(t, selected_row_count >= 2)
+	testing.expect(t, ctx.combo_scroll > 0)
 }
 
 @(test)
@@ -4688,6 +5081,79 @@ test_gui_text_input_focused_empty_field_draws_placeholder_and_accent_caret :: pr
 }
 
 @(test)
+test_gui_text_input_clear_button_draws_for_focused_text_and_clears :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	buffer: [32]u8
+	length := 0
+	architecture_test_set_text(buffer[:], &length, "abcd")
+	id := uifw.gui_make_id(&ctx, "name")
+	ctx.focused = id
+
+	uifw.gui_begin_frame(&ctx, {})
+	uifw.gui_layout_begin(&ctx, {0, 0, 240, 44}, .Column, 0, 44)
+	_ = uifw.gui_text_input(&ctx, "Name", "name", buffer[:], &length)
+	uifw.gui_layout_end(&ctx)
+
+	saw_clear_circle := false
+	clear_line_count := 0
+	for command in ctx.commands {
+		if command.kind == uifw.Draw_Command_Kind.Filled_Ellipse && command.rect.x > 200 {
+			saw_clear_circle = true
+		}
+		if command.kind == uifw.Draw_Command_Kind.Line && command.p0.x > 200 && command.p1.x > 200 {
+			clear_line_count += 1
+		}
+	}
+	testing.expect(t, saw_clear_circle)
+	testing.expect(t, clear_line_count >= 2)
+
+	clear := uifw.gui_text_input_clear_rect(&ctx, {0, 0, 240, 44})
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {clear.x + clear.w * 0.5, clear.y + clear.h * 0.5}, mouse_pressed = true, mouse_released = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 240, 44}, .Column, 0, 44)
+	testing.expect(t, uifw.gui_text_input(&ctx, "Name", "name", buffer[:], &length))
+	uifw.gui_layout_end(&ctx)
+	testing.expect_value(t, length, 0)
+	testing.expect_value(t, string(buffer[:length]), "")
+	testing.expect_value(t, ctx.text_edit_caret, 0)
+	testing.expect_value(t, ctx.text_edit_anchor, 0)
+}
+
+@(test)
+test_gui_text_input_value_clips_before_trailing_clear_button :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	buffer: [32]u8
+	length := 0
+	architecture_test_set_text(buffer[:], &length, "abcdef")
+	id := uifw.gui_make_id(&ctx, "name")
+	ctx.focused = id
+
+	uifw.gui_begin_frame(&ctx, {})
+	uifw.gui_layout_begin(&ctx, {0, 0, 240, 44}, .Column, 0, 44)
+	_ = uifw.gui_text_input(&ctx, "Name", "name", buffer[:], &length)
+	uifw.gui_layout_end(&ctx)
+
+	clear_hit := uifw.gui_text_input_clear_hit_rect(&ctx, {0, 0, 240, 44})
+	last_scissor: uifw.Rect
+	saw_value := false
+	for command in ctx.commands {
+		if command.kind == uifw.Draw_Command_Kind.Scissor_Begin {
+			last_scissor = command.rect
+		}
+		if command.kind == uifw.Draw_Command_Kind.Text && command.text == "abcdef" {
+			saw_value = true
+			testing.expect(t, last_scissor.x + last_scissor.w <= clear_hit.x)
+		}
+	}
+	testing.expect(t, saw_value)
+}
+
+@(test)
 test_gui_number_input_paste_filters_to_numeric_text :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
@@ -4748,7 +5214,7 @@ test_color_scheme_selector_filters_and_selects_scheme :: proc(t: ^testing.T) {
 	game.color_scheme_name_set(&color_name, "MATPLOTLIB_bone")
 	reversed := false
 
-	uifw.gui_begin_frame(&ctx, {mouse_pos = {10, 10}, mouse_pressed = true, mouse_released = true})
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {80, 10}, mouse_pressed = true, mouse_released = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 260, 220}, .Column, 0, 44)
 	_ = game.color_scheme_editor_draw_selector(&ctx, &editor, "test_color", &color_name, &reversed)
 	uifw.gui_layout_end(&ctx)
@@ -4770,7 +5236,40 @@ test_color_scheme_selector_filters_and_selects_scheme :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_color_scheme_selector_opens_modal_editor :: proc(t: ^testing.T) {
+test_color_scheme_selector_side_arrows_cycle_schemes :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	editor: game.Color_Scheme_Editor_State
+	game.color_scheme_editor_init(&editor)
+	color_names := game.color_scheme_available_names_cached()
+	if len(color_names) <= 1 {
+		testing.expect(t, false)
+		return
+	}
+
+	start_index := min(1, len(color_names) - 1)
+	next_index := (start_index + 1) % len(color_names)
+	color_name: game.Color_Scheme_Name
+	game.color_scheme_name_set(&color_name, color_names[start_index])
+	reversed := false
+
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {240, 22}, mouse_pressed = true, mouse_released = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 260, 220}, .Column, 0, 44)
+	testing.expect(t, game.color_scheme_editor_draw_selector(&ctx, &editor, "test_color_arrows", &color_name, &reversed))
+	uifw.gui_layout_end(&ctx)
+	testing.expect_value(t, game.color_scheme_name_get(&color_name), color_names[next_index])
+
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {20, 22}, mouse_pressed = true, mouse_released = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 260, 220}, .Column, 0, 44)
+	testing.expect(t, game.color_scheme_editor_draw_selector(&ctx, &editor, "test_color_arrows", &color_name, &reversed))
+	uifw.gui_layout_end(&ctx)
+	testing.expect_value(t, game.color_scheme_name_get(&color_name), color_names[start_index])
+}
+
+@(test)
+test_color_scheme_selector_hides_modal_editor_entry_point :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
 	defer uifw.gui_destroy(&ctx)
@@ -4781,14 +5280,24 @@ test_color_scheme_selector_opens_modal_editor :: proc(t: ^testing.T) {
 	game.color_scheme_name_set(&color_name, "MATPLOTLIB_bone")
 	reversed := false
 
-	// Third row in the selector is the edit button.
 	uifw.gui_begin_frame(&ctx, {window_width = 900, window_height = 700, mouse_pos = {20, 108}, mouse_pressed = true, mouse_released = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 260, 220}, .Column, 0, 44)
 	_ = game.color_scheme_editor_draw_selector(&ctx, &editor, "test_color_modal", &color_name, &reversed)
 	uifw.gui_layout_end(&ctx)
 
-	testing.expect(t, editor.modal_open)
-	testing.expect_value(t, game.color_scheme_name_get(&editor.modal_original_name), "MATPLOTLIB_bone")
+	saw_edit_button := false
+	for command in ctx.commands {
+		if command.kind == uifw.Draw_Command_Kind.Text && command.text == "Edit Color Scheme" {
+			saw_edit_button = true
+		}
+	}
+	testing.expect(t, !saw_edit_button)
+	testing.expect(t, !editor.modal_open)
+
+	editor.modal_open = true
+	uifw.gui_begin_frame(&ctx, {window_width = 900, window_height = 700})
+	testing.expect(t, !game.color_scheme_editor_draw_modal(&ctx, &editor, &color_name))
+	testing.expect(t, !editor.modal_open)
 }
 
 @(test)

@@ -14,7 +14,7 @@ struct VoronoiParams {
   float count;
   float color_mode;
   float border_enabled;
-  float border_threshold;
+  float border_width;
   float filter_mode;
   float resolution_x;
   float resolution_y;

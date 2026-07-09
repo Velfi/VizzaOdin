@@ -79,6 +79,7 @@ PARTICLE_LIFE_ANALYSIS_VELOCITY_SCALE :: f32(65536.0)
 PARTICLE_LIFE_ANALYSIS_COHERENCE_SCALE :: f32(65536.0)
 PARTICLE_LIFE_TAU :: f32(6.28318530718)
 PARTICLE_LIFE_PI :: f32(3.14159265359)
+PARTICLE_LIFE_RETIRED_TRAIL_TARGET_CAP :: 4
 
 Particle_Life_Color_Mode :: enum u32 {
 	Gray18 = 0,
@@ -206,6 +207,14 @@ Particle_Life_Viewport :: struct #align(16) {
 	texture_size: [2]f32,
 	_pad1: f32,
 	_pad2: f32,
+}
+
+Particle_Life_Viewport_Push :: struct #align(16) {
+	world_bounds: [4]f32,
+	enabled: u32,
+	_pad0: u32,
+	_pad1: u32,
+	_pad2: u32,
 }
 
 Particle_Life_Species_Colors :: struct #align(16) {
@@ -460,6 +469,11 @@ Particle_Life_Trail_Image :: struct {
 	layout: vk.ImageLayout,
 }
 
+Particle_Life_Retired_Trail_Targets :: struct {
+	images: [2]Particle_Life_Trail_Image,
+	pending_frame_slots: u32,
+}
+
 Particle_Life_Tile_Range :: struct {
 	min_x: i32,
 	max_x: i32,
@@ -555,29 +569,29 @@ Particle_Life_Gpu_State :: struct {
 	post_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool: vk.DescriptorPool,
 	fade_descriptor_pool: vk.DescriptorPool,
-	sim_set: vk.DescriptorSet,
-	init_set: vk.DescriptorSet,
-	color_set: vk.DescriptorSet,
-	view_set: vk.DescriptorSet,
-	force_randomize_set: vk.DescriptorSet,
-	force_update_set: vk.DescriptorSet,
-	analysis_set: vk.DescriptorSet,
-	background_set: vk.DescriptorSet,
-	post_sets: [2]vk.DescriptorSet,
-	fade_sets: [2]vk.DescriptorSet,
+	sim_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	init_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	color_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	view_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	force_randomize_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	force_update_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	analysis_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	background_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	post_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
+	fade_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
 	particle_buffer: engine.Vk_Buffer,
 	particle_scratch_buffer: engine.Vk_Buffer,
-	params_buffer: engine.Vk_Buffer,
-	init_params_buffer: engine.Vk_Buffer,
-	fade_params_buffer: engine.Vk_Buffer,
-	force_randomize_params_buffer: engine.Vk_Buffer,
-	force_update_params_buffer: engine.Vk_Buffer,
-	grid_params_buffer: engine.Vk_Buffer,
-	collision_params_buffer: engine.Vk_Buffer,
+	params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	init_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	fade_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	force_randomize_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	force_update_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	grid_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	collision_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	grid_heads_buffer: engine.Vk_Buffer,
 	particle_next_buffer: engine.Vk_Buffer,
 	collision_correction_buffer: engine.Vk_Buffer,
-	analysis_params_buffer: engine.Vk_Buffer,
+	analysis_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	analysis_cells_buffer: engine.Vk_Buffer,
 	analysis_coherence_buffer: engine.Vk_Buffer,
 	analysis_labels_buffer: engine.Vk_Buffer,
@@ -585,16 +599,17 @@ Particle_Life_Gpu_State :: struct {
 	analysis_parent_buffer: engine.Vk_Buffer,
 	analysis_blob_summaries_buffer: engine.Vk_Buffer,
 	analysis_blob_count_buffer: engine.Vk_Buffer,
-	selected_blob_params_buffer: engine.Vk_Buffer,
-	background_params_buffer: engine.Vk_Buffer,
-	post_params_buffer: engine.Vk_Buffer,
+	selected_blob_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	background_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	post_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	force_matrix_buffer: engine.Vk_Buffer,
-	color_buffer: engine.Vk_Buffer,
-	color_mode_buffer: engine.Vk_Buffer,
-	camera_buffer: engine.Vk_Buffer,
-	viewport_buffer: engine.Vk_Buffer,
+	color_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	color_mode_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	camera_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	viewport_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	trail_sampler: vk.Sampler,
 	trail_images: [2]Particle_Life_Trail_Image,
+	retired_trail_targets: [PARTICLE_LIFE_RETIRED_TRAIL_TARGET_CAP]Particle_Life_Retired_Trail_Targets,
 	trail_width: u32,
 	trail_height: u32,
 	trail_write_index: u32,
@@ -608,6 +623,7 @@ Particle_Life_Gpu_State :: struct {
 	neighbor_radius_cells: u32,
 	analysis_grid_axis: u32,
 	analysis_tile_count: u32,
+	active_frame_slot: int,
 }
 
 Particle_Life_Simulation :: struct {
@@ -1665,27 +1681,17 @@ particle_life_create_resources :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^
 		return false
 	}
 	params_size := vk.DeviceSize(size_of(Particle_Life_Params))
-	if !engine.vk_create_host_buffer(vk_ctx, params_size, {.UNIFORM_BUFFER}, &sim.gpu.params_buffer) {
-		return false
-	}
 	init_params_size := vk.DeviceSize(size_of(Particle_Life_Init_Params))
-	if !engine.vk_create_host_buffer(vk_ctx, init_params_size, {.UNIFORM_BUFFER}, &sim.gpu.init_params_buffer) {
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Fade_Params)), {.UNIFORM_BUFFER}, &sim.gpu.fade_params_buffer) {
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Force_Randomize_Params)), {.UNIFORM_BUFFER}, &sim.gpu.force_randomize_params_buffer) {
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Force_Update_Params)), {.UNIFORM_BUFFER}, &sim.gpu.force_update_params_buffer) {
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Grid_Params)), {.UNIFORM_BUFFER}, &sim.gpu.grid_params_buffer) {
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Collision_Params)), {.UNIFORM_BUFFER}, &sim.gpu.collision_params_buffer) {
-		return false
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, params_size, {.UNIFORM_BUFFER}, &sim.gpu.params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, init_params_size, {.UNIFORM_BUFFER}, &sim.gpu.init_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Fade_Params)), {.UNIFORM_BUFFER}, &sim.gpu.fade_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Force_Randomize_Params)), {.UNIFORM_BUFFER}, &sim.gpu.force_randomize_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Force_Update_Params)), {.UNIFORM_BUFFER}, &sim.gpu.force_update_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Grid_Params)), {.UNIFORM_BUFFER}, &sim.gpu.grid_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Collision_Params)), {.UNIFORM_BUFFER}, &sim.gpu.collision_params_buffers[frame_slot]) {
+			return false
+		}
 	}
 	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * int(grid_cells)), {.STORAGE_BUFFER}, &sim.gpu.grid_heads_buffer) {
 		return false
@@ -1696,8 +1702,10 @@ particle_life_create_resources :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^
 	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of([2]f32) * int(particle_count)), {.STORAGE_BUFFER}, &sim.gpu.collision_correction_buffer) {
 		return false
 	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Analysis_Params)), {.UNIFORM_BUFFER}, &sim.gpu.analysis_params_buffer) {
-		return false
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Analysis_Params)), {.UNIFORM_BUFFER}, &sim.gpu.analysis_params_buffers[frame_slot]) {
+			return false
+		}
 	}
 	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Analysis_Gpu_Cell) * int(analysis_cells)), {.STORAGE_BUFFER}, &sim.gpu.analysis_cells_buffer) {
 		return false
@@ -1720,30 +1728,24 @@ particle_life_create_resources :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^
 	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32)), {.STORAGE_BUFFER}, &sim.gpu.analysis_blob_count_buffer) {
 		return false
 	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Selected_Blob_Params)), {.UNIFORM_BUFFER}, &sim.gpu.selected_blob_params_buffer) {
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Background_Params)), {.UNIFORM_BUFFER}, &sim.gpu.background_params_buffer) {
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Post_Params)), {.UNIFORM_BUFFER}, &sim.gpu.post_params_buffer) {
-		return false
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Selected_Blob_Params)), {.UNIFORM_BUFFER}, &sim.gpu.selected_blob_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Background_Params)), {.UNIFORM_BUFFER}, &sim.gpu.background_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Post_Params)), {.UNIFORM_BUFFER}, &sim.gpu.post_params_buffers[frame_slot]) {
+			return false
+		}
 	}
 	force_size := vk.DeviceSize(size_of(f32) * int(species_count * species_count))
 	if !engine.vk_create_host_buffer(vk_ctx, force_size, {.STORAGE_BUFFER}, &sim.gpu.force_matrix_buffer) {
 		return false
 	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Species_Colors)), {.UNIFORM_BUFFER}, &sim.gpu.color_buffer) {
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Color_Mode_Params)), {.UNIFORM_BUFFER}, &sim.gpu.color_mode_buffer) {
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Camera)), {.UNIFORM_BUFFER}, &sim.gpu.camera_buffer) {
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Viewport)), {.UNIFORM_BUFFER}, &sim.gpu.viewport_buffer) {
-		return false
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Species_Colors)), {.UNIFORM_BUFFER}, &sim.gpu.color_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Color_Mode_Params)), {.UNIFORM_BUFFER}, &sim.gpu.color_mode_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Camera)), {.UNIFORM_BUFFER}, &sim.gpu.camera_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Particle_Life_Viewport)), {.UNIFORM_BUFFER}, &sim.gpu.viewport_buffers[frame_slot]) {
+			return false
+		}
 	}
 	sim.gpu.uploaded_particle_count = particle_count
 	sim.gpu.uploaded_species_count = species_count
@@ -1753,7 +1755,18 @@ particle_life_create_resources :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^
 	sim.gpu.analysis_grid_axis = analysis_axis
 	sim.gpu.analysis_tile_count = analysis_tile_count
 	particle_life_upload_force_matrix(sim)
-	particle_life_upload_static_uniforms(sim)
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		sim.gpu.active_frame_slot = frame_slot
+		particle_life_upload_static_uniforms(sim)
+		particle_life_write_init_uniforms(sim)
+		particle_life_write_frame_uniforms(sim, 0)
+		particle_life_write_grid_uniforms(sim)
+		particle_life_write_collision_uniforms(sim)
+		particle_life_write_analysis_uniforms(sim)
+		particle_life_write_fade_uniforms(sim)
+		particle_life_write_background_uniforms(sim)
+		particle_life_write_post_uniforms(sim)
+	}
 	if restore_particles && sim.gpu.particle_buffer.mapped != nil {
 		particles := (cast([^]Particle_Life_Particle)sim.gpu.particle_buffer.mapped)[:particle_count]
 		copy(particles, sim.runtime.preserved_particles)
@@ -1885,37 +1898,39 @@ particle_life_create_descriptor_state :: proc(sim: ^Particle_Life_Simulation, vk
 	}
 
 	pool_sizes := [2]vk.DescriptorPoolSize {
-		{type = .STORAGE_BUFFER, descriptorCount = 20},
-		{type = .UNIFORM_BUFFER, descriptorCount = 12},
+		{type = .STORAGE_BUFFER, descriptorCount = 20 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .UNIFORM_BUFFER, descriptorCount = 12 * engine.MAX_FRAMES_IN_FLIGHT},
 	}
 	pool_info := vk.DescriptorPoolCreateInfo {
 		sType = .DESCRIPTOR_POOL_CREATE_INFO,
 		poolSizeCount = u32(len(pool_sizes)),
 		pPoolSizes = raw_data(pool_sizes[:]),
-		maxSets = 7,
+		maxSets = 7 * engine.MAX_FRAMES_IN_FLIGHT,
 	}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &sim.gpu.descriptor_pool) != .SUCCESS {
 		return false
 	}
 
-	layouts := [7]vk.DescriptorSetLayout{sim.gpu.sim_set_layout, sim.gpu.init_set_layout, sim.gpu.color_set_layout, sim.gpu.view_set_layout, sim.gpu.force_op_set_layout, sim.gpu.force_op_set_layout, sim.gpu.analysis_set_layout}
-	sets := [7]vk.DescriptorSet{}
-	alloc := vk.DescriptorSetAllocateInfo {
-		sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
-		descriptorPool = sim.gpu.descriptor_pool,
-		descriptorSetCount = u32(len(layouts)),
-		pSetLayouts = raw_data(layouts[:]),
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		layouts := [7]vk.DescriptorSetLayout{sim.gpu.sim_set_layout, sim.gpu.init_set_layout, sim.gpu.color_set_layout, sim.gpu.view_set_layout, sim.gpu.force_op_set_layout, sim.gpu.force_op_set_layout, sim.gpu.analysis_set_layout}
+		sets := [7]vk.DescriptorSet{}
+		alloc := vk.DescriptorSetAllocateInfo {
+			sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
+			descriptorPool = sim.gpu.descriptor_pool,
+			descriptorSetCount = u32(len(layouts)),
+			pSetLayouts = raw_data(layouts[:]),
+		}
+		if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {
+			return false
+		}
+		sim.gpu.sim_sets[frame_slot] = sets[0]
+		sim.gpu.init_sets[frame_slot] = sets[1]
+		sim.gpu.color_sets[frame_slot] = sets[2]
+		sim.gpu.view_sets[frame_slot] = sets[3]
+		sim.gpu.force_randomize_sets[frame_slot] = sets[4]
+		sim.gpu.force_update_sets[frame_slot] = sets[5]
+		sim.gpu.analysis_sets[frame_slot] = sets[6]
 	}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {
-		return false
-	}
-	sim.gpu.sim_set = sets[0]
-	sim.gpu.init_set = sets[1]
-	sim.gpu.color_set = sets[2]
-	sim.gpu.view_set = sets[3]
-	sim.gpu.force_randomize_set = sets[4]
-	sim.gpu.force_update_set = sets[5]
-	sim.gpu.analysis_set = sets[6]
 	particle_life_update_descriptors(sim, vk_ctx)
 	return true
 }
@@ -2140,10 +2155,17 @@ particle_life_create_particle_pipeline :: proc(sim: ^Particle_Life_Simulation, v
 		pDynamicStates = raw_data(dynamic_states[:]),
 	}
 	set_layouts := [3]vk.DescriptorSetLayout{sim.gpu.sim_set_layout, sim.gpu.color_set_layout, sim.gpu.view_set_layout}
+	push_range := vk.PushConstantRange {
+		stageFlags = {.VERTEX},
+		offset = 0,
+		size = u32(size_of(Particle_Life_Viewport_Push)),
+	}
 	layout_info := vk.PipelineLayoutCreateInfo {
 		sType = .PIPELINE_LAYOUT_CREATE_INFO,
 		setLayoutCount = u32(len(set_layouts)),
 		pSetLayouts = raw_data(set_layouts[:]),
+		pushConstantRangeCount = 1,
+		pPushConstantRanges = &push_range,
 	}
 	if vk.CreatePipelineLayout(vk_ctx.device, &layout_info, nil, &pipeline.layout) != .SUCCESS {
 		return false
@@ -2455,47 +2477,55 @@ particle_life_create_trail_resources :: proc(sim: ^Particle_Life_Simulation, vk_
 		return false
 	}
 	pool_sizes := [3]vk.DescriptorPoolSize {
-		{type = .UNIFORM_BUFFER, descriptorCount = 7},
-		{type = .SAMPLED_IMAGE, descriptorCount = 4},
-		{type = .SAMPLER, descriptorCount = 4},
+		{type = .UNIFORM_BUFFER, descriptorCount = 7 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .SAMPLED_IMAGE, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .SAMPLER, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
 	}
 	pool_info := vk.DescriptorPoolCreateInfo {
 		sType = .DESCRIPTOR_POOL_CREATE_INFO,
 		poolSizeCount = u32(len(pool_sizes)),
 		pPoolSizes = raw_data(pool_sizes[:]),
-		maxSets = 5,
+		maxSets = 5 * engine.MAX_FRAMES_IN_FLIGHT,
 	}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &sim.gpu.fade_descriptor_pool) != .SUCCESS {
 		return false
 	}
-	fade_layouts := [2]vk.DescriptorSetLayout{sim.gpu.fade_set_layout, sim.gpu.fade_set_layout}
-	fade_alloc := vk.DescriptorSetAllocateInfo {
-		sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
-		descriptorPool = sim.gpu.fade_descriptor_pool,
-		descriptorSetCount = u32(len(fade_layouts)),
-		pSetLayouts = raw_data(fade_layouts[:]),
-	}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &fade_alloc, raw_data(sim.gpu.fade_sets[:])) != .SUCCESS {
-		return false
-	}
-	background_alloc := vk.DescriptorSetAllocateInfo {
-		sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
-		descriptorPool = sim.gpu.fade_descriptor_pool,
-		descriptorSetCount = 1,
-		pSetLayouts = &sim.gpu.background_set_layout,
-	}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &background_alloc, &sim.gpu.background_set) != .SUCCESS {
-		return false
-	}
-	post_layouts := [2]vk.DescriptorSetLayout{sim.gpu.post_set_layout, sim.gpu.post_set_layout}
-	post_alloc := vk.DescriptorSetAllocateInfo {
-		sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
-		descriptorPool = sim.gpu.fade_descriptor_pool,
-		descriptorSetCount = u32(len(post_layouts)),
-		pSetLayouts = raw_data(post_layouts[:]),
-	}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &post_alloc, raw_data(sim.gpu.post_sets[:])) != .SUCCESS {
-		return false
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		fade_layouts := [2]vk.DescriptorSetLayout{sim.gpu.fade_set_layout, sim.gpu.fade_set_layout}
+		fade_sets: [2]vk.DescriptorSet
+		fade_alloc := vk.DescriptorSetAllocateInfo {
+			sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
+			descriptorPool = sim.gpu.fade_descriptor_pool,
+			descriptorSetCount = u32(len(fade_layouts)),
+			pSetLayouts = raw_data(fade_layouts[:]),
+		}
+		if vk.AllocateDescriptorSets(vk_ctx.device, &fade_alloc, raw_data(fade_sets[:])) != .SUCCESS {
+			return false
+		}
+		sim.gpu.fade_sets[frame_slot][0] = fade_sets[0]
+		sim.gpu.fade_sets[frame_slot][1] = fade_sets[1]
+		background_alloc := vk.DescriptorSetAllocateInfo {
+			sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
+			descriptorPool = sim.gpu.fade_descriptor_pool,
+			descriptorSetCount = 1,
+			pSetLayouts = &sim.gpu.background_set_layout,
+		}
+		if vk.AllocateDescriptorSets(vk_ctx.device, &background_alloc, &sim.gpu.background_sets[frame_slot]) != .SUCCESS {
+			return false
+		}
+		post_layouts := [2]vk.DescriptorSetLayout{sim.gpu.post_set_layout, sim.gpu.post_set_layout}
+		post_sets: [2]vk.DescriptorSet
+		post_alloc := vk.DescriptorSetAllocateInfo {
+			sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
+			descriptorPool = sim.gpu.fade_descriptor_pool,
+			descriptorSetCount = u32(len(post_layouts)),
+			pSetLayouts = raw_data(post_layouts[:]),
+		}
+		if vk.AllocateDescriptorSets(vk_ctx.device, &post_alloc, raw_data(post_sets[:])) != .SUCCESS {
+			return false
+		}
+		sim.gpu.post_sets[frame_slot][0] = post_sets[0]
+		sim.gpu.post_sets[frame_slot][1] = post_sets[1]
 	}
 	sampler_info := vk.SamplerCreateInfo {sType = .SAMPLER_CREATE_INFO}
 	sampler_info.magFilter = .LINEAR
@@ -2525,23 +2555,29 @@ particle_life_create_trail_resources :: proc(sim: ^Particle_Life_Simulation, vk_
 }
 
 particle_life_update_descriptors :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context) {
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		particle_life_update_descriptors_for_slot(sim, vk_ctx, frame_slot)
+	}
+}
+
+particle_life_update_descriptors_for_slot :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
 	particle_info := vk.DescriptorBufferInfo{buffer = sim.gpu.particle_buffer.handle, offset = 0, range = sim.gpu.particle_buffer.size}
 	particle_scratch_info := vk.DescriptorBufferInfo{buffer = sim.gpu.particle_scratch_buffer.handle, offset = 0, range = sim.gpu.particle_scratch_buffer.size}
-	params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Params))}
+	params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Params))}
 	grid_heads_info := vk.DescriptorBufferInfo{buffer = sim.gpu.grid_heads_buffer.handle, offset = 0, range = sim.gpu.grid_heads_buffer.size}
 	particle_next_info := vk.DescriptorBufferInfo{buffer = sim.gpu.particle_next_buffer.handle, offset = 0, range = sim.gpu.particle_next_buffer.size}
-	grid_params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.grid_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Grid_Params))}
+	grid_params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.grid_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Grid_Params))}
 	collision_correction_info := vk.DescriptorBufferInfo{buffer = sim.gpu.collision_correction_buffer.handle, offset = 0, range = sim.gpu.collision_correction_buffer.size}
-	collision_params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.collision_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Collision_Params))}
-	init_params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.init_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Init_Params))}
+	collision_params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.collision_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Collision_Params))}
+	init_params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.init_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Init_Params))}
 	force_info := vk.DescriptorBufferInfo{buffer = sim.gpu.force_matrix_buffer.handle, offset = 0, range = sim.gpu.force_matrix_buffer.size}
-	color_info := vk.DescriptorBufferInfo{buffer = sim.gpu.color_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Species_Colors))}
-	mode_info := vk.DescriptorBufferInfo{buffer = sim.gpu.color_mode_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Color_Mode_Params))}
-	camera_info := vk.DescriptorBufferInfo{buffer = sim.gpu.camera_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Camera))}
-	viewport_info := vk.DescriptorBufferInfo{buffer = sim.gpu.viewport_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Viewport))}
-	force_randomize_info := vk.DescriptorBufferInfo{buffer = sim.gpu.force_randomize_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Force_Randomize_Params))}
-	force_update_info := vk.DescriptorBufferInfo{buffer = sim.gpu.force_update_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Force_Update_Params))}
-	analysis_params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.analysis_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Analysis_Params))}
+	color_info := vk.DescriptorBufferInfo{buffer = sim.gpu.color_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Species_Colors))}
+	mode_info := vk.DescriptorBufferInfo{buffer = sim.gpu.color_mode_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Color_Mode_Params))}
+	camera_info := vk.DescriptorBufferInfo{buffer = sim.gpu.camera_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Camera))}
+	viewport_info := vk.DescriptorBufferInfo{buffer = sim.gpu.viewport_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Viewport))}
+	force_randomize_info := vk.DescriptorBufferInfo{buffer = sim.gpu.force_randomize_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Force_Randomize_Params))}
+	force_update_info := vk.DescriptorBufferInfo{buffer = sim.gpu.force_update_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Force_Update_Params))}
+	analysis_params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.analysis_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Analysis_Params))}
 	analysis_cells_info := vk.DescriptorBufferInfo{buffer = sim.gpu.analysis_cells_buffer.handle, offset = 0, range = sim.gpu.analysis_cells_buffer.size}
 	analysis_coherence_info := vk.DescriptorBufferInfo{buffer = sim.gpu.analysis_coherence_buffer.handle, offset = 0, range = sim.gpu.analysis_coherence_buffer.size}
 	analysis_labels_info := vk.DescriptorBufferInfo{buffer = sim.gpu.analysis_labels_buffer.handle, offset = 0, range = sim.gpu.analysis_labels_buffer.size}
@@ -2549,36 +2585,43 @@ particle_life_update_descriptors :: proc(sim: ^Particle_Life_Simulation, vk_ctx:
 	analysis_parent_info := vk.DescriptorBufferInfo{buffer = sim.gpu.analysis_parent_buffer.handle, offset = 0, range = sim.gpu.analysis_parent_buffer.size}
 	analysis_blob_summaries_info := vk.DescriptorBufferInfo{buffer = sim.gpu.analysis_blob_summaries_buffer.handle, offset = 0, range = sim.gpu.analysis_blob_summaries_buffer.size}
 	analysis_blob_count_info := vk.DescriptorBufferInfo{buffer = sim.gpu.analysis_blob_count_buffer.handle, offset = 0, range = sim.gpu.analysis_blob_count_buffer.size}
+	sim_set := sim.gpu.sim_sets[frame_slot]
+	init_set := sim.gpu.init_sets[frame_slot]
+	color_set := sim.gpu.color_sets[frame_slot]
+	view_set := sim.gpu.view_sets[frame_slot]
+	force_randomize_set := sim.gpu.force_randomize_sets[frame_slot]
+	force_update_set := sim.gpu.force_update_sets[frame_slot]
+	analysis_set := sim.gpu.analysis_sets[frame_slot]
 	writes := [29]vk.WriteDescriptorSet {
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.sim_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.sim_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.sim_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &force_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.sim_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_heads_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.sim_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_next_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.sim_set, dstBinding = 5, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &grid_params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.sim_set, dstBinding = 6, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_scratch_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.sim_set, dstBinding = 7, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &collision_correction_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.sim_set, dstBinding = 8, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &collision_params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.init_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.init_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &init_params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.color_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &color_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.color_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &mode_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.view_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.view_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &viewport_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.force_randomize_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &force_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.force_randomize_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &force_randomize_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.force_update_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &force_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.force_update_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &force_update_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.analysis_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.analysis_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.analysis_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.analysis_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_cells_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.analysis_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_coherence_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.analysis_set, dstBinding = 5, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_labels_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.analysis_set, dstBinding = 6, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_tile_components_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.analysis_set, dstBinding = 7, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_parent_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.analysis_set, dstBinding = 8, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_blob_summaries_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.analysis_set, dstBinding = 9, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_blob_count_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &force_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_heads_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_next_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 5, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &grid_params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 6, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_scratch_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 7, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &collision_correction_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 8, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &collision_params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = init_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = init_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &init_params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = color_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &color_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = color_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &mode_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = view_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = view_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &viewport_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = force_randomize_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &force_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = force_randomize_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &force_randomize_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = force_update_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &force_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = force_update_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &force_update_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = analysis_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = analysis_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = analysis_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = analysis_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_cells_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = analysis_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_coherence_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = analysis_set, dstBinding = 5, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_labels_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = analysis_set, dstBinding = 6, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_tile_components_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = analysis_set, dstBinding = 7, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_parent_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = analysis_set, dstBinding = 8, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_blob_summaries_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = analysis_set, dstBinding = 9, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &analysis_blob_count_info},
 	}
 	vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 }
@@ -2769,8 +2812,9 @@ particle_life_set_force_value :: proc(sim: ^Particle_Life_Simulation, species_a,
 }
 
 particle_life_upload_static_uniforms :: proc(sim: ^Particle_Life_Simulation) {
-	if sim.gpu.color_buffer.mapped != nil {
-		colors := cast(^Particle_Life_Species_Colors)sim.gpu.color_buffer.mapped
+	frame_slot := sim.gpu.active_frame_slot
+	if sim.gpu.color_buffers[frame_slot].mapped != nil {
+		colors := cast(^Particle_Life_Species_Colors)sim.gpu.color_buffers[frame_slot].mapped
 		colors^ = {}
 		scheme_name := color_scheme_name_get(&sim.settings.color_scheme)
 		scheme, ok := color_scheme_load(scheme_name)
@@ -2794,8 +2838,8 @@ particle_life_upload_static_uniforms :: proc(sim: ^Particle_Life_Simulation) {
 		}
 		colors.colors[PARTICLE_LIFE_MAX_SPECIES] = sim.settings.background_color
 	}
-	if sim.gpu.color_mode_buffer.mapped != nil {
-		mode := cast(^Particle_Life_Color_Mode_Params)sim.gpu.color_mode_buffer.mapped
+	if sim.gpu.color_mode_buffers[frame_slot].mapped != nil {
+		mode := cast(^Particle_Life_Color_Mode_Params)sim.gpu.color_mode_buffers[frame_slot].mapped
 		mode^ = {
 			mode = u32(sim.settings.color_mode),
 			brightness = sim.settings.brightness,
@@ -2807,11 +2851,12 @@ particle_life_upload_static_uniforms :: proc(sim: ^Particle_Life_Simulation) {
 }
 
 particle_life_write_init_uniforms :: proc(sim: ^Particle_Life_Simulation) {
-	if sim.gpu.init_params_buffer.mapped == nil {
+	frame_slot := sim.gpu.active_frame_slot
+	if sim.gpu.init_params_buffers[frame_slot].mapped == nil {
 		return
 	}
 	world_size := particle_life_world_size(sim)
-	params := cast(^Particle_Life_Init_Params)sim.gpu.init_params_buffer.mapped
+	params := cast(^Particle_Life_Init_Params)sim.gpu.init_params_buffers[frame_slot].mapped
 	params^ = {
 		start_index = 0,
 		spawn_count = sim.gpu.uploaded_particle_count,
@@ -2825,14 +2870,15 @@ particle_life_write_init_uniforms :: proc(sim: ^Particle_Life_Simulation) {
 }
 
 particle_life_write_frame_uniforms :: proc(sim: ^Particle_Life_Simulation, dt: f32) {
+	frame_slot := sim.gpu.active_frame_slot
 	particle_life_upload_static_uniforms(sim)
 	width := f32(max(sim.gpu.width, 1))
 	height := f32(max(sim.gpu.height, 1))
 	aspect := width / max(height, 1)
 	world_size := particle_life_world_size_for_viewport(width, height)
 	bounds := particle_life_view_bounds(sim, width, height)
-	if sim.gpu.params_buffer.mapped != nil {
-		params := cast(^Particle_Life_Params)sim.gpu.params_buffer.mapped
+	if sim.gpu.params_buffers[frame_slot].mapped != nil {
+		params := cast(^Particle_Life_Params)sim.gpu.params_buffers[frame_slot].mapped
 		params^ = {
 			particle_count = sim.gpu.uploaded_particle_count,
 			species_count = sim.gpu.uploaded_species_count,
@@ -2855,9 +2901,9 @@ particle_life_write_frame_uniforms :: proc(sim: ^Particle_Life_Simulation, dt: f
 			aspect_ratio = aspect,
 		}
 	}
-	if sim.gpu.camera_buffer.mapped != nil {
+	if sim.gpu.camera_buffers[frame_slot].mapped != nil {
 		zoom := max(sim.runtime.camera_zoom, CAMERA_MIN_ZOOM)
-		camera := cast(^Particle_Life_Camera)sim.gpu.camera_buffer.mapped
+		camera := cast(^Particle_Life_Camera)sim.gpu.camera_buffers[frame_slot].mapped
 		camera^ = {
 			transform_matrix = {
 				zoom, 0, 0, 0,
@@ -2870,30 +2916,44 @@ particle_life_write_frame_uniforms :: proc(sim: ^Particle_Life_Simulation, dt: f
 			aspect_ratio = aspect,
 		}
 	}
-	if sim.gpu.viewport_buffer.mapped != nil {
+	if sim.gpu.viewport_buffers[frame_slot].mapped != nil {
 		particle_life_write_viewport_uniforms(sim, width, height, bounds)
 	}
 }
 
 particle_life_write_viewport_uniforms :: proc(sim: ^Particle_Life_Simulation, width, height: f32, bounds: [4]f32) {
-	if sim.gpu.viewport_buffer.mapped == nil {
+	frame_slot := sim.gpu.active_frame_slot
+	if sim.gpu.viewport_buffers[frame_slot].mapped == nil {
 		return
 	}
-	viewport := cast(^Particle_Life_Viewport)sim.gpu.viewport_buffer.mapped
+	viewport := cast(^Particle_Life_Viewport)sim.gpu.viewport_buffers[frame_slot].mapped
 	viewport^ = {
 		world_bounds = bounds,
 		texture_size = {width, height},
 	}
 }
 
+particle_life_push_viewport_uniform_mode :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, pipeline: ^engine.Vk_Graphics_Pipeline) {
+	_ = vk_ctx
+	push := Particle_Life_Viewport_Push{}
+	vk.CmdPushConstants(cmd, pipeline.layout, {.VERTEX}, 0, u32(size_of(Particle_Life_Viewport_Push)), &push)
+}
+
+particle_life_push_viewport_bounds :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, pipeline: ^engine.Vk_Graphics_Pipeline, bounds: [4]f32) {
+	_ = vk_ctx
+	push := Particle_Life_Viewport_Push{world_bounds = bounds, enabled = 1}
+	vk.CmdPushConstants(cmd, pipeline.layout, {.VERTEX}, 0, u32(size_of(Particle_Life_Viewport_Push)), &push)
+}
+
 particle_life_write_grid_uniforms :: proc(sim: ^Particle_Life_Simulation) {
-	if sim.gpu.grid_params_buffer.mapped == nil {
+	frame_slot := sim.gpu.active_frame_slot
+	if sim.gpu.grid_params_buffers[frame_slot].mapped == nil {
 		return
 	}
 	world_size := particle_life_world_size(sim)
 	cell_w := world_size[0] / f32(max(sim.gpu.grid_width, 1))
 	cell_h := world_size[1] / f32(max(sim.gpu.grid_height, 1))
-	params := cast(^Particle_Life_Grid_Params)sim.gpu.grid_params_buffer.mapped
+	params := cast(^Particle_Life_Grid_Params)sim.gpu.grid_params_buffers[frame_slot].mapped
 	params^ = {
 		particle_count = sim.gpu.uploaded_particle_count,
 		grid_width = sim.gpu.grid_width,
@@ -2908,11 +2968,12 @@ particle_life_write_grid_uniforms :: proc(sim: ^Particle_Life_Simulation) {
 }
 
 particle_life_write_collision_uniforms :: proc(sim: ^Particle_Life_Simulation) {
-	if sim.gpu.collision_params_buffer.mapped == nil {
+	frame_slot := sim.gpu.active_frame_slot
+	if sim.gpu.collision_params_buffers[frame_slot].mapped == nil {
 		return
 	}
 	min_distance := particle_life_collision_distance(sim.settings)
-	params := cast(^Particle_Life_Collision_Params)sim.gpu.collision_params_buffer.mapped
+	params := cast(^Particle_Life_Collision_Params)sim.gpu.collision_params_buffers[frame_slot].mapped
 	params^ = {
 		enabled = sim.settings.collision_enabled ? 1 : 0,
 		iterations = max(min(sim.settings.collision_iterations, 8), 1),
@@ -2924,8 +2985,9 @@ particle_life_write_collision_uniforms :: proc(sim: ^Particle_Life_Simulation) {
 }
 
 particle_life_write_analysis_uniforms :: proc(sim: ^Particle_Life_Simulation) {
-	if sim.gpu.analysis_params_buffer.mapped != nil {
-		params := cast(^Particle_Life_Analysis_Params)sim.gpu.analysis_params_buffer.mapped
+	frame_slot := sim.gpu.active_frame_slot
+	if sim.gpu.analysis_params_buffers[frame_slot].mapped != nil {
+		params := cast(^Particle_Life_Analysis_Params)sim.gpu.analysis_params_buffers[frame_slot].mapped
 		params^ = {
 			enabled = sim.settings.analysis_enabled ? 1 : 0,
 			interval_frames = max(sim.settings.analysis_interval_frames, 1),
@@ -2934,8 +2996,8 @@ particle_life_write_analysis_uniforms :: proc(sim: ^Particle_Life_Simulation) {
 			coherence_threshold = sim.settings.coherence_threshold,
 		}
 	}
-	if sim.gpu.selected_blob_params_buffer.mapped != nil {
-		params := cast(^Particle_Life_Selected_Blob_Params)sim.gpu.selected_blob_params_buffer.mapped
+	if sim.gpu.selected_blob_params_buffers[frame_slot].mapped != nil {
+		params := cast(^Particle_Life_Selected_Blob_Params)sim.gpu.selected_blob_params_buffers[frame_slot].mapped
 		params^ = {
 			selected_blob_id = sim.runtime.selected_blob_id,
 			overlay_enabled = sim.settings.blob_overlay_enabled ? 1 : 0,
@@ -2944,28 +3006,31 @@ particle_life_write_analysis_uniforms :: proc(sim: ^Particle_Life_Simulation) {
 }
 
 particle_life_write_fade_uniforms :: proc(sim: ^Particle_Life_Simulation) {
-	if sim.gpu.fade_params_buffer.mapped == nil {
+	frame_slot := sim.gpu.active_frame_slot
+	if sim.gpu.fade_params_buffers[frame_slot].mapped == nil {
 		return
 	}
-	params := cast(^Particle_Life_Fade_Params)sim.gpu.fade_params_buffer.mapped
+	params := cast(^Particle_Life_Fade_Params)sim.gpu.fade_params_buffers[frame_slot].mapped
 	params^ = {
 		fade_amount = max(min(sim.settings.trail_fade_amount, 1.0), 0.0),
 	}
 }
 
 particle_life_write_background_uniforms :: proc(sim: ^Particle_Life_Simulation) {
-	if sim.gpu.background_params_buffer.mapped == nil {
+	frame_slot := sim.gpu.active_frame_slot
+	if sim.gpu.background_params_buffers[frame_slot].mapped == nil {
 		return
 	}
-	params := cast(^Particle_Life_Background_Params)sim.gpu.background_params_buffer.mapped
+	params := cast(^Particle_Life_Background_Params)sim.gpu.background_params_buffers[frame_slot].mapped
 	params^ = {background_color = sim.settings.background_color}
 }
 
 particle_life_write_post_uniforms :: proc(sim: ^Particle_Life_Simulation) {
-	if sim.gpu.post_params_buffer.mapped == nil {
+	frame_slot := sim.gpu.active_frame_slot
+	if sim.gpu.post_params_buffers[frame_slot].mapped == nil {
 		return
 	}
-	params := cast(^Particle_Life_Post_Params)sim.gpu.post_params_buffer.mapped
+	params := cast(^Particle_Life_Post_Params)sim.gpu.post_params_buffers[frame_slot].mapped
 	params^ = {
 		brightness = sim.settings.brightness,
 		contrast = sim.settings.contrast,
@@ -2977,7 +3042,8 @@ particle_life_write_post_uniforms :: proc(sim: ^Particle_Life_Simulation) {
 particle_life_dispatch_init :: proc(sim: ^Particle_Life_Simulation, cmd: vk.CommandBuffer) {
 	particle_life_write_init_uniforms(sim)
 	vk.CmdBindPipeline(cmd, .COMPUTE, sim.gpu.init_pipeline.pipeline)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.init_pipeline.layout, 0, 1, &sim.gpu.init_set, 0, nil)
+	init_set := sim.gpu.init_sets[sim.gpu.active_frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.init_pipeline.layout, 0, 1, &init_set, 0, nil)
 	group_x := u32((sim.gpu.uploaded_particle_count + PARTICLE_LIFE_WORKGROUP_SIZE - 1) / PARTICLE_LIFE_WORKGROUP_SIZE)
 	vk.CmdDispatch(cmd, max(group_x, 1), 1, 1)
 	barrier := vk.BufferMemoryBarrier {
@@ -3073,7 +3139,8 @@ particle_life_copy_scratch_to_particles :: proc(sim: ^Particle_Life_Simulation, 
 	}
 	vk.CmdBindPipeline(cmd, .COMPUTE, sim.gpu.copy_scratch_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.copy_scratch_pipeline.layout, 0, 1, &sim.gpu.sim_set, 0, nil)
+	sim_set := sim.gpu.sim_sets[sim.gpu.active_frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.copy_scratch_pipeline.layout, 0, 1, &sim_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	group_x := u32((sim.gpu.uploaded_particle_count + PARTICLE_LIFE_WORKGROUP_SIZE - 1) / PARTICLE_LIFE_WORKGROUP_SIZE)
 	vk.CmdDispatch(cmd, max(group_x, 1), 1, 1)
@@ -3085,7 +3152,8 @@ particle_life_dispatch_grid_clear :: proc(sim: ^Particle_Life_Simulation, vk_ctx
 	particle_life_write_grid_uniforms(sim)
 	vk.CmdBindPipeline(cmd, .COMPUTE, sim.gpu.grid_clear_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.grid_clear_pipeline.layout, 0, 1, &sim.gpu.sim_set, 0, nil)
+	sim_set := sim.gpu.sim_sets[sim.gpu.active_frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.grid_clear_pipeline.layout, 0, 1, &sim_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	cells := sim.gpu.grid_width * sim.gpu.grid_height
 	group_x := u32((cells + PARTICLE_LIFE_GRID_CLEAR_WORKGROUP_SIZE - 1) / PARTICLE_LIFE_GRID_CLEAR_WORKGROUP_SIZE)
@@ -3097,7 +3165,8 @@ particle_life_dispatch_grid_clear :: proc(sim: ^Particle_Life_Simulation, vk_ctx
 particle_life_dispatch_grid_scatter :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer) {
 	vk.CmdBindPipeline(cmd, .COMPUTE, sim.gpu.grid_scatter_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.grid_scatter_pipeline.layout, 0, 1, &sim.gpu.sim_set, 0, nil)
+	sim_set := sim.gpu.sim_sets[sim.gpu.active_frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.grid_scatter_pipeline.layout, 0, 1, &sim_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	group_x := u32((sim.gpu.uploaded_particle_count + PARTICLE_LIFE_WORKGROUP_SIZE - 1) / PARTICLE_LIFE_WORKGROUP_SIZE)
 	vk.CmdDispatch(cmd, max(group_x, 1), 1, 1)
@@ -3108,7 +3177,8 @@ particle_life_dispatch_grid_scatter :: proc(sim: ^Particle_Life_Simulation, vk_c
 particle_life_dispatch_grid_scatter_predicted :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer) {
 	vk.CmdBindPipeline(cmd, .COMPUTE, sim.gpu.grid_scatter_predicted_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.grid_scatter_predicted_pipeline.layout, 0, 1, &sim.gpu.sim_set, 0, nil)
+	sim_set := sim.gpu.sim_sets[sim.gpu.active_frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.grid_scatter_predicted_pipeline.layout, 0, 1, &sim_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	group_x := u32((sim.gpu.uploaded_particle_count + PARTICLE_LIFE_WORKGROUP_SIZE - 1) / PARTICLE_LIFE_WORKGROUP_SIZE)
 	vk.CmdDispatch(cmd, max(group_x, 1), 1, 1)
@@ -3119,7 +3189,8 @@ particle_life_dispatch_grid_scatter_predicted :: proc(sim: ^Particle_Life_Simula
 particle_life_dispatch_binned_compute :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer) {
 	vk.CmdBindPipeline(cmd, .COMPUTE, sim.gpu.compute_binned_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.compute_binned_pipeline.layout, 0, 1, &sim.gpu.sim_set, 0, nil)
+	sim_set := sim.gpu.sim_sets[sim.gpu.active_frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.compute_binned_pipeline.layout, 0, 1, &sim_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	group_x := u32((sim.gpu.uploaded_particle_count + PARTICLE_LIFE_WORKGROUP_SIZE - 1) / PARTICLE_LIFE_WORKGROUP_SIZE)
 	vk.CmdDispatch(cmd, max(group_x, 1), 1, 1)
@@ -3130,7 +3201,8 @@ particle_life_dispatch_binned_compute :: proc(sim: ^Particle_Life_Simulation, vk
 particle_life_dispatch_collision_solve :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer) {
 	vk.CmdBindPipeline(cmd, .COMPUTE, sim.gpu.collision_solve_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.collision_solve_pipeline.layout, 0, 1, &sim.gpu.sim_set, 0, nil)
+	sim_set := sim.gpu.sim_sets[sim.gpu.active_frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.collision_solve_pipeline.layout, 0, 1, &sim_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	group_x := u32((sim.gpu.uploaded_particle_count + PARTICLE_LIFE_WORKGROUP_SIZE - 1) / PARTICLE_LIFE_WORKGROUP_SIZE)
 	vk.CmdDispatch(cmd, max(group_x, 1), 1, 1)
@@ -3141,7 +3213,8 @@ particle_life_dispatch_collision_solve :: proc(sim: ^Particle_Life_Simulation, v
 particle_life_dispatch_collision_apply :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer) {
 	vk.CmdBindPipeline(cmd, .COMPUTE, sim.gpu.collision_apply_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.collision_apply_pipeline.layout, 0, 1, &sim.gpu.sim_set, 0, nil)
+	sim_set := sim.gpu.sim_sets[sim.gpu.active_frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.collision_apply_pipeline.layout, 0, 1, &sim_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	group_x := u32((sim.gpu.uploaded_particle_count + PARTICLE_LIFE_WORKGROUP_SIZE - 1) / PARTICLE_LIFE_WORKGROUP_SIZE)
 	vk.CmdDispatch(cmd, max(group_x, 1), 1, 1)
@@ -3172,7 +3245,7 @@ particle_life_analysis_frame_due :: proc(sim: ^Particle_Life_Simulation) -> bool
 }
 
 particle_life_analysis_gpu_ready :: proc(sim: ^Particle_Life_Simulation) -> bool {
-	return sim.gpu.analysis_set != vk.DescriptorSet(0) &&
+	return sim.gpu.analysis_sets[sim.gpu.active_frame_slot] != vk.DescriptorSet(0) &&
 		sim.gpu.analysis_clear_pipeline.pipeline != vk.Pipeline(0) &&
 		sim.gpu.analysis_blob_count_buffer.mapped != nil &&
 		sim.gpu.analysis_blob_summaries_buffer.mapped != nil
@@ -3193,7 +3266,8 @@ particle_life_analysis_barrier :: proc(sim: ^Particle_Life_Simulation, cmd: vk.C
 
 particle_life_dispatch_analysis_pipeline :: proc(sim: ^Particle_Life_Simulation, cmd: vk.CommandBuffer, pipeline: ^engine.Vk_Compute_Pipeline, groups_x, groups_y: u32) {
 	vk.CmdBindPipeline(cmd, .COMPUTE, pipeline.pipeline)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, pipeline.layout, 0, 1, &sim.gpu.analysis_set, 0, nil)
+	analysis_set := sim.gpu.analysis_sets[sim.gpu.active_frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, pipeline.layout, 0, 1, &analysis_set, 0, nil)
 	vk.CmdDispatch(cmd, max(groups_x, 1), max(groups_y, 1), 1)
 	particle_life_analysis_barrier(sim, cmd, {.COMPUTE_SHADER}, {.SHADER_READ, .SHADER_WRITE})
 }
@@ -3274,10 +3348,11 @@ particle_life_dispatch_force_randomize :: proc(sim: ^Particle_Life_Simulation, c
 }
 
 particle_life_dispatch_force_update :: proc(sim: ^Particle_Life_Simulation, cmd: vk.CommandBuffer) {
-	if sim.gpu.force_update_params_buffer.mapped == nil {
+	frame_slot := sim.gpu.active_frame_slot
+	if sim.gpu.force_update_params_buffers[frame_slot].mapped == nil {
 		return
 	}
-	params := cast(^Particle_Life_Force_Update_Params)sim.gpu.force_update_params_buffer.mapped
+	params := cast(^Particle_Life_Force_Update_Params)sim.gpu.force_update_params_buffers[frame_slot].mapped
 	params^ = {
 		species_a = sim.runtime.pending_force_a,
 		species_b = sim.runtime.pending_force_b,
@@ -3285,7 +3360,8 @@ particle_life_dispatch_force_update :: proc(sim: ^Particle_Life_Simulation, cmd:
 		species_count = sim.gpu.uploaded_species_count,
 	}
 	vk.CmdBindPipeline(cmd, .COMPUTE, sim.gpu.force_update_pipeline.pipeline)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.force_update_pipeline.layout, 0, 1, &sim.gpu.force_update_set, 0, nil)
+	force_update_set := sim.gpu.force_update_sets[frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, sim.gpu.force_update_pipeline.layout, 0, 1, &force_update_set, 0, nil)
 	vk.CmdDispatch(cmd, 1, 1, 1)
 	particle_life_force_barrier(sim, cmd)
 	sim.runtime.pending_force_update = false
@@ -3295,6 +3371,8 @@ particle_life_gpu_step :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.V
 	if !particle_life_ensure_gpu_runtime(sim, vk_ctx) {
 		return
 	}
+	sim.gpu.active_frame_slot = int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
+	particle_life_update_descriptors_for_slot(sim, vk_ctx, sim.gpu.active_frame_slot)
 	target_analysis_axis := particle_life_target_analysis_grid_axis(sim.settings)
 	grid_satisfies_target := particle_life_current_grid_satisfies_settings(sim)
 	if sim.gpu.uploaded_particle_count != particle_life_target_particle_count(sim.settings) || sim.gpu.uploaded_species_count != particle_life_target_species_count(sim.settings) || !grid_satisfies_target || sim.gpu.analysis_grid_axis != target_analysis_axis {
@@ -3344,9 +3422,11 @@ particle_life_gpu_step :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.V
 particle_life_draw_particles :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, pipeline: ^engine.Vk_Graphics_Pipeline) {
 	vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	sets := [3]vk.DescriptorSet{sim.gpu.sim_set, sim.gpu.color_set, sim.gpu.view_set}
+	frame_slot := sim.gpu.active_frame_slot
+	sets := [3]vk.DescriptorSet{sim.gpu.sim_sets[frame_slot], sim.gpu.color_sets[frame_slot], sim.gpu.view_sets[frame_slot]}
 	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout, 0, u32(len(sets)), raw_data(sets[:]), 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
+	particle_life_push_viewport_uniform_mode(vk_ctx, cmd, pipeline)
 	vk.CmdDraw(cmd, 6, sim.gpu.uploaded_particle_count, 0, 0)
 	engine.vk_cmd_count_draw(vk_ctx)
 }
@@ -3419,7 +3499,8 @@ particle_life_draw_infinite_tiles :: proc(sim: ^Particle_Life_Simulation, vk_ctx
 	tile_start_y := center_y - half_tiles
 	vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	sets := [3]vk.DescriptorSet{sim.gpu.sim_set, sim.gpu.color_set, sim.gpu.view_set}
+	frame_slot := sim.gpu.active_frame_slot
+	sets := [3]vk.DescriptorSet{sim.gpu.sim_sets[frame_slot], sim.gpu.color_sets[frame_slot], sim.gpu.view_sets[frame_slot]}
 	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout, 0, u32(len(sets)), raw_data(sets[:]), 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	for y: u32 = 0; y < tile_count; y += 1 {
@@ -3427,12 +3508,12 @@ particle_life_draw_infinite_tiles :: proc(sim: ^Particle_Life_Simulation, vk_ctx
 		for x: u32 = 0; x < tile_count; x += 1 {
 			tile_x := tile_start_x + i32(x)
 			tile_bounds := particle_life_tile_bounds_for_offset(bounds, tile_x, tile_y, tile_size)
-			particle_life_write_viewport_uniforms(sim, width, height, tile_bounds)
+			particle_life_push_viewport_bounds(vk_ctx, cmd, pipeline, tile_bounds)
 			vk.CmdDraw(cmd, 6, sim.gpu.uploaded_particle_count, 0, 0)
 			engine.vk_cmd_count_draw(vk_ctx)
 		}
 	}
-	particle_life_write_viewport_uniforms(sim, width, height, bounds)
+	particle_life_push_viewport_uniform_mode(vk_ctx, cmd, pipeline)
 }
 
 particle_life_transition_trail_image :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, index: int, new_layout: vk.ImageLayout) {
@@ -3520,23 +3601,24 @@ particle_life_transition_trail_image :: proc(sim: ^Particle_Life_Simulation, vk_
 	image.layout = new_layout
 }
 
-particle_life_update_fade_descriptor :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, set_index, read_index: int) {
-	params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.fade_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Fade_Params))}
+particle_life_update_fade_descriptor :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, frame_slot, set_index, read_index: int) {
+	params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.fade_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Fade_Params))}
 	image_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = sim.gpu.trail_images[read_index].view}
 	sampler_info := vk.DescriptorImageInfo{sampler = sim.gpu.trail_sampler}
+	set := sim.gpu.fade_sets[frame_slot][set_index]
 	writes := [3]vk.WriteDescriptorSet {
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.fade_sets[set_index], dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.fade_sets[set_index], dstBinding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.fade_sets[set_index], dstBinding = 2, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 2, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
 	}
 	vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 }
 
-particle_life_update_background_descriptor :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context) {
-	params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.background_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Background_Params))}
+particle_life_update_background_descriptor :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
+	params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.background_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Background_Params))}
 	write := vk.WriteDescriptorSet {
 		sType = .WRITE_DESCRIPTOR_SET,
-		dstSet = sim.gpu.background_set,
+		dstSet = sim.gpu.background_sets[frame_slot],
 		dstBinding = 0,
 		descriptorType = .UNIFORM_BUFFER,
 		descriptorCount = 1,
@@ -3545,43 +3627,93 @@ particle_life_update_background_descriptor :: proc(sim: ^Particle_Life_Simulatio
 	vk.UpdateDescriptorSets(vk_ctx.device, 1, &write, 0, nil)
 }
 
-particle_life_update_post_descriptors :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context) {
-	params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.post_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Post_Params))}
-	camera_info := vk.DescriptorBufferInfo{buffer = sim.gpu.camera_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Camera))}
+particle_life_update_post_descriptors :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
+	params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.post_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Post_Params))}
+	camera_info := vk.DescriptorBufferInfo{buffer = sim.gpu.camera_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Camera))}
 	sampler_info := vk.DescriptorImageInfo{sampler = sim.gpu.trail_sampler}
-	for i in 0 ..< len(sim.gpu.post_sets) {
+	for i in 0 ..< len(sim.gpu.trail_images) {
 		image_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = sim.gpu.trail_images[i].view}
+		set := sim.gpu.post_sets[frame_slot][i]
 		writes := [4]vk.WriteDescriptorSet {
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.post_sets[i], dstBinding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.post_sets[i], dstBinding = 1, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.post_sets[i], dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim.gpu.post_sets[i], dstBinding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 1, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info},
 		}
 		vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 	}
 }
 
+particle_life_destroy_trail_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Particle_Life_Trail_Image) {
+	if image.framebuffer != vk.Framebuffer(0) {
+		vk.DestroyFramebuffer(vk_ctx.device, image.framebuffer, nil)
+	}
+	if image.view != vk.ImageView(0) {
+		vk.DestroyImageView(vk_ctx.device, image.view, nil)
+	}
+	if image.handle != vk.Image(0) {
+		vk.DestroyImage(vk_ctx.device, image.handle, nil)
+	}
+	if image.memory != vk.DeviceMemory(0) {
+		vk.FreeMemory(vk_ctx.device, image.memory, nil)
+	}
+	image^ = {}
+}
+
 particle_life_destroy_trail_targets :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context) {
 	for i in 0 ..< len(sim.gpu.trail_images) {
-		image := &sim.gpu.trail_images[i]
-		if image.framebuffer != vk.Framebuffer(0) {
-			vk.DestroyFramebuffer(vk_ctx.device, image.framebuffer, nil)
-		}
-		if image.view != vk.ImageView(0) {
-			vk.DestroyImageView(vk_ctx.device, image.view, nil)
-		}
-		if image.handle != vk.Image(0) {
-			vk.DestroyImage(vk_ctx.device, image.handle, nil)
-		}
-		if image.memory != vk.DeviceMemory(0) {
-			vk.FreeMemory(vk_ctx.device, image.memory, nil)
-		}
-		image^ = {}
+		particle_life_destroy_trail_image(vk_ctx, &sim.gpu.trail_images[i])
 	}
 	sim.gpu.trail_width = 0
 	sim.gpu.trail_height = 0
 	sim.gpu.trail_initialized = false
 	sim.gpu.trail_write_index = 0
+}
+
+particle_life_frame_slot_mask :: proc() -> u32 {
+	return (u32(1) << u32(engine.MAX_FRAMES_IN_FLIGHT)) - 1
+}
+
+particle_life_collect_retired_trail_targets :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
+	bit := u32(1) << u32(frame_slot)
+	for i in 0 ..< PARTICLE_LIFE_RETIRED_TRAIL_TARGET_CAP {
+		retired := &sim.gpu.retired_trail_targets[i]
+		if retired.pending_frame_slots == 0 {
+			continue
+		}
+		retired.pending_frame_slots = retired.pending_frame_slots & (~bit)
+		if retired.pending_frame_slots == 0 {
+			for image_index in 0 ..< len(retired.images) {
+				particle_life_destroy_trail_image(vk_ctx, &retired.images[image_index])
+			}
+		}
+	}
+}
+
+particle_life_retire_trail_targets :: proc(sim: ^Particle_Life_Simulation) -> bool {
+	if sim.gpu.trail_images[0].handle == vk.Image(0) && sim.gpu.trail_images[1].handle == vk.Image(0) {
+		sim.gpu.trail_images = {}
+		sim.gpu.trail_width = 0
+		sim.gpu.trail_height = 0
+		sim.gpu.trail_initialized = false
+		sim.gpu.trail_write_index = 0
+		return true
+	}
+	for i in 0 ..< PARTICLE_LIFE_RETIRED_TRAIL_TARGET_CAP {
+		retired := &sim.gpu.retired_trail_targets[i]
+		if retired.pending_frame_slots == 0 {
+			retired.images = sim.gpu.trail_images
+			retired.pending_frame_slots = particle_life_frame_slot_mask()
+			sim.gpu.trail_images = {}
+			sim.gpu.trail_width = 0
+			sim.gpu.trail_height = 0
+			sim.gpu.trail_initialized = false
+			sim.gpu.trail_write_index = 0
+			return true
+		}
+	}
+	engine.log_warn("particle life: trail target retire slots exhausted")
+	return false
 }
 
 particle_life_ensure_trail_targets :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context) -> bool {
@@ -3590,7 +3722,9 @@ particle_life_ensure_trail_targets :: proc(sim: ^Particle_Life_Simulation, vk_ct
 	if sim.gpu.trail_width == width && sim.gpu.trail_height == height && sim.gpu.trail_images[0].handle != vk.Image(0) && sim.gpu.trail_images[1].handle != vk.Image(0) {
 		return true
 	}
-	particle_life_destroy_trail_targets(sim, vk_ctx)
+	if !particle_life_retire_trail_targets(sim) {
+		return false
+	}
 	for i in 0 ..< len(sim.gpu.trail_images) {
 		if !particle_life_create_trail_image(sim, vk_ctx, i, width, height) {
 			particle_life_destroy_trail_targets(sim, vk_ctx)
@@ -3599,14 +3733,18 @@ particle_life_ensure_trail_targets :: proc(sim: ^Particle_Life_Simulation, vk_ct
 	}
 	sim.gpu.trail_width = width
 	sim.gpu.trail_height = height
-	particle_life_update_background_descriptor(sim, vk_ctx)
-	particle_life_update_post_descriptors(sim, vk_ctx)
+	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
+	particle_life_update_background_descriptor(sim, vk_ctx, frame_slot)
+	particle_life_update_post_descriptors(sim, vk_ctx, frame_slot)
+	particle_life_collect_retired_trail_targets(sim, vk_ctx, frame_slot)
 	return true
 }
 
 particle_life_post_trail_to_swapchain :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, source_index: int, ui: ^engine.Ui_Renderer = nil) {
 	cmd := frame.command_buffer
+	frame_slot := int(frame.frame_index)
 	particle_life_write_post_uniforms(sim)
+	particle_life_update_post_descriptors(sim, vk_ctx, frame_slot)
 	particle_life_transition_trail_image(sim, vk_ctx, cmd, source_index, .SHADER_READ_ONLY_OPTIMAL)
 	engine.vk_cmd_begin_swapchain_render_pass(vk_ctx, frame, particle_life_clear_color(sim))
 	extent := vk_ctx.swapchain_extent
@@ -3624,7 +3762,8 @@ particle_life_post_trail_to_swapchain :: proc(sim: ^Particle_Life_Simulation, vk
 	if sim.settings.infinite_tiles_enabled && sim.gpu.tiled_post_pipeline.layout != vk.PipelineLayout(0) {
 		pipeline_layout = sim.gpu.tiled_post_pipeline.layout
 	}
-	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline_layout, 0, 1, &sim.gpu.post_sets[source_index], 0, nil)
+	post_set := sim.gpu.post_sets[frame_slot][source_index]
+	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline_layout, 0, 1, &post_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	instance_count := u32(1)
 	if sim.settings.infinite_tiles_enabled {
@@ -3642,6 +3781,10 @@ particle_life_post_trail_to_swapchain :: proc(sim: ^Particle_Life_Simulation, vk
 }
 
 particle_life_gpu_present_trails :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, ui: ^engine.Ui_Renderer = nil) {
+	sim.gpu.active_frame_slot = int(frame.frame_index)
+	particle_life_update_background_descriptor(sim, vk_ctx, sim.gpu.active_frame_slot)
+	particle_life_update_post_descriptors(sim, vk_ctx, sim.gpu.active_frame_slot)
+	particle_life_collect_retired_trail_targets(sim, vk_ctx, sim.gpu.active_frame_slot)
 	particle_life_note_trail_camera(sim)
 	cmd := frame.command_buffer
 	write_index := int(sim.gpu.trail_write_index & 1)
@@ -3650,7 +3793,7 @@ particle_life_gpu_present_trails :: proc(sim: ^Particle_Life_Simulation, vk_ctx:
 	if sim.settings.trails_enabled && sim.gpu.trail_initialized {
 		particle_life_transition_trail_image(sim, vk_ctx, cmd, read_index, .SHADER_READ_ONLY_OPTIMAL)
 		particle_life_write_fade_uniforms(sim)
-		particle_life_update_fade_descriptor(sim, vk_ctx, write_index, read_index)
+		particle_life_update_fade_descriptor(sim, vk_ctx, sim.gpu.active_frame_slot, write_index, read_index)
 	}
 
 	clear_value := vk.ClearValue{color = {float32 = {0, 0, 0, 0}}}
@@ -3669,16 +3812,19 @@ particle_life_gpu_present_trails :: proc(sim: ^Particle_Life_Simulation, vk_ctx:
 	vk.CmdSetViewport(cmd, 0, 1, &viewport)
 	vk.CmdSetScissor(cmd, 0, 1, &scissor)
 	particle_life_write_background_uniforms(sim)
+	particle_life_update_background_descriptor(sim, vk_ctx, sim.gpu.active_frame_slot)
 	vk.CmdBindPipeline(cmd, .GRAPHICS, sim.gpu.background_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, sim.gpu.background_pipeline.layout, 0, 1, &sim.gpu.background_set, 0, nil)
+	background_set := sim.gpu.background_sets[sim.gpu.active_frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, sim.gpu.background_pipeline.layout, 0, 1, &background_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDraw(cmd, 6, 1, 0, 0)
 	engine.vk_cmd_count_draw(vk_ctx)
 	if sim.settings.trails_enabled && sim.gpu.trail_initialized {
 		vk.CmdBindPipeline(cmd, .GRAPHICS, sim.gpu.fade_pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, sim.gpu.fade_pipeline.layout, 0, 1, &sim.gpu.fade_sets[write_index], 0, nil)
+		fade_set := sim.gpu.fade_sets[sim.gpu.active_frame_slot][write_index]
+		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, sim.gpu.fade_pipeline.layout, 0, 1, &fade_set, 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		vk.CmdDraw(cmd, 3, 1, 0, 0)
 		engine.vk_cmd_count_draw(vk_ctx)
@@ -3695,9 +3841,11 @@ particle_life_gpu_present :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engin
 	if !particle_life_ensure_gpu_runtime(sim, vk_ctx) {
 		return
 	}
+	sim.gpu.active_frame_slot = int(frame.frame_index)
 	if sim.settings.paused {
 		particle_life_write_frame_uniforms(sim, 0)
 	}
+	particle_life_update_descriptors_for_slot(sim, vk_ctx, sim.gpu.active_frame_slot)
 	extent := vk_ctx.swapchain_extent
 	if extent.width == 0 || extent.height == 0 {
 		return
@@ -3731,9 +3879,11 @@ particle_life_gpu_present_viewport :: proc(sim: ^Particle_Life_Simulation, vk_ct
 	if !particle_life_ensure_gpu_runtime(sim, vk_ctx) {
 		return
 	}
+	sim.gpu.active_frame_slot = int(frame.frame_index)
 	if sim.settings.paused {
 		particle_life_write_frame_uniforms(sim, 0)
 	}
+	particle_life_update_descriptors_for_slot(sim, vk_ctx, sim.gpu.active_frame_slot)
 	particle_life_gpu_draw_prepared_viewport(sim, vk_ctx, frame, viewport, scissor)
 }
 
@@ -4361,6 +4511,11 @@ particle_life_destroy :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk
 		engine.vk_destroy_graphics_pipeline(vk_ctx, &sim.gpu.tiled_post_pipeline)
 	}
 	particle_life_destroy_trail_targets(sim, vk_ctx)
+	for i in 0 ..< PARTICLE_LIFE_RETIRED_TRAIL_TARGET_CAP {
+		for image_index in 0 ..< len(sim.gpu.retired_trail_targets[i].images) {
+			particle_life_destroy_trail_image(vk_ctx, &sim.gpu.retired_trail_targets[i].images[image_index])
+		}
+	}
 	if sim.gpu.trail_sampler != vk.Sampler(0) {
 		vk.DestroySampler(vk_ctx.device, sim.gpu.trail_sampler, nil)
 	}
@@ -4406,27 +4561,6 @@ particle_life_destroy :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk
 	if sim.gpu.particle_scratch_buffer.handle != vk.Buffer(0) {
 		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.particle_scratch_buffer)
 	}
-	if sim.gpu.params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.params_buffer)
-	}
-	if sim.gpu.init_params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.init_params_buffer)
-	}
-	if sim.gpu.fade_params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.fade_params_buffer)
-	}
-	if sim.gpu.force_randomize_params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.force_randomize_params_buffer)
-	}
-	if sim.gpu.force_update_params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.force_update_params_buffer)
-	}
-	if sim.gpu.grid_params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.grid_params_buffer)
-	}
-	if sim.gpu.collision_params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.collision_params_buffer)
-	}
 	if sim.gpu.grid_heads_buffer.handle != vk.Buffer(0) {
 		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.grid_heads_buffer)
 	}
@@ -4435,9 +4569,6 @@ particle_life_destroy :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk
 	}
 	if sim.gpu.collision_correction_buffer.handle != vk.Buffer(0) {
 		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.collision_correction_buffer)
-	}
-	if sim.gpu.analysis_params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.analysis_params_buffer)
 	}
 	if sim.gpu.analysis_cells_buffer.handle != vk.Buffer(0) {
 		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.analysis_cells_buffer)
@@ -4460,29 +4591,25 @@ particle_life_destroy :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk
 	if sim.gpu.analysis_blob_count_buffer.handle != vk.Buffer(0) {
 		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.analysis_blob_count_buffer)
 	}
-	if sim.gpu.selected_blob_params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.selected_blob_params_buffer)
-	}
-	if sim.gpu.background_params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.background_params_buffer)
-	}
-	if sim.gpu.post_params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.post_params_buffer)
-	}
 	if sim.gpu.force_matrix_buffer.handle != vk.Buffer(0) {
 		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.force_matrix_buffer)
 	}
-	if sim.gpu.color_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.color_buffer)
-	}
-	if sim.gpu.color_mode_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.color_mode_buffer)
-	}
-	if sim.gpu.camera_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.camera_buffer)
-	}
-	if sim.gpu.viewport_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.viewport_buffer)
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.init_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.fade_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.force_randomize_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.force_update_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.grid_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.collision_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.analysis_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.selected_blob_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.background_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.post_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.color_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.color_mode_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.camera_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.viewport_buffers[frame_slot])
 	}
 	if sim.gpu.grid_clear_shader_module.handle != 0 {
 		engine.vk_destroy_shader_module(vk_ctx, &sim.gpu.grid_clear_shader_module)

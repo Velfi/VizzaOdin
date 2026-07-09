@@ -713,9 +713,9 @@ settings_load_primordial :: proc(path: string, defaults: Primordial_Settings) ->
 
 settings_write_voronoi_toml :: proc(settings: Voronoi_Settings, out: []u8) -> string {
 	color_scheme := settings.color_scheme
-	rulestring := settings.rulestring
-	return fmt.bprintf(out, "[voronoi]\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\nrulestring = \"%s\"\npoint_count = %d\ntime_scale = %.6f\ndrift = %.6f\nbrownian_speed = %.6f\ntimestep = %.6f\nsteps_per_frame = %d\nrandom_seed = %d\nbrush_radius = %.6f\nbrush_strength = %.6f\nauto_reseed_enabled = %v\nauto_reseed_interval_secs = %.6f\nborder_threshold = %.6f\nborders_enabled = %v\nborder_width = %.6f\ncolor_mode = \"%s\"\n",
-		color_scheme_name_get(&color_scheme), settings.color_scheme_reversed, settings.post_processing.blur_enabled, settings.post_processing.blur_radius, settings.post_processing.blur_sigma, fixed_string(rulestring[:]), settings.point_count, settings.time_scale, settings.drift, settings.brownian_speed, settings.timestep, settings.steps_per_frame, settings.random_seed, settings.brush_radius, settings.brush_strength, settings.auto_reseed_enabled, settings.auto_reseed_interval_secs, settings.border_threshold, settings.borders_enabled, settings.border_width, VORONOI_COLOR_MODE_NAMES[settings.color_mode_index])
+	color_mode_index := max(min(settings.color_mode_index, len(VORONOI_COLOR_MODE_NAMES) - 1), 0)
+	return fmt.bprintf(out, "[voronoi]\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\npoint_count = %d\ntime_scale = %.6f\ndrift = %.6f\nbrownian_speed = %.6f\nrandom_seed = %d\nborders_enabled = %v\nborder_width = %.6f\ncolor_mode = \"%s\"\n",
+		color_scheme_name_get(&color_scheme), settings.color_scheme_reversed, settings.post_processing.blur_enabled, settings.post_processing.blur_radius, settings.post_processing.blur_sigma, settings.point_count, settings.time_scale, settings.drift, settings.brownian_speed, settings.random_seed, settings.borders_enabled, settings.border_width, VORONOI_COLOR_MODE_NAMES[color_mode_index])
 }
 
 settings_save_voronoi :: proc(path: string, settings: Voronoi_Settings) -> bool {
@@ -736,20 +736,12 @@ settings_load_voronoi :: proc(path: string, defaults: Voronoi_Settings) -> (Voro
 	if v, ok := toml_bool(result.toptab, "voronoi.blur_enabled"); ok {settings.post_processing.blur_enabled = v}
 	if v, ok := toml_f64(result.toptab, "voronoi.blur_radius"); ok {settings.post_processing.blur_radius = f32(v)}
 	if v, ok := toml_f64(result.toptab, "voronoi.blur_sigma"); ok {settings.post_processing.blur_sigma = f32(v)}
-	if v, ok := toml_string(result.toptab, "voronoi.rulestring"); ok {write_fixed_string(settings.rulestring[:], v)}
 	if v, ok := toml_i64(result.toptab, "voronoi.point_count"); ok {settings.point_count = u32(max(v, 1))}
 	if v, ok := toml_i64(result.toptab, "voronoi.num_points"); ok {settings.point_count = u32(max(v, 1))}
 	if v, ok := toml_f64(result.toptab, "voronoi.time_scale"); ok {settings.time_scale = f32(v)}
 	if v, ok := toml_f64(result.toptab, "voronoi.drift"); ok {settings.drift = f32(v)}
 	if v, ok := toml_f64(result.toptab, "voronoi.brownian_speed"); ok {settings.brownian_speed = f32(v)}
-	if v, ok := toml_f64(result.toptab, "voronoi.timestep"); ok {settings.timestep = f32(v)}
-	if v, ok := toml_i64(result.toptab, "voronoi.steps_per_frame"); ok {settings.steps_per_frame = u32(max(v, 1))}
 	if v, ok := toml_i64(result.toptab, "voronoi.random_seed"); ok {settings.random_seed = u32(max(v, 0))}
-	if v, ok := toml_f64(result.toptab, "voronoi.brush_radius"); ok {settings.brush_radius = f32(v)}
-	if v, ok := toml_f64(result.toptab, "voronoi.brush_strength"); ok {settings.brush_strength = f32(v)}
-	if v, ok := toml_bool(result.toptab, "voronoi.auto_reseed_enabled"); ok {settings.auto_reseed_enabled = v}
-	if v, ok := toml_f64(result.toptab, "voronoi.auto_reseed_interval_secs"); ok {settings.auto_reseed_interval_secs = f32(v)}
-	if v, ok := toml_f64(result.toptab, "voronoi.border_threshold"); ok {settings.border_threshold = f32(v)}
 	if v, ok := toml_bool(result.toptab, "voronoi.borders_enabled"); ok {settings.borders_enabled = v}
 	if v, ok := toml_f64(result.toptab, "voronoi.border_width"); ok {settings.border_width = f32(v)}
 	if v, ok := toml_string(result.toptab, "voronoi.color_mode"); ok {value: u32; if voronoi_color_mode_from_name(v, &value) {settings.color_mode = value; settings.color_mode_index = int(value)}} else if v, ok := toml_i64(result.toptab, "voronoi.color_mode"); ok {settings.color_mode = u32(max(min(v, i64(len(VORONOI_COLOR_MODE_NAMES) - 1)), 0)); settings.color_mode_index = int(settings.color_mode)}

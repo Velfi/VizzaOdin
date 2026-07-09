@@ -6,18 +6,17 @@ float4 LoadTexture(RWTexture2D<float4> tex, int2 p) { return tex[p]; }
 float4 LoadTexture(Texture2D<float4> tex, int2 p) { return tex.Load(int3(p, 0)); }
 void StoreTexture(RWTexture2D<float4> tex, int2 p, float4 v) { tex[p] = v; }
 
-// JFA initialization shader - optimized for high point counts
-// Uses spatial partitioning to reduce search complexity from O(N) to O(1) per pixel
+// Voronoi initialization shader.
 
 struct Vertex {
 
   float2 position;
-  float state;
+  float color;
   float pad0;
-  float age;
-  uint alive_neighbors;
-  uint dead_neighbors;
+  float phase;
+  uint seed;
   uint pad1;
+  uint random_state;
 };
 
 struct VoronoiParams {
@@ -25,7 +24,7 @@ struct VoronoiParams {
   float count;
   float color_mode;
   float border_enabled;
-  float border_threshold;
+  float border_width;
   float filter_mode;
   float resolution_x;
   float resolution_y;

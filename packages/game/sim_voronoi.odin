@@ -7,15 +7,9 @@ import "core:math"
 import vk "vendor:vulkan"
 
 VORONOI_JFA_INIT_SHADER_SOURCE :: "assets/shaders/simulations/voronoi_ca/shaders/jfa_init.slang"
-VORONOI_ADJACENCY_BUILD_SHADER_SOURCE :: "assets/shaders/simulations/voronoi_ca/shaders/adjacency_build.slang"
-VORONOI_ADJACENCY_COUNT_SHADER_SOURCE :: "assets/shaders/simulations/voronoi_ca/shaders/adjacency_count.slang"
-VORONOI_UPDATE_SHADER_SOURCE :: "assets/shaders/simulations/voronoi_ca/shaders/compute_update.slang"
 VORONOI_BROWNIAN_SHADER_SOURCE :: "assets/shaders/simulations/voronoi_ca/shaders/brownian.slang"
 VORONOI_RENDER_SHADER_SOURCE :: "assets/shaders/simulations/voronoi_ca/shaders/voronoi_render_jfa.slang"
 VORONOI_JFA_INIT_FALLBACK_SPV :: "build/shaders/simulations/voronoi_ca/shaders/jfa_init"
-VORONOI_ADJACENCY_BUILD_FALLBACK_SPV :: "build/shaders/simulations/voronoi_ca/shaders/adjacency_build"
-VORONOI_ADJACENCY_COUNT_FALLBACK_SPV :: "build/shaders/simulations/voronoi_ca/shaders/adjacency_count"
-VORONOI_UPDATE_FALLBACK_SPV :: "build/shaders/simulations/voronoi_ca/shaders/compute_update"
 VORONOI_BROWNIAN_FALLBACK_SPV :: "build/shaders/simulations/voronoi_ca/shaders/brownian"
 VORONOI_RENDER_VERTEX_FALLBACK_SPV :: "build/shaders/simulations/voronoi_ca/shaders/voronoi_render_jfa_vertex"
 VORONOI_RENDER_FRAGMENT_FALLBACK_SPV :: "build/shaders/simulations/voronoi_ca/shaders/voronoi_render_jfa_fragment"
@@ -25,17 +19,16 @@ VORONOI_FRAGMENT_SOURCE_ENTRY :: "fs_main"
 VORONOI_ENTRY :: cstring("main")
 VORONOI_VERTEX_ENTRY :: cstring("main")
 VORONOI_FRAGMENT_ENTRY :: cstring("main")
-VORONOI_MAX_NEIGHBORS :: u32(16)
 VORONOI_IMAGE_FORMAT :: vk.Format(.R32G32B32A32_SFLOAT)
 
 Voronoi_Vertex :: struct #align(8) {
 	position: [2]f32,
-	state: f32,
+	color: f32,
 	pad0: f32,
-	age: f32,
-	alive_neighbors: u32,
-	dead_neighbors: u32,
+	phase: f32,
+	seed: u32,
 	pad1: u32,
+	random_state: u32,
 }
 
 Voronoi_Params :: struct #align(16) {
@@ -53,10 +46,10 @@ Voronoi_Uniforms :: struct #align(16) {
 	resolution: [2]f32,
 	time: f32,
 	drift: f32,
-	rule_type: u32,
 	_pad0: u32,
 	_pad1: u32,
 	_pad2: u32,
+	_pad3: u32,
 }
 
 Voronoi_Brownian_Params :: struct #align(8) {
@@ -77,43 +70,28 @@ Voronoi_Gpu_State :: struct {
 	width: u32,
 	height: u32,
 	jfa_init_shader: engine.Vk_Shader_Module,
-	adjacency_build_shader: engine.Vk_Shader_Module,
-	adjacency_count_shader: engine.Vk_Shader_Module,
-	update_shader: engine.Vk_Shader_Module,
 	brownian_shader: engine.Vk_Shader_Module,
 	render_vertex_shader: engine.Vk_Shader_Module,
 	render_fragment_shader: engine.Vk_Shader_Module,
 	jfa_init_pipeline: engine.Vk_Compute_Pipeline,
-	adjacency_build_pipeline: engine.Vk_Compute_Pipeline,
-	adjacency_count_pipeline: engine.Vk_Compute_Pipeline,
-	update_pipeline: engine.Vk_Compute_Pipeline,
 	brownian_pipeline: engine.Vk_Compute_Pipeline,
 	render_pipeline: engine.Vk_Graphics_Pipeline,
 	jfa_set_layout: vk.DescriptorSetLayout,
-	adjacency_build_set_layout: vk.DescriptorSetLayout,
-	adjacency_count_set_layout: vk.DescriptorSetLayout,
-	update_set_layout: vk.DescriptorSetLayout,
 	brownian_set_layout: vk.DescriptorSetLayout,
 	render_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool: vk.DescriptorPool,
-	jfa_set: vk.DescriptorSet,
-	adjacency_build_set: vk.DescriptorSet,
-	adjacency_count_set: vk.DescriptorSet,
-	update_set: vk.DescriptorSet,
-	brownian_set: vk.DescriptorSet,
-	render_set: vk.DescriptorSet,
+	jfa_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	brownian_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	render_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 	vertex_buffer: engine.Vk_Buffer,
-	params_buffer: engine.Vk_Buffer,
-	uniforms_buffer: engine.Vk_Buffer,
-	brownian_params_buffer: engine.Vk_Buffer,
-	neighbors_buffer: engine.Vk_Buffer,
-	degrees_buffer: engine.Vk_Buffer,
+	params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	uniforms_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	brownian_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	lut_buffer: engine.Vk_Buffer,
 	jfa_image: Voronoi_Image,
 	point_count: u32,
 	time_accum: f32,
 	needs_rebuild: bool,
-	adjacency_valid: bool,
 	ready: bool,
 }
 
@@ -135,9 +113,6 @@ voronoi_gpu_ensure_size :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Cont
 	gpu.height = target_height
 	gpu.point_count = point_count
 	if !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_JFA_INIT_SHADER_SOURCE, VORONOI_JFA_INIT_FALLBACK_SPV, .Compute, VORONOI_SOURCE_ENTRY, &gpu.jfa_init_shader) ||
-	   !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_ADJACENCY_BUILD_SHADER_SOURCE, VORONOI_ADJACENCY_BUILD_FALLBACK_SPV, .Compute, VORONOI_SOURCE_ENTRY, &gpu.adjacency_build_shader) ||
-	   !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_ADJACENCY_COUNT_SHADER_SOURCE, VORONOI_ADJACENCY_COUNT_FALLBACK_SPV, .Compute, VORONOI_SOURCE_ENTRY, &gpu.adjacency_count_shader) ||
-	   !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_UPDATE_SHADER_SOURCE, VORONOI_UPDATE_FALLBACK_SPV, .Compute, VORONOI_SOURCE_ENTRY, &gpu.update_shader) ||
 	   !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_BROWNIAN_SHADER_SOURCE, VORONOI_BROWNIAN_FALLBACK_SPV, .Compute, VORONOI_SOURCE_ENTRY, &gpu.brownian_shader) ||
 	   !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_RENDER_SHADER_SOURCE, VORONOI_RENDER_VERTEX_FALLBACK_SPV, .Vertex, VORONOI_VERTEX_SOURCE_ENTRY, &gpu.render_vertex_shader) ||
 	   !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_RENDER_SHADER_SOURCE, VORONOI_RENDER_FRAGMENT_FALLBACK_SPV, .Fragment, VORONOI_FRAGMENT_SOURCE_ENTRY, &gpu.render_fragment_shader) {
@@ -145,32 +120,36 @@ voronoi_gpu_ensure_size :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Cont
 		return false
 	}
 	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Voronoi_Vertex) * int(gpu.point_count)), {.STORAGE_BUFFER}, &gpu.vertex_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Voronoi_Params)), {.UNIFORM_BUFFER}, &gpu.params_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Voronoi_Uniforms)), {.UNIFORM_BUFFER}, &gpu.uniforms_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Voronoi_Brownian_Params)), {.UNIFORM_BUFFER}, &gpu.brownian_params_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * int(gpu.point_count * VORONOI_MAX_NEIGHBORS)), {.STORAGE_BUFFER}, &gpu.neighbors_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * int(gpu.point_count)), {.STORAGE_BUFFER}, &gpu.degrees_buffer) ||
 	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT), {.STORAGE_BUFFER}, &gpu.lut_buffer) {
 		voronoi_gpu_destroy(gpu, vk_ctx)
 		return false
+	}
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Voronoi_Params)), {.UNIFORM_BUFFER}, &gpu.params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Voronoi_Uniforms)), {.UNIFORM_BUFFER}, &gpu.uniforms_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Voronoi_Brownian_Params)), {.UNIFORM_BUFFER}, &gpu.brownian_params_buffers[frame_slot]) {
+			voronoi_gpu_destroy(gpu, vk_ctx)
+			return false
+		}
 	}
 	if !voronoi_create_image(gpu, vk_ctx, &gpu.jfa_image, target_width, target_height) {
 		voronoi_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
 	voronoi_initialize_points(gpu, settings)
-	voronoi_write_params(gpu, settings)
-	voronoi_write_uniforms(gpu, settings, 0)
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		voronoi_write_params(gpu, frame_slot, settings)
+		voronoi_write_uniforms(gpu, frame_slot, settings, 0)
+		voronoi_write_brownian_params(gpu, frame_slot, settings, 0)
+	}
 	if !voronoi_create_descriptors(gpu, vk_ctx) ||
 	   !voronoi_create_compute_pipeline(gpu, vk_ctx) ||
-	   !voronoi_create_adjacency_pipelines(gpu, vk_ctx) ||
 	   !voronoi_create_single_compute_pipeline(vk_ctx, gpu.brownian_shader.handle, gpu.brownian_set_layout, &gpu.brownian_pipeline) ||
 	   !voronoi_create_render_pipeline(gpu, vk_ctx) {
 		voronoi_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
 	gpu.needs_rebuild = true
-	gpu.adjacency_valid = false
 	gpu.ready = true
 	return true
 }
@@ -199,15 +178,17 @@ voronoi_initialize_points :: proc(gpu: ^Voronoi_Gpu_State, settings: ^Voronoi_Se
 	for i in 0 ..< int(gpu.point_count) {
 		x := voronoi_next_random01(&rng) * f32(gpu.width)
 		y := voronoi_next_random01(&rng) * f32(gpu.height)
-		state := voronoi_next_random01(&rng) > 0.5 ? f32(1) : f32(0)
+		color := voronoi_next_random01(&rng)
+		phase := voronoi_next_random01(&rng)
+		seed := rng
 		points[i] = {
 			position = {x, y},
-			state = state,
+			color = color,
 			pad0 = 0,
-			age = voronoi_next_random01(&rng),
-			alive_neighbors = u32(voronoi_next_random01(&rng) * 8),
-			dead_neighbors = u32(voronoi_next_random01(&rng) * 8),
-			pad1 = rng,
+			phase = phase,
+			seed = seed,
+			pad1 = 0,
+			random_state = rng,
 		}
 	}
 }
@@ -226,9 +207,9 @@ voronoi_upload_lut :: proc(gpu: ^Voronoi_Gpu_State, settings: ^Voronoi_Settings)
 	_ = color_scheme_write_u32_buffer(scheme, data)
 }
 
-voronoi_write_params :: proc(gpu: ^Voronoi_Gpu_State, settings: ^Voronoi_Settings) {
-	if gpu.params_buffer.mapped == nil {return}
-	params := cast(^Voronoi_Params)gpu.params_buffer.mapped
+voronoi_write_params :: proc(gpu: ^Voronoi_Gpu_State, frame_slot: int, settings: ^Voronoi_Settings) {
+	if gpu.params_buffers[frame_slot].mapped == nil {return}
+	params := cast(^Voronoi_Params)gpu.params_buffers[frame_slot].mapped
 	params^ = {
 		count = f32(gpu.point_count),
 		color_mode = f32(settings.color_mode),
@@ -241,54 +222,23 @@ voronoi_write_params :: proc(gpu: ^Voronoi_Gpu_State, settings: ^Voronoi_Setting
 	}
 }
 
-voronoi_write_uniforms :: proc(gpu: ^Voronoi_Gpu_State, settings: ^Voronoi_Settings, time: f32) {
-	if gpu.uniforms_buffer.mapped == nil {return}
-	uniforms := cast(^Voronoi_Uniforms)gpu.uniforms_buffer.mapped
+voronoi_write_uniforms :: proc(gpu: ^Voronoi_Gpu_State, frame_slot: int, settings: ^Voronoi_Settings, time: f32) {
+	if gpu.uniforms_buffers[frame_slot].mapped == nil {return}
+	uniforms := cast(^Voronoi_Uniforms)gpu.uniforms_buffers[frame_slot].mapped
 	uniforms^ = {
 		resolution = {f32(gpu.width), f32(gpu.height)},
 		time = time,
 		drift = settings.drift,
-		rule_type = voronoi_rule_type(settings),
 	}
 }
 
-voronoi_write_brownian_params :: proc(gpu: ^Voronoi_Gpu_State, settings: ^Voronoi_Settings, delta_time: f32) {
-	if gpu.brownian_params_buffer.mapped == nil {return}
-	params := cast(^Voronoi_Brownian_Params)gpu.brownian_params_buffer.mapped
+voronoi_write_brownian_params :: proc(gpu: ^Voronoi_Gpu_State, frame_slot: int, settings: ^Voronoi_Settings, delta_time: f32) {
+	if gpu.brownian_params_buffers[frame_slot].mapped == nil {return}
+	params := cast(^Voronoi_Brownian_Params)gpu.brownian_params_buffers[frame_slot].mapped
 	params^ = {
 		speed = settings.brownian_speed,
 		delta_time = delta_time,
 	}
-}
-
-voronoi_rule_type :: proc(settings: ^Voronoi_Settings) -> u32 {
-	rule := fixed_string(settings.rulestring[:])
-	switch rule {
-	case "B1357/S1357": return 0
-	case "B2/S": return 1
-	case "B25/S4": return 2
-	case "B3/S012345678": return 3
-	case "B3/S23": return 4
-	case "B3/S1234": return 5
-	case "B3/S12345": return 6
-	case "B34/S34": return 7
-	case "B35678/S5678": return 8
-	case "B36/S125": return 9
-	case "B36/S23": return 10
-	case "B368/S245": return 11
-	case "B4678/S35678": return 12
-	case "B5678/S45678": return 13
-	case "B6/S16": return 14
-	case "B6/S1": return 15
-	case "B6/S12": return 16
-	case "B6/S123": return 17
-	case "B6/S15": return 18
-	case "B6/S2": return 19
-	case "B7/S": return 20
-	case "B8/S": return 21
-	case "B9/S": return 22
-	}
-	return 4
 }
 
 voronoi_create_descriptors :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
@@ -297,28 +247,10 @@ voronoi_create_descriptors :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_C
 		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 2, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
-	render_bindings := [4]vk.DescriptorSetLayoutBinding{
+	render_bindings := [3]vk.DescriptorSetLayoutBinding{
 		{binding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
 		{binding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
-		{binding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
-		{binding = 3, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
-	}
-	adjacency_build_bindings := [5]vk.DescriptorSetLayoutBinding{
-		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 4, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.COMPUTE}},
-	}
-	adjacency_count_bindings := [4]vk.DescriptorSetLayoutBinding{
-		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-	}
-	update_bindings := [2]vk.DescriptorSetLayoutBinding{
-		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
 	}
 	brownian_bindings := [3]vk.DescriptorSetLayoutBinding{
 		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
@@ -326,24 +258,20 @@ voronoi_create_descriptors :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_C
 		{binding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
 	if !voronoi_create_set_layout(vk_ctx, jfa_bindings[:], &gpu.jfa_set_layout) ||
-	   !voronoi_create_set_layout(vk_ctx, adjacency_build_bindings[:], &gpu.adjacency_build_set_layout) ||
-	   !voronoi_create_set_layout(vk_ctx, adjacency_count_bindings[:], &gpu.adjacency_count_set_layout) ||
-	   !voronoi_create_set_layout(vk_ctx, update_bindings[:], &gpu.update_set_layout) ||
 	   !voronoi_create_set_layout(vk_ctx, brownian_bindings[:], &gpu.brownian_set_layout) ||
 	   !voronoi_create_set_layout(vk_ctx, render_bindings[:], &gpu.render_set_layout) {return false}
-	pool_sizes := [4]vk.DescriptorPoolSize{{type = .STORAGE_BUFFER, descriptorCount = 13}, {type = .UNIFORM_BUFFER, descriptorCount = 8}, {type = .STORAGE_IMAGE, descriptorCount = 1}, {type = .SAMPLED_IMAGE, descriptorCount = 2}}
-	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 6}
+	pool_sizes := [4]vk.DescriptorPoolSize{{type = .STORAGE_BUFFER, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .UNIFORM_BUFFER, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .STORAGE_IMAGE, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}, {type = .SAMPLED_IMAGE, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}}
+	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 3 * engine.MAX_FRAMES_IN_FLIGHT}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {return false}
-	layouts := [6]vk.DescriptorSetLayout{gpu.jfa_set_layout, gpu.adjacency_build_set_layout, gpu.adjacency_count_set_layout, gpu.update_set_layout, gpu.brownian_set_layout, gpu.render_set_layout}
-	sets: [6]vk.DescriptorSet
-	alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = 6, pSetLayouts = raw_data(layouts[:])}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {return false}
-	gpu.jfa_set = sets[0]
-	gpu.adjacency_build_set = sets[1]
-	gpu.adjacency_count_set = sets[2]
-	gpu.update_set = sets[3]
-	gpu.brownian_set = sets[4]
-	gpu.render_set = sets[5]
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		layouts := [3]vk.DescriptorSetLayout{gpu.jfa_set_layout, gpu.brownian_set_layout, gpu.render_set_layout}
+		sets: [3]vk.DescriptorSet
+		alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = 3, pSetLayouts = raw_data(layouts[:])}
+		if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {return false}
+		gpu.jfa_sets[frame_slot] = sets[0]
+		gpu.brownian_sets[frame_slot] = sets[1]
+		gpu.render_sets[frame_slot] = sets[2]
+	}
 	voronoi_update_descriptors(gpu, vk_ctx)
 	return true
 }
@@ -354,37 +282,32 @@ voronoi_create_set_layout :: proc(vk_ctx: ^engine.Vk_Context, bindings: []vk.Des
 }
 
 voronoi_update_descriptors :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context) {
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		voronoi_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
+	}
+}
+
+voronoi_update_descriptors_for_slot :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
 	vertex_info := vk.DescriptorBufferInfo{buffer = gpu.vertex_buffer.handle, offset = 0, range = gpu.vertex_buffer.size}
-	params_info := vk.DescriptorBufferInfo{buffer = gpu.params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Voronoi_Params))}
-	uniforms_info := vk.DescriptorBufferInfo{buffer = gpu.uniforms_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Voronoi_Uniforms))}
-	brownian_params_info := vk.DescriptorBufferInfo{buffer = gpu.brownian_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Voronoi_Brownian_Params))}
-	neighbors_info := vk.DescriptorBufferInfo{buffer = gpu.neighbors_buffer.handle, offset = 0, range = gpu.neighbors_buffer.size}
-	degrees_info := vk.DescriptorBufferInfo{buffer = gpu.degrees_buffer.handle, offset = 0, range = gpu.degrees_buffer.size}
+	params_info := vk.DescriptorBufferInfo{buffer = gpu.params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Voronoi_Params))}
+	uniforms_info := vk.DescriptorBufferInfo{buffer = gpu.uniforms_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Voronoi_Uniforms))}
+	brownian_params_info := vk.DescriptorBufferInfo{buffer = gpu.brownian_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Voronoi_Brownian_Params))}
 	lut_info := vk.DescriptorBufferInfo{buffer = gpu.lut_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT)}
 	jfa_storage := vk.DescriptorImageInfo{imageLayout = .GENERAL, imageView = gpu.jfa_image.view}
 	jfa_sampled := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.jfa_image.view}
+	jfa_set := gpu.jfa_sets[frame_slot]
+	brownian_set := gpu.brownian_sets[frame_slot]
+	render_set := gpu.render_sets[frame_slot]
 	writes := [?]vk.WriteDescriptorSet{
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.jfa_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vertex_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.jfa_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.jfa_set, dstBinding = 2, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &jfa_storage},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.adjacency_build_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vertex_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.adjacency_build_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &uniforms_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.adjacency_build_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &neighbors_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.adjacency_build_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &degrees_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.adjacency_build_set, dstBinding = 4, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &jfa_sampled},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.adjacency_count_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vertex_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.adjacency_count_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &uniforms_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.adjacency_count_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &neighbors_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.adjacency_count_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &degrees_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.update_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vertex_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.update_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &uniforms_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.brownian_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vertex_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.brownian_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &uniforms_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.brownian_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &brownian_params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.render_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.render_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vertex_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.render_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.render_set, dstBinding = 3, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &jfa_sampled},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = jfa_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vertex_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = jfa_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = jfa_set, dstBinding = 2, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &jfa_storage},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = brownian_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vertex_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = brownian_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &uniforms_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = brownian_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &brownian_params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = render_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = render_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = render_set, dstBinding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &jfa_sampled},
 	}
 	vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 }
@@ -405,12 +328,6 @@ voronoi_create_single_compute_pipeline :: proc(vk_ctx: ^engine.Vk_Context, shade
 	stage := vk.PipelineShaderStageCreateInfo{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.COMPUTE}, module = shader, pName = VORONOI_ENTRY}
 	info := vk.ComputePipelineCreateInfo{sType = .COMPUTE_PIPELINE_CREATE_INFO, stage = stage, layout = out.layout}
 	return vk.CreateComputePipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &out.pipeline) == .SUCCESS
-}
-
-voronoi_create_adjacency_pipelines :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
-	return voronoi_create_single_compute_pipeline(vk_ctx, gpu.adjacency_build_shader.handle, gpu.adjacency_build_set_layout, &gpu.adjacency_build_pipeline) &&
-	       voronoi_create_single_compute_pipeline(vk_ctx, gpu.adjacency_count_shader.handle, gpu.adjacency_count_set_layout, &gpu.adjacency_count_pipeline) &&
-	       voronoi_create_single_compute_pipeline(vk_ctx, gpu.update_shader.handle, gpu.update_set_layout, &gpu.update_pipeline)
 }
 
 voronoi_create_render_pipeline :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
@@ -471,64 +388,38 @@ voronoi_gpu_step_size :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Contex
 }
 
 voronoi_gpu_step_ready :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, settings: ^Voronoi_Settings, delta_time: f32, paused: bool) {
+	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
 	voronoi_upload_lut(gpu, settings)
 	dt := delta_time * max(settings.time_scale, 0)
 	if !paused {
 		gpu.time_accum += dt
 	}
-	voronoi_write_uniforms(gpu, settings, gpu.time_accum)
-	voronoi_write_params(gpu, settings)
-	voronoi_write_brownian_params(gpu, settings, dt)
+	voronoi_write_uniforms(gpu, frame_slot, settings, gpu.time_accum)
+	voronoi_write_params(gpu, frame_slot, settings)
+	voronoi_write_brownian_params(gpu, frame_slot, settings, dt)
 	point_groups := max((gpu.point_count + 127) / 128, 1)
 	if !paused && settings.brownian_speed != 0 && settings.drift != 0 && dt != 0 {
 		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.brownian_pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.brownian_pipeline.layout, 0, 1, &gpu.brownian_set, 0, nil)
+		brownian_set := gpu.brownian_sets[frame_slot]
+		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.brownian_pipeline.layout, 0, 1, &brownian_set, 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		vk.CmdDispatch(cmd, point_groups, 1, 1)
 		engine.vk_cmd_count_compute_dispatch(vk_ctx)
 		voronoi_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER, .FRAGMENT_SHADER})
 		gpu.needs_rebuild = true
-		gpu.adjacency_valid = false
 	}
 	if gpu.needs_rebuild {
 		voronoi_transition_image(vk_ctx, cmd, &gpu.jfa_image, .GENERAL)
 		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.jfa_init_pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.jfa_init_pipeline.layout, 0, 1, &gpu.jfa_set, 0, nil)
+		jfa_set := gpu.jfa_sets[frame_slot]
+		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.jfa_init_pipeline.layout, 0, 1, &jfa_set, 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		vk.CmdDispatch(cmd, (gpu.width + 15) / 16, (gpu.height + 15) / 16, 1)
 		engine.vk_cmd_count_compute_dispatch(vk_ctx)
 		voronoi_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER, .FRAGMENT_SHADER})
 		gpu.needs_rebuild = false
-		gpu.adjacency_valid = false
-	}
-	if !gpu.adjacency_valid {
-		voronoi_transition_image(vk_ctx, cmd, &gpu.jfa_image, .SHADER_READ_ONLY_OPTIMAL)
-		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.adjacency_build_pipeline.pipeline)
-		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.adjacency_build_pipeline.layout, 0, 1, &gpu.adjacency_build_set, 0, nil)
-		engine.vk_cmd_count_descriptor_bind(vk_ctx)
-		vk.CmdDispatch(cmd, point_groups, 1, 1)
-		engine.vk_cmd_count_compute_dispatch(vk_ctx)
-		voronoi_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
-		gpu.adjacency_valid = true
-	}
-	if !paused {
-		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.adjacency_count_pipeline.pipeline)
-		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.adjacency_count_pipeline.layout, 0, 1, &gpu.adjacency_count_set, 0, nil)
-		engine.vk_cmd_count_descriptor_bind(vk_ctx)
-		vk.CmdDispatch(cmd, point_groups, 1, 1)
-		engine.vk_cmd_count_compute_dispatch(vk_ctx)
-		voronoi_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER, .FRAGMENT_SHADER})
-		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.update_pipeline.pipeline)
-		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.update_pipeline.layout, 0, 1, &gpu.update_set, 0, nil)
-		engine.vk_cmd_count_descriptor_bind(vk_ctx)
-		vk.CmdDispatch(cmd, point_groups, 1, 1)
-		engine.vk_cmd_count_compute_dispatch(vk_ctx)
-		voronoi_compute_barrier(vk_ctx, cmd, {.FRAGMENT_SHADER})
 	}
 }
 
@@ -558,7 +449,8 @@ voronoi_gpu_draw_prepared_viewport :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^eng
 	vk.CmdSetScissor(frame.command_buffer, 0, 1, &local_scissor)
 	vk.CmdBindPipeline(frame.command_buffer, .GRAPHICS, gpu.render_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.render_pipeline.layout, 0, 1, &gpu.render_set, 0, nil)
+	render_set := gpu.render_sets[int(frame.frame_index)]
+	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.render_pipeline.layout, 0, 1, &render_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDraw(frame.command_buffer, 3, 1, 0, 0)
 	engine.vk_cmd_count_draw(vk_ctx)
@@ -584,30 +476,21 @@ voronoi_destroy_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Voronoi_Image)
 voronoi_gpu_destroy :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context) {
 	if vk_ctx == nil || vk_ctx.device == nil {gpu^ = {}; return}
 	voronoi_destroy_compute_pipeline(vk_ctx, &gpu.jfa_init_pipeline)
-	voronoi_destroy_compute_pipeline(vk_ctx, &gpu.adjacency_build_pipeline)
-	voronoi_destroy_compute_pipeline(vk_ctx, &gpu.adjacency_count_pipeline)
-	voronoi_destroy_compute_pipeline(vk_ctx, &gpu.update_pipeline)
 	voronoi_destroy_compute_pipeline(vk_ctx, &gpu.brownian_pipeline)
 	engine.vk_destroy_graphics_pipeline(vk_ctx, &gpu.render_pipeline)
 	if gpu.descriptor_pool != vk.DescriptorPool(0) {vk.DestroyDescriptorPool(vk_ctx.device, gpu.descriptor_pool, nil)}
 	if gpu.jfa_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.jfa_set_layout, nil)}
-	if gpu.adjacency_build_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.adjacency_build_set_layout, nil)}
-	if gpu.adjacency_count_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.adjacency_count_set_layout, nil)}
-	if gpu.update_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.update_set_layout, nil)}
 	if gpu.brownian_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.brownian_set_layout, nil)}
 	if gpu.render_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.render_set_layout, nil)}
 	engine.vk_destroy_buffer(vk_ctx, &gpu.vertex_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.params_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.uniforms_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.brownian_params_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.neighbors_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.degrees_buffer)
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		engine.vk_destroy_buffer(vk_ctx, &gpu.params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.uniforms_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.brownian_params_buffers[frame_slot])
+	}
 	engine.vk_destroy_buffer(vk_ctx, &gpu.lut_buffer)
 	voronoi_destroy_image(vk_ctx, &gpu.jfa_image)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.jfa_init_shader)
-	engine.vk_destroy_shader_module(vk_ctx, &gpu.adjacency_build_shader)
-	engine.vk_destroy_shader_module(vk_ctx, &gpu.adjacency_count_shader)
-	engine.vk_destroy_shader_module(vk_ctx, &gpu.update_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.brownian_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.render_vertex_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.render_fragment_shader)

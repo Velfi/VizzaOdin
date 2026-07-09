@@ -113,19 +113,19 @@ Slime_Gpu_State :: struct {
 	texture_set_layout: vk.DescriptorSetLayout,
 	camera_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool: vk.DescriptorPool,
-	sim_set: vk.DescriptorSet,
-	display_set: vk.DescriptorSet,
-	texture_set: vk.DescriptorSet,
-	camera_set: vk.DescriptorSet,
+	sim_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	display_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	texture_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	camera_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 	agent_buffer: engine.Vk_Buffer,
 	trail_buffer: engine.Vk_Buffer,
 	mask_buffer: engine.Vk_Buffer,
 	gradient_buffer: engine.Vk_Buffer,
-	sim_buffer: engine.Vk_Buffer,
-	cursor_buffer: engine.Vk_Buffer,
+	sim_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	cursor_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	lut_buffer: engine.Vk_Buffer,
-	render_params_buffer: engine.Vk_Buffer,
-	camera_buffer: engine.Vk_Buffer,
+	render_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	camera_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	display_image: Slime_Image,
 	sampler: vk.Sampler,
 	agent_speed_min_uploaded: f32,
@@ -172,13 +172,18 @@ slime_gpu_ensure_size_count :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Co
 	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(f32) * pixel_count), {.STORAGE_BUFFER}, &gpu.trail_buffer) ||
 	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(f32) * pixel_count), {.STORAGE_BUFFER}, &gpu.mask_buffer) ||
 	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(f32) * pixel_count), {.STORAGE_BUFFER}, &gpu.gradient_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Slime_Sim_Uniform)), {.UNIFORM_BUFFER}, &gpu.sim_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Slime_Cursor_Params)), {.UNIFORM_BUFFER}, &gpu.cursor_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT), {.STORAGE_BUFFER}, &gpu.lut_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Slime_Render_Params)), {.UNIFORM_BUFFER}, &gpu.render_params_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Slime_Camera)), {.UNIFORM_BUFFER}, &gpu.camera_buffer) {
+	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT), {.STORAGE_BUFFER}, &gpu.lut_buffer) {
 		slime_gpu_destroy(gpu, vk_ctx)
 		return false
+	}
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Slime_Sim_Uniform)), {.UNIFORM_BUFFER}, &gpu.sim_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Slime_Cursor_Params)), {.UNIFORM_BUFFER}, &gpu.cursor_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Slime_Render_Params)), {.UNIFORM_BUFFER}, &gpu.render_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Slime_Camera)), {.UNIFORM_BUFFER}, &gpu.camera_buffers[frame_slot]) {
+			slime_gpu_destroy(gpu, vk_ctx)
+			return false
+		}
 	}
 	slime_clear_host_buffers(gpu)
 	if !slime_create_image(gpu, vk_ctx, &gpu.display_image, target_width, target_height, {.STORAGE, .SAMPLED, .TRANSFER_DST}) ||
@@ -186,9 +191,11 @@ slime_gpu_ensure_size_count :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Co
 		slime_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
-	slime_upload_render_params(gpu, settings)
-	slime_upload_camera(gpu)
-	slime_write_uniforms(gpu, settings, 0, {0, 0}, 0.20, 1.0)
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		slime_upload_render_params(gpu, frame_slot, settings)
+		slime_upload_camera(gpu, frame_slot)
+		slime_write_uniforms(gpu, frame_slot, settings, 0, {0, 0}, 0.20, 1.0)
+	}
 	if !slime_create_descriptors(gpu, vk_ctx) {
 		slime_gpu_destroy(gpu, vk_ctx)
 		return false
@@ -305,15 +312,15 @@ slime_upload_lut :: proc(gpu: ^Slime_Gpu_State, settings: ^Slime_Settings) {
 	_ = color_scheme_write_u32_buffer(scheme, data)
 }
 
-slime_upload_render_params :: proc(gpu: ^Slime_Gpu_State, settings: ^Slime_Settings) {
-	if gpu.render_params_buffer.mapped == nil {return}
-	params := cast(^Slime_Render_Params)gpu.render_params_buffer.mapped
+slime_upload_render_params :: proc(gpu: ^Slime_Gpu_State, frame_slot: int, settings: ^Slime_Settings) {
+	if gpu.render_params_buffers[frame_slot].mapped == nil {return}
+	params := cast(^Slime_Render_Params)gpu.render_params_buffers[frame_slot].mapped
 	params^ = {filtering_mode = settings.trail_map_filtering == .Nearest ? u32(0) : u32(1)}
 }
 
-slime_upload_camera :: proc(gpu: ^Slime_Gpu_State) {
-	if gpu.camera_buffer.mapped == nil {return}
-	camera := cast(^Slime_Camera)gpu.camera_buffer.mapped
+slime_upload_camera :: proc(gpu: ^Slime_Gpu_State, frame_slot: int) {
+	if gpu.camera_buffers[frame_slot].mapped == nil {return}
+	camera := cast(^Slime_Camera)gpu.camera_buffers[frame_slot].mapped
 	camera^ = {
 		transform_matrix = {
 			1, 0, 0, 0,
@@ -327,9 +334,9 @@ slime_upload_camera :: proc(gpu: ^Slime_Gpu_State) {
 	}
 }
 
-slime_write_uniforms :: proc(gpu: ^Slime_Gpu_State, settings: ^Slime_Settings, cursor_active: u32, cursor_pixel: [2]f32, cursor_size, cursor_strength: f32) {
-	if gpu.sim_buffer.mapped != nil {
-		sim := cast(^Slime_Sim_Uniform)gpu.sim_buffer.mapped
+slime_write_uniforms :: proc(gpu: ^Slime_Gpu_State, frame_slot: int, settings: ^Slime_Settings, cursor_active: u32, cursor_pixel: [2]f32, cursor_size, cursor_strength: f32) {
+	if gpu.sim_buffers[frame_slot].mapped != nil {
+		sim := cast(^Slime_Sim_Uniform)gpu.sim_buffers[frame_slot].mapped
 		sim^ = {
 			width = gpu.width,
 			height = gpu.height,
@@ -353,8 +360,8 @@ slime_write_uniforms :: proc(gpu: ^Slime_Gpu_State, settings: ^Slime_Settings, c
 			position_generator = settings.position_generator,
 		}
 	}
-	if gpu.cursor_buffer.mapped != nil {
-		cursor := cast(^Slime_Cursor_Params)gpu.cursor_buffer.mapped
+	if gpu.cursor_buffers[frame_slot].mapped != nil {
+		cursor := cast(^Slime_Cursor_Params)gpu.cursor_buffers[frame_slot].mapped
 		cursor^ = {
 			is_active = cursor_active,
 			x = cursor_pixel[0],
@@ -395,14 +402,19 @@ slime_create_descriptors :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Conte
 	   !slime_create_set_layout(vk_ctx, display_bindings[:], &gpu.display_set_layout) ||
 	   !slime_create_set_layout(vk_ctx, texture_bindings[:], &gpu.texture_set_layout) ||
 	   !slime_create_set_layout(vk_ctx, camera_bindings[:], &gpu.camera_set_layout) {return false}
-	pool_sizes := [5]vk.DescriptorPoolSize{{type = .STORAGE_BUFFER, descriptorCount = 8}, {type = .UNIFORM_BUFFER, descriptorCount = 5}, {type = .STORAGE_IMAGE, descriptorCount = 1}, {type = .SAMPLED_IMAGE, descriptorCount = 1}, {type = .SAMPLER, descriptorCount = 1}}
-	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 4}
+	pool_sizes := [5]vk.DescriptorPoolSize{{type = .STORAGE_BUFFER, descriptorCount = 8 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .UNIFORM_BUFFER, descriptorCount = 5 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .STORAGE_IMAGE, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}, {type = .SAMPLED_IMAGE, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}, {type = .SAMPLER, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}}
+	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 4 * engine.MAX_FRAMES_IN_FLIGHT}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {return false}
-	layouts := [4]vk.DescriptorSetLayout{gpu.sim_set_layout, gpu.display_set_layout, gpu.texture_set_layout, gpu.camera_set_layout}
-	sets: [4]vk.DescriptorSet
-	alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = 4, pSetLayouts = raw_data(layouts[:])}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {return false}
-	gpu.sim_set = sets[0]; gpu.display_set = sets[1]; gpu.texture_set = sets[2]; gpu.camera_set = sets[3]
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		layouts := [4]vk.DescriptorSetLayout{gpu.sim_set_layout, gpu.display_set_layout, gpu.texture_set_layout, gpu.camera_set_layout}
+		sets: [4]vk.DescriptorSet
+		alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = 4, pSetLayouts = raw_data(layouts[:])}
+		if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {return false}
+		gpu.sim_sets[frame_slot] = sets[0]
+		gpu.display_sets[frame_slot] = sets[1]
+		gpu.texture_sets[frame_slot] = sets[2]
+		gpu.camera_sets[frame_slot] = sets[3]
+	}
 	slime_update_descriptors(gpu, vk_ctx)
 	return true
 }
@@ -413,33 +425,43 @@ slime_create_set_layout :: proc(vk_ctx: ^engine.Vk_Context, bindings: []vk.Descr
 }
 
 slime_update_descriptors :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context) {
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		slime_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
+	}
+}
+
+slime_update_descriptors_for_slot :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
 	agent_info := vk.DescriptorBufferInfo{buffer = gpu.agent_buffer.handle, offset = 0, range = gpu.agent_buffer.size}
 	trail_info := vk.DescriptorBufferInfo{buffer = gpu.trail_buffer.handle, offset = 0, range = gpu.trail_buffer.size}
 	mask_info := vk.DescriptorBufferInfo{buffer = gpu.mask_buffer.handle, offset = 0, range = gpu.mask_buffer.size}
 	gradient_info := vk.DescriptorBufferInfo{buffer = gpu.gradient_buffer.handle, offset = 0, range = gpu.gradient_buffer.size}
-	sim_info := vk.DescriptorBufferInfo{buffer = gpu.sim_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Slime_Sim_Uniform))}
-	cursor_info := vk.DescriptorBufferInfo{buffer = gpu.cursor_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Slime_Cursor_Params))}
+	sim_info := vk.DescriptorBufferInfo{buffer = gpu.sim_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Slime_Sim_Uniform))}
+	cursor_info := vk.DescriptorBufferInfo{buffer = gpu.cursor_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Slime_Cursor_Params))}
 	lut_info := vk.DescriptorBufferInfo{buffer = gpu.lut_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT)}
 	display_storage := vk.DescriptorImageInfo{imageLayout = .GENERAL, imageView = gpu.display_image.view}
 	display_sampled := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.display_image.view}
 	sampler_info := vk.DescriptorImageInfo{sampler = gpu.sampler}
-	render_info := vk.DescriptorBufferInfo{buffer = gpu.render_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Slime_Render_Params))}
-	camera_info := vk.DescriptorBufferInfo{buffer = gpu.camera_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Slime_Camera))}
+	render_info := vk.DescriptorBufferInfo{buffer = gpu.render_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Slime_Render_Params))}
+	camera_info := vk.DescriptorBufferInfo{buffer = gpu.camera_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Slime_Camera))}
+	sim_set := gpu.sim_sets[frame_slot]
+	display_set := gpu.display_sets[frame_slot]
+	texture_set := gpu.texture_sets[frame_slot]
+	camera_set := gpu.camera_sets[frame_slot]
 	writes := [?]vk.WriteDescriptorSet{
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.sim_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &agent_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.sim_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &trail_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.sim_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.sim_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &mask_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.sim_set, dstBinding = 4, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &cursor_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.display_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &trail_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.display_set, dstBinding = 1, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &display_storage},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.display_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.display_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.display_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &gradient_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.texture_set, dstBinding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &display_sampled},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.texture_set, dstBinding = 1, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.texture_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &render_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.camera_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &agent_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &trail_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &mask_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 4, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &cursor_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = display_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &trail_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = display_set, dstBinding = 1, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &display_storage},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = display_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = display_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = display_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &gradient_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = texture_set, dstBinding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &display_sampled},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = texture_set, dstBinding = 1, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = texture_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &render_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = camera_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info},
 	}
 	vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 }
@@ -506,10 +528,11 @@ slime_compute_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer,
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 }
 
-slime_dispatch_agent_pipeline :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, pipeline: ^engine.Vk_Compute_Pipeline, workgroup_size: u32) {
+slime_dispatch_agent_pipeline :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, frame_slot: int, pipeline: ^engine.Vk_Compute_Pipeline, workgroup_size: u32) {
 	vk.CmdBindPipeline(cmd, .COMPUTE, pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, pipeline.layout, 0, 1, &gpu.sim_set, 0, nil)
+	sim_set := gpu.sim_sets[frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, pipeline.layout, 0, 1, &sim_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	total_groups := max((gpu.agent_count + workgroup_size - 1) / workgroup_size, 1)
 	max_groups_x := u32(65535)
@@ -539,14 +562,17 @@ slime_gpu_step_preview :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context
 
 slime_gpu_step_ready :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State) {
 	settings := &sim_state.slime
+	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
 	slime_upload_lut(gpu, settings)
-	slime_upload_render_params(gpu, settings)
-	slime_write_uniforms(gpu, settings, sim_state.cursor_active, sim_state.cursor_pixel, sim_state.cursor_size, sim_state.cursor_strength)
+	slime_upload_render_params(gpu, frame_slot, settings)
+	slime_write_uniforms(gpu, frame_slot, settings, sim_state.cursor_active, sim_state.cursor_pixel, sim_state.cursor_size, sim_state.cursor_strength)
 	speed_range_changed := slime_speed_range_changed(gpu, settings)
+	sim_set := gpu.sim_sets[frame_slot]
+	display_set := gpu.display_sets[frame_slot]
 	if settings.mask_pattern != .Disabled && settings.mask_pattern != .Image {
 		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.gradient_pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.gradient_pipeline.layout, 0, 1, &gpu.sim_set, 0, nil)
+		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.gradient_pipeline.layout, 0, 1, &sim_set, 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		total := gpu.width * gpu.height
 		vk.CmdDispatch(cmd, (total + 255) / 256, 1, 1)
@@ -554,23 +580,23 @@ slime_gpu_step_ready :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 		slime_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
 	}
 	if gpu.needs_reset {
-		slime_dispatch_agent_pipeline(gpu, vk_ctx, cmd, &gpu.reset_pipeline, 64)
+		slime_dispatch_agent_pipeline(gpu, vk_ctx, cmd, frame_slot, &gpu.reset_pipeline, 64)
 		slime_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
 		gpu.agent_speed_min_uploaded = settings.agent_speed_min
 		gpu.agent_speed_max_uploaded = settings.agent_speed_max
 		gpu.needs_reset = false
 	} else if speed_range_changed {
-		slime_dispatch_agent_pipeline(gpu, vk_ctx, cmd, &gpu.update_speeds_pipeline, 256)
+		slime_dispatch_agent_pipeline(gpu, vk_ctx, cmd, frame_slot, &gpu.update_speeds_pipeline, 256)
 		slime_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
 		gpu.agent_speed_min_uploaded = settings.agent_speed_min
 		gpu.agent_speed_max_uploaded = settings.agent_speed_max
 	}
 	if !sim_state.paused {
-		slime_dispatch_agent_pipeline(gpu, vk_ctx, cmd, &gpu.update_pipeline, 256)
+		slime_dispatch_agent_pipeline(gpu, vk_ctx, cmd, frame_slot, &gpu.update_pipeline, 256)
 		slime_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
 		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.decay_pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.decay_pipeline.layout, 0, 1, &gpu.sim_set, 0, nil)
+		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.decay_pipeline.layout, 0, 1, &sim_set, 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		vk.CmdDispatch(cmd, (gpu.width + 15) / 16, (gpu.height + 15) / 16, 1)
 		engine.vk_cmd_count_compute_dispatch(vk_ctx)
@@ -578,7 +604,7 @@ slime_gpu_step_ready :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 		if settings.diffusion_frequency > 0 {
 			vk.CmdBindPipeline(cmd, .COMPUTE, gpu.diffuse_pipeline.pipeline)
 			engine.vk_cmd_count_pipeline_bind(vk_ctx)
-			vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.diffuse_pipeline.layout, 0, 1, &gpu.sim_set, 0, nil)
+			vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.diffuse_pipeline.layout, 0, 1, &sim_set, 0, nil)
 			engine.vk_cmd_count_descriptor_bind(vk_ctx)
 			vk.CmdDispatch(cmd, (gpu.width + 15) / 16, (gpu.height + 15) / 16, 1)
 			engine.vk_cmd_count_compute_dispatch(vk_ctx)
@@ -588,7 +614,7 @@ slime_gpu_step_ready :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 	slime_transition_image(vk_ctx, cmd, &gpu.display_image, .GENERAL)
 	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.display_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.display_pipeline.layout, 0, 1, &gpu.display_set, 0, nil)
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.display_pipeline.layout, 0, 1, &display_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDispatch(cmd, (gpu.width + 15) / 16, (gpu.height + 15) / 16, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
@@ -604,7 +630,7 @@ slime_gpu_present :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, fra
 slime_gpu_present_viewport :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, viewport: vk.Viewport, scissor: vk.Rect2D) {
 	if !gpu.ready || gpu.present_pipeline.pipeline == vk.Pipeline(0) {return}
 	slime_transition_image(vk_ctx, frame.command_buffer, &gpu.display_image, .SHADER_READ_ONLY_OPTIMAL)
-	slime_upload_camera(gpu)
+	slime_upload_camera(gpu, int(frame.frame_index))
 	slime_gpu_draw_prepared_viewport(gpu, vk_ctx, frame, viewport, scissor)
 }
 
@@ -616,8 +642,11 @@ slime_gpu_draw_prepared_viewport :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.
 	vk.CmdSetScissor(frame.command_buffer, 0, 1, &local_scissor)
 	vk.CmdBindPipeline(frame.command_buffer, .GRAPHICS, gpu.present_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.present_pipeline.layout, 0, 1, &gpu.texture_set, 0, nil)
-	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.present_pipeline.layout, 1, 1, &gpu.camera_set, 0, nil)
+	frame_slot := int(frame.frame_index)
+	texture_set := gpu.texture_sets[frame_slot]
+	camera_set := gpu.camera_sets[frame_slot]
+	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.present_pipeline.layout, 0, 1, &texture_set, 0, nil)
+	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.present_pipeline.layout, 1, 1, &camera_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDraw(frame.command_buffer, 6, 25, 0, 0)
 	engine.vk_cmd_count_draw(vk_ctx)
@@ -663,11 +692,13 @@ slime_gpu_destroy :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context) {
 	engine.vk_destroy_buffer(vk_ctx, &gpu.trail_buffer)
 	engine.vk_destroy_buffer(vk_ctx, &gpu.mask_buffer)
 	engine.vk_destroy_buffer(vk_ctx, &gpu.gradient_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.sim_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.cursor_buffer)
 	engine.vk_destroy_buffer(vk_ctx, &gpu.lut_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.render_params_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.camera_buffer)
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		engine.vk_destroy_buffer(vk_ctx, &gpu.sim_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.cursor_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.render_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.camera_buffers[frame_slot])
+	}
 	slime_destroy_image(vk_ctx, &gpu.display_image)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.update_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.decay_shader)

@@ -38,10 +38,10 @@ Post_Processing_Gpu_State :: struct {
 	source: Post_Processing_Image,
 	source_layout: vk.ImageLayout,
 	sampler: vk.Sampler,
-	params_buffer: engine.Vk_Buffer,
+	params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	set_layout: vk.DescriptorSetLayout,
 	descriptor_pool: vk.DescriptorPool,
-	descriptor_set: vk.DescriptorSet,
+	descriptor_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 	pipeline: engine.Vk_Graphics_Pipeline,
 }
 
@@ -61,8 +61,8 @@ post_processing_gpu_destroy :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^en
 	if gpu.set_layout != vk.DescriptorSetLayout(0) {
 		vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.set_layout, nil)
 	}
-	if gpu.params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &gpu.params_buffer)
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		engine.vk_destroy_buffer(vk_ctx, &gpu.params_buffers[i])
 	}
 	if gpu.sampler != vk.Sampler(0) {
 		vk.DestroySampler(vk_ctx.device, gpu.sampler, nil)
@@ -113,9 +113,11 @@ post_processing_gpu_ensure :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^eng
 		post_processing_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Post_Blur_Params)), {.UNIFORM_BUFFER}, &gpu.params_buffer) {
-		post_processing_gpu_destroy(gpu, vk_ctx)
-		return false
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Post_Blur_Params)), {.UNIFORM_BUFFER}, &gpu.params_buffers[i]) {
+			post_processing_gpu_destroy(gpu, vk_ctx)
+			return false
+		}
 	}
 	if !post_processing_create_descriptors(gpu, vk_ctx) {
 		post_processing_gpu_destroy(gpu, vk_ctx)
@@ -203,29 +205,35 @@ post_processing_create_descriptors :: proc(gpu: ^Post_Processing_Gpu_State, vk_c
 	}
 
 	pool_sizes := [3]vk.DescriptorPoolSize {
-		{type = .SAMPLED_IMAGE, descriptorCount = 1},
-		{type = .SAMPLER, descriptorCount = 1},
-		{type = .UNIFORM_BUFFER, descriptorCount = 1},
+		{type = .SAMPLED_IMAGE, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .SAMPLER, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .UNIFORM_BUFFER, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT},
 	}
-	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, maxSets = 1, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:])}
+	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, maxSets = engine.MAX_FRAMES_IN_FLIGHT, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:])}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {
 		return false
 	}
 
-	alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = 1, pSetLayouts = &gpu.set_layout}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, &gpu.descriptor_set) != .SUCCESS {
+	layouts: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSetLayout
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		layouts[i] = gpu.set_layout
+	}
+	alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = u32(len(layouts)), pSetLayouts = raw_data(layouts[:])}
+	if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(gpu.descriptor_sets[:])) != .SUCCESS {
 		return false
 	}
 
 	image_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.source.view}
 	sampler_info := vk.DescriptorImageInfo{sampler = gpu.sampler}
-	params_info := vk.DescriptorBufferInfo{buffer = gpu.params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Post_Blur_Params))}
-	writes := [3]vk.WriteDescriptorSet {
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.descriptor_set, dstBinding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.descriptor_set, dstBinding = 1, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.descriptor_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		params_info := vk.DescriptorBufferInfo{buffer = gpu.params_buffers[i].handle, offset = 0, range = vk.DeviceSize(size_of(Post_Blur_Params))}
+		writes := [3]vk.WriteDescriptorSet {
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.descriptor_sets[i], dstBinding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.descriptor_sets[i], dstBinding = 1, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.descriptor_sets[i], dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
+		}
+		vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 	}
-	vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 	return true
 }
 
@@ -285,13 +293,18 @@ post_processing_apply_blur :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^eng
 		return false
 	}
 
-	params := cast(^Post_Blur_Params)gpu.params_buffer.mapped
-	params^ = {
-		radius = min(max(settings.blur_radius, 0), 50),
-		sigma = min(max(settings.blur_sigma, 0.1), 10),
-		width = f32(max(vk_ctx.swapchain_extent.width, 1)),
-		height = f32(max(vk_ctx.swapchain_extent.height, 1)),
+	frame_slot := frame.frame_index % engine.MAX_FRAMES_IN_FLIGHT
+	params_buffer := &gpu.params_buffers[frame_slot]
+	if params_buffer.mapped != nil {
+		params := cast(^Post_Blur_Params)params_buffer.mapped
+		params^ = {
+			radius = min(max(settings.blur_radius, 0), 50),
+			sigma = min(max(settings.blur_sigma, 0.1), 10),
+			width = f32(max(vk_ctx.swapchain_extent.width, 1)),
+			height = f32(max(vk_ctx.swapchain_extent.height, 1)),
+		}
 	}
+	descriptor_set := gpu.descriptor_sets[frame_slot]
 
 	range := vk.ImageSubresourceRange {
 		aspectMask = {.COLOR},
@@ -375,7 +388,7 @@ post_processing_apply_blur :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^eng
 	vk.CmdSetScissor(frame.command_buffer, 0, 1, &scissor)
 	vk.CmdBindPipeline(frame.command_buffer, .GRAPHICS, gpu.pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.pipeline.layout, 0, 1, &gpu.descriptor_set, 0, nil)
+	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.pipeline.layout, 0, 1, &descriptor_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDraw(frame.command_buffer, 6, 1, 0, 0)
 	engine.vk_cmd_count_draw(vk_ctx)

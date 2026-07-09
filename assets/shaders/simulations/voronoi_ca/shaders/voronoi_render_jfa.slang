@@ -7,7 +7,7 @@ float4 LoadTexture(Texture2D<float4> tex, int2 p) { return tex.Load(int3(p, 0));
 float4 LoadTexture(Texture2D<float4> tex, int2 p, uint lod) { return tex.Load(int3(p, int(lod))); }
 void StoreTexture(RWTexture2D<float4> tex, int2 p, float4 v) { tex[p] = v; }
 
-// Fullscreen Voronoi renderer using JFA texture: shades regions by sampling LUT
+// Fullscreen Voronoi renderer using JFA texture: shades regions by sampling LUT.
 // This version uses the pre-computed JFA texture instead of brute-force search
 
 struct VSOut {
@@ -15,8 +15,7 @@ struct VSOut {
   float2 uv : TEXCOORD0;
 };
 
-// Matches Rust bind group layout:
-// 0: VoronoiParams (uniform), 1: vertices (storage), 2: LUT (storage), 3: JFA texture
+// 0: VoronoiParams (uniform), 1: LUT (storage), 2: JFA texture
 
 struct VoronoiParams {
 
@@ -32,28 +31,14 @@ struct VoronoiParams {
 [[vk::binding(0, 0)]]
 ConstantBuffer<VoronoiParams> params;
 
-struct Vertex {
-
-  float2 position;
-  float state;
-  float pad0;
-  float age;
-  uint alive_neighbors;
-  uint dead_neighbors;
-  uint pad1;
-};
 [[vk::binding(1, 0)]]
-StructuredBuffer<Vertex> vertices;
-
-// LUT buffer in planar format [r0..r255, g0..r255, b0..b255]
-[[vk::binding(2, 0)]]
 StructuredBuffer<uint> lut_data;
 
 // JFA texture: RGBA32Float
 // R,G: site position (x,y)
 // B: site index (as float)
 // A: distance to site (squared)
-[[vk::binding(3, 0)]]
+[[vk::binding(2, 0)]]
 Texture2D<float4> jfa_texture;
 
 float srgb_to_linear(float srgb) {
@@ -103,9 +88,6 @@ float4 fs_main(VSOut in) : SV_Target0 {
   let closest_site_index = uint(jfa_data.b);
   let closest_distance = jfa_data.a;
   
-  // Get the closest site's data
-  let v = vertices[closest_site_index];
-
   var is_border = false;
   if (params.border_enabled >= 0.5 && params.border_width > 0.0) {
     var found_different_site = false;
@@ -159,21 +141,17 @@ float4 fs_main(VSOut in) : SV_Target0 {
     is_border = found_different_site;
   }
 
-  // Optionally apply filtering mode hint by nudging intensity sampling
   float intensity;
   if (params.color_mode < 0.5) {
     // Random color per cell based on ID
     intensity = hash_u32_to_unit_float(closest_site_index);
   } else if (params.color_mode < 1.5) {
-    // Density coloring using local alive ratio in neighborhood
-    let total = max(1, v.alive_neighbors + v.dead_neighbors);
-    intensity = clamp(float(v.alive_neighbors) / float(total), 0.0, 1.0);
-  } else if (params.color_mode < 2.5) {
-    // Age-based coloring (assumes age increases over time, scale loosely)
-    intensity = clamp(v.age * 0.25, 0.0, 1.0);
+    // Distance from each pixel to its nearest site.
+    let max_distance = max(min(params.resolution_x, params.resolution_y) * 0.20, 1.0);
+    intensity = clamp(sqrt(max(closest_distance, 0.0)) / max_distance, 0.0, 1.0);
   } else {
-    // Binary: dead=0, alive=1
-    intensity = ((v.state >= 0.5) ? (1.0) : (0.0));
+    // Repeating distance bands within each region.
+    intensity = frac(sqrt(max(closest_distance, 0.0)) * 0.045);
   }
 
   // If borders enabled, override with mid color at borders

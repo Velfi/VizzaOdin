@@ -35,12 +35,13 @@ Vectors_Gpu_State :: struct {
 	pipeline: engine.Vk_Graphics_Pipeline,
 	descriptor_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool: vk.DescriptorPool,
-	descriptor_set: vk.DescriptorSet,
-	vertex_buffer: engine.Vk_Buffer,
-	index_buffer: engine.Vk_Buffer,
-	camera_buffer: engine.Vk_Buffer,
+	descriptor_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	vertex_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	index_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	camera_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	lut_buffer: engine.Vk_Buffer,
 	index_count: u32,
+	active_frame_slot: u32,
 	image_data: []u8,
 	image_loaded: bool,
 	image_path: [MAX_FILE_PATH]u8,
@@ -64,23 +65,29 @@ vectors_gpu_ensure :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_Context) 
 		vectors_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Vectors_Vertex) * VECTORS_MAX_VERTICES), {.VERTEX_BUFFER}, &gpu.vertex_buffer) {
-		vectors_gpu_destroy(gpu, vk_ctx)
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * VECTORS_MAX_INDICES), {.INDEX_BUFFER}, &gpu.index_buffer) {
-		vectors_gpu_destroy(gpu, vk_ctx)
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Vectors_Camera_Uniform)), {.UNIFORM_BUFFER}, &gpu.camera_buffer) {
-		vectors_gpu_destroy(gpu, vk_ctx)
-		return false
+	vertex_buffer_size := vk.DeviceSize(size_of(Vectors_Vertex) * VECTORS_MAX_VERTICES)
+	index_buffer_size := vk.DeviceSize(size_of(u32) * VECTORS_MAX_INDICES)
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, vertex_buffer_size, {.VERTEX_BUFFER}, &gpu.vertex_buffers[i]) {
+			vectors_gpu_destroy(gpu, vk_ctx)
+			return false
+		}
+		if !engine.vk_create_host_buffer(vk_ctx, index_buffer_size, {.INDEX_BUFFER}, &gpu.index_buffers[i]) {
+			vectors_gpu_destroy(gpu, vk_ctx)
+			return false
+		}
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Vectors_Camera_Uniform)), {.UNIFORM_BUFFER}, &gpu.camera_buffers[i]) {
+			vectors_gpu_destroy(gpu, vk_ctx)
+			return false
+		}
 	}
 	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT), {.STORAGE_BUFFER}, &gpu.lut_buffer) {
 		vectors_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
-	vectors_upload_camera(gpu, f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		vectors_upload_camera(gpu, u32(i), f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
+	}
 	if !vectors_create_descriptor_state(gpu, vk_ctx) {
 		vectors_gpu_destroy(gpu, vk_ctx)
 		return false
@@ -102,12 +109,14 @@ vectors_upload_lut :: proc(gpu: ^Vectors_Gpu_State, settings: ^Vectors_Settings)
 	_ = color_scheme_write_u32_buffer(scheme, data)
 }
 
-vectors_upload_camera :: proc(gpu: ^Vectors_Gpu_State, width, height: f32) {
-	if gpu.camera_buffer.mapped == nil {
+vectors_upload_camera :: proc(gpu: ^Vectors_Gpu_State, frame_slot: u32, width, height: f32) {
+	slot := min(frame_slot, u32(engine.MAX_FRAMES_IN_FLIGHT - 1))
+	camera_buffer := &gpu.camera_buffers[slot]
+	if camera_buffer.mapped == nil {
 		return
 	}
 	aspect := width / max(height, 1)
-	camera := cast(^Vectors_Camera_Uniform)gpu.camera_buffer.mapped
+	camera := cast(^Vectors_Camera_Uniform)camera_buffer.mapped
 	camera^ = {
 		transform_matrix = {
 			1, 0, 0, 0,
@@ -135,34 +144,40 @@ vectors_create_descriptor_state :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine
 		return false
 	}
 	pool_sizes := [2]vk.DescriptorPoolSize {
-		{type = .UNIFORM_BUFFER, descriptorCount = 1},
-		{type = .STORAGE_BUFFER, descriptorCount = 1},
+		{type = .UNIFORM_BUFFER, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .STORAGE_BUFFER, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT},
 	}
 	pool_info := vk.DescriptorPoolCreateInfo {
 		sType = .DESCRIPTOR_POOL_CREATE_INFO,
 		poolSizeCount = u32(len(pool_sizes)),
 		pPoolSizes = raw_data(pool_sizes[:]),
-		maxSets = 1,
+		maxSets = engine.MAX_FRAMES_IN_FLIGHT,
 	}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {
 		return false
 	}
+	layouts: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSetLayout
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		layouts[i] = gpu.descriptor_set_layout
+	}
 	alloc := vk.DescriptorSetAllocateInfo {
 		sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
 		descriptorPool = gpu.descriptor_pool,
-		descriptorSetCount = 1,
-		pSetLayouts = &gpu.descriptor_set_layout,
+		descriptorSetCount = u32(len(layouts)),
+		pSetLayouts = raw_data(layouts[:]),
 	}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, &gpu.descriptor_set) != .SUCCESS {
+	if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(gpu.descriptor_sets[:])) != .SUCCESS {
 		return false
 	}
-	camera_info := vk.DescriptorBufferInfo {buffer = gpu.camera_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Vectors_Camera_Uniform))}
 	lut_info := vk.DescriptorBufferInfo {buffer = gpu.lut_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT)}
-	writes := [2]vk.WriteDescriptorSet {
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.descriptor_set, dstBinding = 0, descriptorCount = 1, descriptorType = .UNIFORM_BUFFER, pBufferInfo = &camera_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.descriptor_set, dstBinding = 1, descriptorCount = 1, descriptorType = .STORAGE_BUFFER, pBufferInfo = &lut_info},
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		camera_info := vk.DescriptorBufferInfo {buffer = gpu.camera_buffers[i].handle, offset = 0, range = vk.DeviceSize(size_of(Vectors_Camera_Uniform))}
+		writes := [2]vk.WriteDescriptorSet {
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.descriptor_sets[i], dstBinding = 0, descriptorCount = 1, descriptorType = .UNIFORM_BUFFER, pBufferInfo = &camera_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.descriptor_sets[i], dstBinding = 1, descriptorCount = 1, descriptorType = .STORAGE_BUFFER, pBufferInfo = &lut_info},
+		}
+		vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 	}
-	vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 	return true
 }
 
@@ -365,13 +380,17 @@ vectors_gpu_refresh_image_if_needed :: proc(gpu: ^Vectors_Gpu_State, settings: ^
 	_ = vectors_gpu_load_image_path(gpu, path, settings)
 }
 
-vectors_gpu_update_geometry :: proc(gpu: ^Vectors_Gpu_State, settings: ^Vectors_Settings, time: f32) {
-	if gpu.vertex_buffer.mapped == nil || gpu.index_buffer.mapped == nil {
+vectors_gpu_update_geometry :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_Context, settings: ^Vectors_Settings, time: f32) {
+	frame_slot := vectors_gpu_active_frame_slot(vk_ctx)
+	vertex_buffer := &gpu.vertex_buffers[frame_slot]
+	index_buffer := &gpu.index_buffers[frame_slot]
+	if vertex_buffer.mapped == nil || index_buffer.mapped == nil {
 		gpu.index_count = 0
 		return
 	}
-	vertices := (cast([^]Vectors_Vertex)gpu.vertex_buffer.mapped)[:VECTORS_MAX_VERTICES]
-	indices := (cast([^]u32)gpu.index_buffer.mapped)[:VECTORS_MAX_INDICES]
+	gpu.active_frame_slot = frame_slot
+	vertices := (cast([^]Vectors_Vertex)vertex_buffer.mapped)[:VECTORS_MAX_VERTICES]
+	indices := (cast([^]u32)index_buffer.mapped)[:VECTORS_MAX_INDICES]
 	vertex_count := 0
 	index_count := 0
 	spacing := max(settings.density, 0.001)
@@ -439,10 +458,12 @@ vectors_gpu_prepare_viewport :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk
 	if !vectors_gpu_ensure(gpu, vk_ctx) {
 		return false
 	}
+	frame_slot := vectors_gpu_active_frame_slot(vk_ctx)
+	gpu.active_frame_slot = frame_slot
 	vectors_upload_lut(gpu, settings)
-	vectors_upload_camera(gpu, max(width, 1), max(height, 1))
+	vectors_upload_camera(gpu, frame_slot, max(width, 1), max(height, 1))
 	vectors_gpu_refresh_image_if_needed(gpu, settings)
-	vectors_gpu_update_geometry(gpu, settings, time)
+	vectors_gpu_update_geometry(gpu, vk_ctx, settings, time)
 	return gpu.index_count > 0
 }
 
@@ -463,10 +484,17 @@ vectors_gpu_draw_prepared_viewport :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^eng
 	vk.CmdSetViewport(cmd, 0, 1, &local_viewport)
 	vk.CmdSetScissor(cmd, 0, 1, &local_scissor)
 	vk.CmdBindPipeline(cmd, .GRAPHICS, gpu.pipeline.pipeline)
-	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.pipeline.layout, 0, 1, &gpu.descriptor_set, 0, nil)
 	offset := vk.DeviceSize(0)
-	vk.CmdBindVertexBuffers(cmd, 0, 1, &gpu.vertex_buffer.handle, &offset)
-	vk.CmdBindIndexBuffer(cmd, gpu.index_buffer.handle, 0, .UINT32)
+	frame_slot := min(gpu.active_frame_slot, u32(engine.MAX_FRAMES_IN_FLIGHT - 1))
+	descriptor_set := gpu.descriptor_sets[frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.pipeline.layout, 0, 1, &descriptor_set, 0, nil)
+	vertex_buffer := &gpu.vertex_buffers[frame_slot]
+	index_buffer := &gpu.index_buffers[frame_slot]
+	if vertex_buffer.handle == vk.Buffer(0) || index_buffer.handle == vk.Buffer(0) {
+		return
+	}
+	vk.CmdBindVertexBuffers(cmd, 0, 1, &vertex_buffer.handle, &offset)
+	vk.CmdBindIndexBuffer(cmd, index_buffer.handle, 0, .UINT32)
 	vk.CmdDrawIndexed(cmd, gpu.index_count, 1, 0, 0, 0)
 }
 
@@ -493,12 +521,21 @@ vectors_gpu_destroy :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_Context)
 	if gpu.descriptor_set_layout != vk.DescriptorSetLayout(0) {
 		vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.descriptor_set_layout, nil)
 	}
-	engine.vk_destroy_buffer(vk_ctx, &gpu.vertex_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.index_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.camera_buffer)
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		engine.vk_destroy_buffer(vk_ctx, &gpu.vertex_buffers[i])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.index_buffers[i])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.camera_buffers[i])
+	}
 	engine.vk_destroy_buffer(vk_ctx, &gpu.lut_buffer)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.vertex_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.fragment_shader)
 	delete(gpu.image_data)
 	gpu^ = {}
+}
+
+vectors_gpu_active_frame_slot :: proc(vk_ctx: ^engine.Vk_Context) -> u32 {
+	if vk_ctx == nil {
+		return 0
+	}
+	return vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT
 }

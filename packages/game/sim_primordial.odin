@@ -27,6 +27,7 @@ PRIMORDIAL_ENTRY :: cstring("main")
 PRIMORDIAL_VERTEX_ENTRY :: cstring("main")
 PRIMORDIAL_FRAGMENT_ENTRY :: cstring("main")
 PRIMORDIAL_WORKGROUP_SIZE :: u32(64)
+PRIMORDIAL_RETIRED_TRACE_TARGET_CAP :: 4
 
 Primordial_Particle :: struct #align(8) {
 	position: [2]f32,
@@ -91,6 +92,11 @@ Primordial_Trace_Image :: struct {
 	layout: vk.ImageLayout,
 }
 
+Primordial_Retired_Trace_Targets :: struct {
+	images: [2]Primordial_Trace_Image,
+	pending_frame_slots: u32,
+}
+
 Primordial_Gpu_State :: struct {
 	update_shader: engine.Vk_Shader_Module,
 	density_shader: engine.Vk_Shader_Module,
@@ -113,23 +119,24 @@ Primordial_Gpu_State :: struct {
 	render_set_layout: vk.DescriptorSetLayout,
 	fade_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool: vk.DescriptorPool,
-	update_sets: [2]vk.DescriptorSet,
-	density_sets: [2]vk.DescriptorSet,
-	background_set: vk.DescriptorSet,
-	render_sets: [2]vk.DescriptorSet,
-	fade_sets: [2]vk.DescriptorSet,
-	blit_sets: [2]vk.DescriptorSet,
+	update_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
+	density_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
+	background_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	render_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
+	fade_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
+	blit_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
 	particle_buffers: [2]engine.Vk_Buffer,
-	sim_params_buffer: engine.Vk_Buffer,
-	density_params_buffer: engine.Vk_Buffer,
-	background_params_buffer: engine.Vk_Buffer,
-	render_params_buffer: engine.Vk_Buffer,
-	fade_params_buffer: engine.Vk_Buffer,
-	blit_params_buffer: engine.Vk_Buffer,
-	camera_buffer: engine.Vk_Buffer,
+	sim_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	density_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	background_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	render_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	fade_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	blit_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	camera_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	lut_buffer: engine.Vk_Buffer,
 	trace_render_pass: vk.RenderPass,
 	trace_images: [2]Primordial_Trace_Image,
+	retired_trace_targets: [PRIMORDIAL_RETIRED_TRACE_TARGET_CAP]Primordial_Retired_Trace_Targets,
 	trace_sampler: vk.Sampler,
 	trace_width: u32,
 	trace_height: u32,
@@ -200,43 +207,29 @@ primordial_gpu_ensure :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Con
 			return false
 		}
 	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Sim_Params)), {.UNIFORM_BUFFER}, &gpu.sim_params_buffer) {
-		primordial_gpu_destroy(gpu, vk_ctx)
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Density_Params)), {.UNIFORM_BUFFER}, &gpu.density_params_buffer) {
-		primordial_gpu_destroy(gpu, vk_ctx)
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Render_Params)), {.UNIFORM_BUFFER}, &gpu.render_params_buffer) {
-		primordial_gpu_destroy(gpu, vk_ctx)
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Fade_Params)), {.UNIFORM_BUFFER}, &gpu.fade_params_buffer) {
-		primordial_gpu_destroy(gpu, vk_ctx)
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Fade_Params)), {.UNIFORM_BUFFER}, &gpu.blit_params_buffer) {
-		primordial_gpu_destroy(gpu, vk_ctx)
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Background_Params)), {.UNIFORM_BUFFER}, &gpu.background_params_buffer) {
-		primordial_gpu_destroy(gpu, vk_ctx)
-		return false
-	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Camera)), {.UNIFORM_BUFFER}, &gpu.camera_buffer) {
-		primordial_gpu_destroy(gpu, vk_ctx)
-		return false
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Sim_Params)), {.UNIFORM_BUFFER}, &gpu.sim_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Density_Params)), {.UNIFORM_BUFFER}, &gpu.density_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Render_Params)), {.UNIFORM_BUFFER}, &gpu.render_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Fade_Params)), {.UNIFORM_BUFFER}, &gpu.fade_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Fade_Params)), {.UNIFORM_BUFFER}, &gpu.blit_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Background_Params)), {.UNIFORM_BUFFER}, &gpu.background_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Camera)), {.UNIFORM_BUFFER}, &gpu.camera_buffers[frame_slot]) {
+			primordial_gpu_destroy(gpu, vk_ctx)
+			return false
+		}
 	}
 	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT), {.STORAGE_BUFFER}, &gpu.lut_buffer) {
 		primordial_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
 	primordial_initialize_particles(gpu, settings)
-	primordial_upload_camera(gpu, f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
-	primordial_upload_render_params(gpu, settings)
-	primordial_upload_background_params(gpu, settings)
-	primordial_upload_blit_params(gpu)
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		primordial_upload_camera(gpu, frame_slot, f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
+		primordial_upload_render_params(gpu, frame_slot, settings)
+		primordial_upload_background_params(gpu, frame_slot, settings)
+		primordial_upload_blit_params(gpu, frame_slot)
+	}
 	if !primordial_create_trace_render_pass(gpu, vk_ctx) {
 		primordial_gpu_destroy(gpu, vk_ctx)
 		return false
@@ -358,11 +351,11 @@ primordial_upload_lut :: proc(gpu: ^Primordial_Gpu_State, settings: ^Primordial_
 	_ = color_scheme_write_u32_buffer(scheme, data)
 }
 
-primordial_upload_camera :: proc(gpu: ^Primordial_Gpu_State, width, height: f32) {
-	if gpu.camera_buffer.mapped == nil {
+primordial_upload_camera :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int, width, height: f32) {
+	if gpu.camera_buffers[frame_slot].mapped == nil {
 		return
 	}
-	camera := cast(^Primordial_Camera)gpu.camera_buffer.mapped
+	camera := cast(^Primordial_Camera)gpu.camera_buffers[frame_slot].mapped
 	camera^ = {
 		transform_matrix = {
 			1, 0, 0, 0,
@@ -376,11 +369,11 @@ primordial_upload_camera :: proc(gpu: ^Primordial_Gpu_State, width, height: f32)
 	}
 }
 
-primordial_upload_background_params :: proc(gpu: ^Primordial_Gpu_State, settings: ^Primordial_Settings) {
-	if gpu.background_params_buffer.mapped == nil {
+primordial_upload_background_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int, settings: ^Primordial_Settings) {
+	if gpu.background_params_buffers[frame_slot].mapped == nil {
 		return
 	}
-	params := cast(^Primordial_Background_Params)gpu.background_params_buffer.mapped
+	params := cast(^Primordial_Background_Params)gpu.background_params_buffers[frame_slot].mapped
 	color: [4]f32
 	#partial switch settings.background_color_mode {
 	case .Black:
@@ -398,11 +391,11 @@ primordial_upload_background_params :: proc(gpu: ^Primordial_Gpu_State, settings
 	params^ = {background_color = color}
 }
 
-primordial_upload_render_params :: proc(gpu: ^Primordial_Gpu_State, settings: ^Primordial_Settings) {
-	if gpu.render_params_buffer.mapped == nil {
+primordial_upload_render_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int, settings: ^Primordial_Settings) {
+	if gpu.render_params_buffers[frame_slot].mapped == nil {
 		return
 	}
-	params := cast(^Primordial_Render_Params)gpu.render_params_buffer.mapped
+	params := cast(^Primordial_Render_Params)gpu.render_params_buffers[frame_slot].mapped
 	params^ = {
 		particle_size = settings.particle_size,
 		screen_width = 1,
@@ -411,11 +404,11 @@ primordial_upload_render_params :: proc(gpu: ^Primordial_Gpu_State, settings: ^P
 	}
 }
 
-primordial_upload_render_params_for_extent :: proc(gpu: ^Primordial_Gpu_State, settings: ^Primordial_Settings, width, height: f32) {
-	if gpu.render_params_buffer.mapped == nil {
+primordial_upload_render_params_for_extent :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int, settings: ^Primordial_Settings, width, height: f32) {
+	if gpu.render_params_buffers[frame_slot].mapped == nil {
 		return
 	}
-	params := cast(^Primordial_Render_Params)gpu.render_params_buffer.mapped
+	params := cast(^Primordial_Render_Params)gpu.render_params_buffers[frame_slot].mapped
 	params^ = {
 		particle_size = settings.particle_size,
 		screen_width = width,
@@ -424,31 +417,31 @@ primordial_upload_render_params_for_extent :: proc(gpu: ^Primordial_Gpu_State, s
 	}
 }
 
-primordial_upload_fade_params :: proc(gpu: ^Primordial_Gpu_State, settings: ^Primordial_Settings) {
-	if gpu.fade_params_buffer.mapped == nil {
+primordial_upload_fade_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int, settings: ^Primordial_Settings) {
+	if gpu.fade_params_buffers[frame_slot].mapped == nil {
 		return
 	}
 	fade_amount: f32
 	if settings.trace_fade < 1.0 {
 		fade_amount = (1.0 - settings.trace_fade) * 0.05
 	}
-	params := cast(^Primordial_Fade_Params)gpu.fade_params_buffer.mapped
+	params := cast(^Primordial_Fade_Params)gpu.fade_params_buffers[frame_slot].mapped
 	params^ = {fade_amount = fade_amount}
 }
 
-primordial_upload_blit_params :: proc(gpu: ^Primordial_Gpu_State) {
-	if gpu.blit_params_buffer.mapped == nil {
+primordial_upload_blit_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int) {
+	if gpu.blit_params_buffers[frame_slot].mapped == nil {
 		return
 	}
-	params := cast(^Primordial_Fade_Params)gpu.blit_params_buffer.mapped
+	params := cast(^Primordial_Fade_Params)gpu.blit_params_buffers[frame_slot].mapped
 	params^ = {fade_amount = 0}
 }
 
-primordial_write_step_params :: proc(gpu: ^Primordial_Gpu_State, sim: ^Remaining_Sim_State, dt: f32, width, height: f32) {
+primordial_write_step_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int, sim: ^Remaining_Sim_State, dt: f32, width, height: f32) {
 	_ = dt
 	settings := &sim.primordial
-	if gpu.sim_params_buffer.mapped != nil {
-		params := cast(^Primordial_Sim_Params)gpu.sim_params_buffer.mapped
+	if gpu.sim_params_buffers[frame_slot].mapped != nil {
+		params := cast(^Primordial_Sim_Params)gpu.sim_params_buffers[frame_slot].mapped
 		params^ = {
 			mouse_position = sim.cursor_world,
 			mouse_velocity = sim.cursor_world_velocity,
@@ -468,8 +461,8 @@ primordial_write_step_params :: proc(gpu: ^Primordial_Gpu_State, sim: ^Remaining
 			aspect_ratio = width / max(height, 1),
 		}
 	}
-	if gpu.density_params_buffer.mapped != nil {
-		params := cast(^Primordial_Density_Params)gpu.density_params_buffer.mapped
+	if gpu.density_params_buffers[frame_slot].mapped != nil {
+		params := cast(^Primordial_Density_Params)gpu.density_params_buffers[frame_slot].mapped
 		params^ = {
 			particle_count = gpu.particle_count,
 			density_radius = settings.density_radius,
@@ -523,88 +516,108 @@ primordial_create_descriptors :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 		return false
 	}
 	pool_sizes := [4]vk.DescriptorPoolSize {
-		{type = .STORAGE_BUFFER, descriptorCount = 10},
-		{type = .UNIFORM_BUFFER, descriptorCount = 14},
-		{type = .SAMPLED_IMAGE, descriptorCount = 4},
-		{type = .SAMPLER, descriptorCount = 4},
+		{type = .STORAGE_BUFFER, descriptorCount = 10 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .UNIFORM_BUFFER, descriptorCount = 14 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .SAMPLED_IMAGE, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .SAMPLER, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
 	}
-	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 11}
+	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 11 * engine.MAX_FRAMES_IN_FLIGHT}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {
 		return false
 	}
-	layouts := [11]vk.DescriptorSetLayout{gpu.update_set_layout, gpu.update_set_layout, gpu.density_set_layout, gpu.density_set_layout, gpu.background_set_layout, gpu.render_set_layout, gpu.render_set_layout, gpu.fade_set_layout, gpu.fade_set_layout, gpu.fade_set_layout, gpu.fade_set_layout}
-	sets: [11]vk.DescriptorSet
-	alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = u32(len(layouts)), pSetLayouts = raw_data(layouts[:])}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {
-		return false
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		layouts := [11]vk.DescriptorSetLayout{gpu.update_set_layout, gpu.update_set_layout, gpu.density_set_layout, gpu.density_set_layout, gpu.background_set_layout, gpu.render_set_layout, gpu.render_set_layout, gpu.fade_set_layout, gpu.fade_set_layout, gpu.fade_set_layout, gpu.fade_set_layout}
+		sets: [11]vk.DescriptorSet
+		alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = u32(len(layouts)), pSetLayouts = raw_data(layouts[:])}
+		if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {
+			return false
+		}
+		gpu.update_sets[frame_slot][0] = sets[0]
+		gpu.update_sets[frame_slot][1] = sets[1]
+		gpu.density_sets[frame_slot][0] = sets[2]
+		gpu.density_sets[frame_slot][1] = sets[3]
+		gpu.background_sets[frame_slot] = sets[4]
+		gpu.render_sets[frame_slot][0] = sets[5]
+		gpu.render_sets[frame_slot][1] = sets[6]
+		gpu.fade_sets[frame_slot][0] = sets[7]
+		gpu.fade_sets[frame_slot][1] = sets[8]
+		gpu.blit_sets[frame_slot][0] = sets[9]
+		gpu.blit_sets[frame_slot][1] = sets[10]
 	}
-	gpu.update_sets[0] = sets[0]
-	gpu.update_sets[1] = sets[1]
-	gpu.density_sets[0] = sets[2]
-	gpu.density_sets[1] = sets[3]
-	gpu.background_set = sets[4]
-	gpu.render_sets[0] = sets[5]
-	gpu.render_sets[1] = sets[6]
-	gpu.fade_sets[0] = sets[7]
-	gpu.fade_sets[1] = sets[8]
-	gpu.blit_sets[0] = sets[9]
-	gpu.blit_sets[1] = sets[10]
 	primordial_update_descriptors(gpu, vk_ctx)
 	return true
 }
 
 primordial_update_descriptors :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context) {
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		primordial_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
+	}
+}
+
+primordial_update_descriptors_for_slot :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
 	particle_range := vk.DeviceSize(size_of(Primordial_Particle) * int(gpu.particle_count))
-	sim_info := vk.DescriptorBufferInfo{buffer = gpu.sim_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Sim_Params))}
-	density_params_info := vk.DescriptorBufferInfo{buffer = gpu.density_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Density_Params))}
-	render_params_info := vk.DescriptorBufferInfo{buffer = gpu.render_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Render_Params))}
-	background_params_info := vk.DescriptorBufferInfo{buffer = gpu.background_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Background_Params))}
-	camera_info := vk.DescriptorBufferInfo{buffer = gpu.camera_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Camera))}
+	sim_info := vk.DescriptorBufferInfo{buffer = gpu.sim_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Sim_Params))}
+	density_params_info := vk.DescriptorBufferInfo{buffer = gpu.density_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Density_Params))}
+	render_params_info := vk.DescriptorBufferInfo{buffer = gpu.render_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Render_Params))}
+	background_params_info := vk.DescriptorBufferInfo{buffer = gpu.background_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Background_Params))}
+	camera_info := vk.DescriptorBufferInfo{buffer = gpu.camera_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Camera))}
 	lut_info := vk.DescriptorBufferInfo{buffer = gpu.lut_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT)}
+	background_set := gpu.background_sets[frame_slot]
 	background_writes := [2]vk.WriteDescriptorSet {
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.background_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.background_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &background_params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &background_params_info},
 	}
 	vk.UpdateDescriptorSets(vk_ctx.device, u32(len(background_writes)), raw_data(background_writes[:]), 0, nil)
 	for write_index in 0 ..< 2 {
 		read_index := 1 - write_index
 		read_info := vk.DescriptorBufferInfo{buffer = gpu.particle_buffers[read_index].handle, offset = 0, range = particle_range}
 		write_info := vk.DescriptorBufferInfo{buffer = gpu.particle_buffers[write_index].handle, offset = 0, range = particle_range}
+		update_set := gpu.update_sets[frame_slot][write_index]
+		density_set := gpu.density_sets[frame_slot][write_index]
+		render_set := gpu.render_sets[frame_slot][write_index]
 		update_writes := [3]vk.WriteDescriptorSet {
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.update_sets[write_index], dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &read_info},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.update_sets[write_index], dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &write_info},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.update_sets[write_index], dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &read_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &write_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
 		}
 		vk.UpdateDescriptorSets(vk_ctx.device, u32(len(update_writes)), raw_data(update_writes[:]), 0, nil)
 		density_writes := [2]vk.WriteDescriptorSet {
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.density_sets[write_index], dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &write_info},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.density_sets[write_index], dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &density_params_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &write_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &density_params_info},
 		}
 		vk.UpdateDescriptorSets(vk_ctx.device, u32(len(density_writes)), raw_data(density_writes[:]), 0, nil)
 		render_writes := [3]vk.WriteDescriptorSet {
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.render_sets[write_index], dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &write_info},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.render_sets[write_index], dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &render_params_info},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.render_sets[write_index], dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = render_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &write_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = render_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &render_params_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = render_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
 		}
 		vk.UpdateDescriptorSets(vk_ctx.device, u32(len(render_writes)), raw_data(render_writes[:]), 0, nil)
 	}
 }
 
 primordial_update_trace_descriptors :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context) {
-	fade_info := vk.DescriptorBufferInfo{buffer = gpu.fade_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Fade_Params))}
-	blit_info := vk.DescriptorBufferInfo{buffer = gpu.blit_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Fade_Params))}
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		primordial_update_trace_descriptors_for_slot(gpu, vk_ctx, frame_slot)
+	}
+}
+
+primordial_update_trace_descriptors_for_slot :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
+	fade_info := vk.DescriptorBufferInfo{buffer = gpu.fade_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Fade_Params))}
+	blit_info := vk.DescriptorBufferInfo{buffer = gpu.blit_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Fade_Params))}
 	sampler_info := vk.DescriptorImageInfo{sampler = gpu.trace_sampler}
 	for i in 0 ..< len(gpu.trace_images) {
 		image_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.trace_images[i].view}
+		fade_set := gpu.fade_sets[frame_slot][i]
+		blit_set := gpu.blit_sets[frame_slot][i]
 		fade_writes := [3]vk.WriteDescriptorSet {
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.fade_sets[i], dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &fade_info},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.fade_sets[i], dstBinding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.fade_sets[i], dstBinding = 2, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = fade_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &fade_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = fade_set, dstBinding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = fade_set, dstBinding = 2, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
 		}
 		blit_writes := [3]vk.WriteDescriptorSet {
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.blit_sets[i], dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &blit_info},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.blit_sets[i], dstBinding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.blit_sets[i], dstBinding = 2, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = blit_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &blit_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = blit_set, dstBinding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = blit_set, dstBinding = 2, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
 		}
 		vk.UpdateDescriptorSets(vk_ctx.device, u32(len(fade_writes)), raw_data(fade_writes[:]), 0, nil)
 		vk.UpdateDescriptorSets(vk_ctx.device, u32(len(blit_writes)), raw_data(blit_writes[:]), 0, nil)
@@ -790,19 +803,68 @@ primordial_create_trace_image :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 	return true
 }
 
+primordial_destroy_trace_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Primordial_Trace_Image) {
+	if image.framebuffer != vk.Framebuffer(0) {vk.DestroyFramebuffer(vk_ctx.device, image.framebuffer, nil)}
+	if image.view != vk.ImageView(0) {vk.DestroyImageView(vk_ctx.device, image.view, nil)}
+	if image.handle != vk.Image(0) {vk.DestroyImage(vk_ctx.device, image.handle, nil)}
+	if image.memory != vk.DeviceMemory(0) {vk.FreeMemory(vk_ctx.device, image.memory, nil)}
+	image^ = {}
+}
+
 primordial_destroy_trace_targets :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context) {
 	for i in 0 ..< len(gpu.trace_images) {
-		image := &gpu.trace_images[i]
-		if image.framebuffer != vk.Framebuffer(0) {vk.DestroyFramebuffer(vk_ctx.device, image.framebuffer, nil)}
-		if image.view != vk.ImageView(0) {vk.DestroyImageView(vk_ctx.device, image.view, nil)}
-		if image.handle != vk.Image(0) {vk.DestroyImage(vk_ctx.device, image.handle, nil)}
-		if image.memory != vk.DeviceMemory(0) {vk.FreeMemory(vk_ctx.device, image.memory, nil)}
-		image^ = {}
+		primordial_destroy_trace_image(vk_ctx, &gpu.trace_images[i])
 	}
 	gpu.trace_width = 0
 	gpu.trace_height = 0
 	gpu.trace_initialized = false
 	gpu.trace_write_index = 0
+}
+
+primordial_frame_slot_mask :: proc() -> u32 {
+	return (u32(1) << u32(engine.MAX_FRAMES_IN_FLIGHT)) - 1
+}
+
+primordial_collect_retired_trace_targets :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
+	bit := u32(1) << u32(frame_slot)
+	for i in 0 ..< PRIMORDIAL_RETIRED_TRACE_TARGET_CAP {
+		retired := &gpu.retired_trace_targets[i]
+		if retired.pending_frame_slots == 0 {
+			continue
+		}
+		retired.pending_frame_slots = retired.pending_frame_slots & (~bit)
+		if retired.pending_frame_slots == 0 {
+			for image_index in 0 ..< len(retired.images) {
+				primordial_destroy_trace_image(vk_ctx, &retired.images[image_index])
+			}
+		}
+	}
+}
+
+primordial_retire_trace_targets :: proc(gpu: ^Primordial_Gpu_State) -> bool {
+	if gpu.trace_images[0].handle == vk.Image(0) && gpu.trace_images[1].handle == vk.Image(0) {
+		gpu.trace_images = {}
+		gpu.trace_width = 0
+		gpu.trace_height = 0
+		gpu.trace_initialized = false
+		gpu.trace_write_index = 0
+		return true
+	}
+	for i in 0 ..< PRIMORDIAL_RETIRED_TRACE_TARGET_CAP {
+		retired := &gpu.retired_trace_targets[i]
+		if retired.pending_frame_slots == 0 {
+			retired.images = gpu.trace_images
+			retired.pending_frame_slots = primordial_frame_slot_mask()
+			gpu.trace_images = {}
+			gpu.trace_width = 0
+			gpu.trace_height = 0
+			gpu.trace_initialized = false
+			gpu.trace_write_index = 0
+			return true
+		}
+	}
+	engine.log_warn("primordial: trace target retire slots exhausted")
+	return false
 }
 
 primordial_ensure_trace_targets :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
@@ -811,7 +873,9 @@ primordial_ensure_trace_targets :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^eng
 	if gpu.trace_width == width && gpu.trace_height == height && gpu.trace_images[0].handle != vk.Image(0) && gpu.trace_images[1].handle != vk.Image(0) {
 		return true
 	}
-	primordial_destroy_trace_targets(gpu, vk_ctx)
+	if !primordial_retire_trace_targets(gpu) {
+		return false
+	}
 	for i in 0 ..< len(gpu.trace_images) {
 		if !primordial_create_trace_image(gpu, vk_ctx, i, width, height) {
 			primordial_destroy_trace_targets(gpu, vk_ctx)
@@ -820,7 +884,9 @@ primordial_ensure_trace_targets :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^eng
 	}
 	gpu.trace_width = width
 	gpu.trace_height = height
-	primordial_update_trace_descriptors(gpu, vk_ctx)
+	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
+	primordial_update_trace_descriptors_for_slot(gpu, vk_ctx, frame_slot)
+	primordial_collect_retired_trace_targets(gpu, vk_ctx, frame_slot)
 	return true
 }
 
@@ -868,12 +934,15 @@ primordial_gpu_step :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Conte
 	if !primordial_gpu_ensure(gpu, vk_ctx, &sim.primordial) || sim.paused {
 		return
 	}
+	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
 	read_index := int(gpu.state_index)
 	write_index := 1 - read_index
-	primordial_write_step_params(gpu, sim, dt, f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
+	primordial_write_step_params(gpu, frame_slot, sim, dt, f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
+	primordial_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
 	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.update_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.update_pipeline.layout, 0, 1, &gpu.update_sets[write_index], 0, nil)
+	update_set := gpu.update_sets[frame_slot][write_index]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.update_pipeline.layout, 0, 1, &update_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	groups := (gpu.particle_count + PRIMORDIAL_WORKGROUP_SIZE - 1) / PRIMORDIAL_WORKGROUP_SIZE
 	vk.CmdDispatch(cmd, max(groups, 1), 1, 1)
@@ -883,7 +952,8 @@ primordial_gpu_step :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Conte
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.density_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.density_pipeline.layout, 0, 1, &gpu.density_sets[write_index], 0, nil)
+	density_set := gpu.density_sets[frame_slot][write_index]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.density_pipeline.layout, 0, 1, &density_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDispatch(cmd, max(groups, 1), 1, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
@@ -893,21 +963,22 @@ primordial_gpu_step :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Conte
 	gpu.state_index = u32(write_index)
 }
 
-primordial_draw_background :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer) {
+primordial_draw_background :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, frame_slot: int) {
 	if gpu.background_pipeline.pipeline != vk.Pipeline(0) {
 		vk.CmdBindPipeline(cmd, .GRAPHICS, gpu.background_pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.background_pipeline.layout, 0, 1, &gpu.background_set, 0, nil)
+		background_set := gpu.background_sets[frame_slot]
+		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.background_pipeline.layout, 0, 1, &background_set, 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		vk.CmdDraw(cmd, 6, 1, 0, 0)
 		engine.vk_cmd_count_draw(vk_ctx)
 	}
 }
 
-primordial_draw_particles :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, pipeline: ^engine.Vk_Graphics_Pipeline) {
+primordial_draw_particles :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, frame_slot: int, pipeline: ^engine.Vk_Graphics_Pipeline) {
 	vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	set := gpu.render_sets[gpu.state_index]
+	set := gpu.render_sets[frame_slot][gpu.state_index]
 	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout, 0, 1, &set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDraw(cmd, 6, gpu.particle_count, 0, 0)
@@ -934,9 +1005,10 @@ primordial_gpu_present_direct :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 	settings := &sim.primordial
 	engine.vk_cmd_begin_swapchain_render_pass(vk_ctx, frame, primordial_clear_color())
 	cmd := frame.command_buffer
+	frame_slot := int(frame.frame_index)
 	primordial_set_viewport(cmd, vk_ctx.swapchain_extent.width, vk_ctx.swapchain_extent.height)
-	primordial_draw_background(gpu, vk_ctx, cmd)
-	primordial_draw_particles(gpu, vk_ctx, cmd, &gpu.render_pipeline)
+	primordial_draw_background(gpu, vk_ctx, cmd, frame_slot)
+	primordial_draw_particles(gpu, vk_ctx, cmd, frame_slot, &gpu.render_pipeline)
 	primordial_draw_ui_overlay(vk_ctx, frame, ui)
 	engine.vk_cmd_end_swapchain_render_pass(frame)
 	_ = settings
@@ -949,12 +1021,15 @@ primordial_gpu_present_traces :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 		return
 	}
 	cmd := frame.command_buffer
+	frame_slot := int(frame.frame_index)
+	primordial_update_trace_descriptors_for_slot(gpu, vk_ctx, frame_slot)
+	primordial_collect_retired_trace_targets(gpu, vk_ctx, frame_slot)
 	write_index := int(gpu.trace_write_index & 1)
 	read_index := 1 - write_index
 	primordial_transition_trace_image(gpu, vk_ctx, cmd, write_index, .COLOR_ATTACHMENT_OPTIMAL)
 	if gpu.trace_initialized {
 		primordial_transition_trace_image(gpu, vk_ctx, cmd, read_index, .SHADER_READ_ONLY_OPTIMAL)
-		primordial_upload_fade_params(gpu, settings)
+		primordial_upload_fade_params(gpu, frame_slot, settings)
 	}
 	clear := primordial_clear_color()
 	clear_value := vk.ClearValue{color = {float32 = {clear.r, clear.g, clear.b, clear.a}}}
@@ -965,12 +1040,13 @@ primordial_gpu_present_traces :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 	if gpu.trace_initialized {
 		vk.CmdBindPipeline(cmd, .GRAPHICS, gpu.fade_pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.fade_pipeline.layout, 0, 1, &gpu.fade_sets[read_index], 0, nil)
+		fade_set := gpu.fade_sets[frame_slot][read_index]
+		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.fade_pipeline.layout, 0, 1, &fade_set, 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		vk.CmdDraw(cmd, 3, 1, 0, 0)
 		engine.vk_cmd_count_draw(vk_ctx)
 	}
-	primordial_draw_particles(gpu, vk_ctx, cmd, &gpu.trace_particle_pipeline)
+	primordial_draw_particles(gpu, vk_ctx, cmd, frame_slot, &gpu.trace_particle_pipeline)
 	vk.CmdEndRenderPass(cmd)
 	gpu.trace_images[write_index].layout = .COLOR_ATTACHMENT_OPTIMAL
 	gpu.trace_initialized = true
@@ -980,7 +1056,8 @@ primordial_gpu_present_traces :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 	primordial_set_viewport(cmd, vk_ctx.swapchain_extent.width, vk_ctx.swapchain_extent.height)
 	vk.CmdBindPipeline(cmd, .GRAPHICS, gpu.blit_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.blit_pipeline.layout, 0, 1, &gpu.blit_sets[write_index], 0, nil)
+	blit_set := gpu.blit_sets[frame_slot][write_index]
+	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.blit_pipeline.layout, 0, 1, &blit_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDraw(cmd, 3, 1, 0, 0)
 	engine.vk_cmd_count_draw(vk_ctx)
@@ -999,9 +1076,17 @@ primordial_gpu_present :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Co
 		return
 	}
 	settings := &sim.primordial
+	frame_slot := int(frame.frame_index)
+	if gpu.trace_images[0].handle != vk.Image(0) && gpu.trace_images[1].handle != vk.Image(0) {
+		primordial_update_trace_descriptors_for_slot(gpu, vk_ctx, frame_slot)
+		primordial_collect_retired_trace_targets(gpu, vk_ctx, frame_slot)
+	}
 	primordial_upload_lut(gpu, settings)
-	primordial_upload_render_params_for_extent(gpu, settings, f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
-	primordial_upload_background_params(gpu, settings)
+	primordial_upload_camera(gpu, frame_slot, f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
+	primordial_upload_render_params_for_extent(gpu, frame_slot, settings, f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
+	primordial_upload_background_params(gpu, frame_slot, settings)
+	primordial_upload_blit_params(gpu, frame_slot)
+	primordial_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
 	if settings.traces_enabled {
 		primordial_gpu_present_traces(gpu, vk_ctx, frame, sim, ui)
 		return
@@ -1014,9 +1099,12 @@ primordial_gpu_present_viewport :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^eng
 		return
 	}
 	settings := &sim.primordial
+	frame_slot := int(frame.frame_index)
 	primordial_upload_lut(gpu, settings)
-	primordial_upload_render_params_for_extent(gpu, settings, viewport.width, viewport.height)
-	primordial_upload_background_params(gpu, settings)
+	primordial_upload_camera(gpu, frame_slot, viewport.width, viewport.height)
+	primordial_upload_render_params_for_extent(gpu, frame_slot, settings, viewport.width, viewport.height)
+	primordial_upload_background_params(gpu, frame_slot, settings)
+	primordial_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
 	primordial_gpu_draw_prepared_viewport(gpu, vk_ctx, frame, viewport, scissor)
 }
 
@@ -1027,10 +1115,11 @@ primordial_gpu_draw_prepared_viewport :: proc(gpu: ^Primordial_Gpu_State, vk_ctx
 	cmd := frame.command_buffer
 	local_viewport := viewport
 	local_scissor := scissor
+	frame_slot := int(frame.frame_index)
 	vk.CmdSetViewport(cmd, 0, 1, &local_viewport)
 	vk.CmdSetScissor(cmd, 0, 1, &local_scissor)
-	primordial_draw_background(gpu, vk_ctx, cmd)
-	primordial_draw_particles(gpu, vk_ctx, cmd, &gpu.render_pipeline)
+	primordial_draw_background(gpu, vk_ctx, cmd, frame_slot)
+	primordial_draw_particles(gpu, vk_ctx, cmd, frame_slot, &gpu.render_pipeline)
 }
 
 primordial_clear_color :: proc() -> uifw.Color {
@@ -1060,6 +1149,11 @@ primordial_gpu_destroy :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Co
 	engine.vk_destroy_graphics_pipeline(vk_ctx, &gpu.fade_pipeline)
 	engine.vk_destroy_graphics_pipeline(vk_ctx, &gpu.blit_pipeline)
 	primordial_destroy_trace_targets(gpu, vk_ctx)
+	for i in 0 ..< PRIMORDIAL_RETIRED_TRACE_TARGET_CAP {
+		for image_index in 0 ..< len(gpu.retired_trace_targets[i].images) {
+			primordial_destroy_trace_image(vk_ctx, &gpu.retired_trace_targets[i].images[image_index])
+		}
+	}
 	if gpu.trace_sampler != vk.Sampler(0) {
 		vk.DestroySampler(vk_ctx.device, gpu.trace_sampler, nil)
 	}
@@ -1087,13 +1181,15 @@ primordial_gpu_destroy :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Co
 	for i in 0 ..< 2 {
 		engine.vk_destroy_buffer(vk_ctx, &gpu.particle_buffers[i])
 	}
-	engine.vk_destroy_buffer(vk_ctx, &gpu.sim_params_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.density_params_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.background_params_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.render_params_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.fade_params_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.blit_params_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.camera_buffer)
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		engine.vk_destroy_buffer(vk_ctx, &gpu.sim_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.density_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.background_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.render_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.fade_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.blit_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.camera_buffers[frame_slot])
+	}
 	engine.vk_destroy_buffer(vk_ctx, &gpu.lut_buffer)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.update_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.density_shader)

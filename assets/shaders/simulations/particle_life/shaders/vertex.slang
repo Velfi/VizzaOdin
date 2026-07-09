@@ -56,6 +56,15 @@ struct ViewportParams {
     float _pad2;
 };
 
+struct ViewportPush {
+
+    float4 world_bounds;
+    uint enabled;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
 struct VertexOutput {
 
     float4 position : SV_Position;
@@ -74,6 +83,8 @@ ConstantBuffer<SimParams> sim_params;
 ConstantBuffer<CameraUniform> camera;
 [[vk::binding(1, 2)]]
 ConstantBuffer<ViewportParams> viewport_params;
+[[vk::push_constant]]
+ConstantBuffer<ViewportPush> viewport_push;
 
 // Instanced quad vertex shader for sizable particles
 [shader("vertex")]
@@ -108,10 +119,11 @@ VertexOutput main(
     let world_particle_pos = particle.position;
     
     // Get the world bounds that this texture represents
-    let world_left = viewport_params.world_bounds.x;
-    let world_bottom = viewport_params.world_bounds.y;
-    let world_right = viewport_params.world_bounds.z;
-    let world_top = viewport_params.world_bounds.w;
+    let world_bounds = viewport_push.enabled != 0 ? viewport_push.world_bounds : viewport_params.world_bounds;
+    let world_left = world_bounds.x;
+    let world_bottom = world_bounds.y;
+    let world_right = world_bounds.z;
+    let world_top = world_bounds.w;
     
     // Map world position to texture NDC space [-1, 1]
     let texture_ndc_x = (world_particle_pos.x - world_left) / (world_right - world_left) * 2.0 - 1.0;

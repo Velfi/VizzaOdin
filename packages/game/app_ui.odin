@@ -107,7 +107,7 @@ APP_SIMULATION_NAMES := [?]string {
 	"Flow Field",
 	"Pellets",
 	"Gradient Editor",
-	"Voronoi CA",
+	"Voronoi",
 	"Moire",
 	"Vectors",
 	"Primordial",
@@ -120,7 +120,7 @@ APP_SIMULATION_DESCRIPTIONS := [?]string {
 	"Vector-field trails",
 	"2D particle physics",
 	"Color gradient tool",
-	"Cellular automata",
+	"Nearest-site regions",
 	"Interference patterns",
 	"Vector field view",
 	"Emergent particle motion",
@@ -133,7 +133,7 @@ APP_SIMULATION_LONG_DESCRIPTIONS := [?]string {
 	"Particles trace a changing vector field, revealing flow direction through layered motion trails.",
 	"Lightweight 2D particle physics with density, collisions, and image-like emergent texture.",
 	"Build and inspect color ramps used by the simulations and their post-processing passes.",
-	"A cellular automata playground driven by nearest-neighbor regions and local state transitions.",
+	"Drifting Voronoi sites split the canvas into nearest-region fields with color-map controls.",
 	"Interference patterns from layered wave fields, offsets, and procedural image sampling.",
 	"Vector-field inspection for direction, magnitude, and dense line rendering.",
 	"Particle motion organized by local density, soft attraction, and primordial clustering.",
@@ -146,7 +146,7 @@ APP_SIMULATION_CATEGORIES := [?]string {
 	"field",
 	"physics",
 	"tool",
-	"cellular",
+	"geometry",
 	"wave",
 	"field",
 	"particles",
@@ -159,7 +159,7 @@ APP_SIMULATION_TAGS := [?][3]string {
 	{"field", "trails", "vectors"},
 	{"particles", "physics", "density"},
 	{"tool", "color", "gradient"},
-	{"cellular", "voronoi", "state"},
+	{"voronoi", "regions", "motion"},
 	{"wave", "moire", "image"},
 	{"field", "vectors", "analysis"},
 	{"particles", "density", "motion"},
@@ -1146,96 +1146,81 @@ app_ui_draw_options :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx: ^
 	panel_h := min(max(window_h * 0.86, gui.style.row_height * 12), max(window_h - gui.style.margin * 2, 1))
 	panel := centered_panel_styled(panel_w, panel_h, i32(vk_ctx.swapchain_extent.width), i32(vk_ctx.swapchain_extent.height), &gui.style)
 	uifw.gui_panel_begin(gui, panel)
-	viewport := uifw.gui_next_rect(gui, height = max(panel.h - gui.style.panel_padding * 2, 0))
-	content_height := app_ui_options_content_height(gui, ui.settings_dirty)
-	uifw.gui_scroll_begin(gui, viewport, content_height, &ui.options_scroll)
-	uifw.gui_heading(gui, "App Settings")
-
+	inner_h := max(panel.h - gui.style.panel_padding * 2, 0)
+	footer_h := app_ui_options_footer_height(gui, panel_w - gui.style.panel_padding * 2)
+	viewport := uifw.gui_next_rect(gui, height = max(inner_h - footer_h - gui.style.spacing, gui.style.row_height))
+	content_height := app_ui_options_content_height(gui)
 	uifw.gui_push_id(gui, "settings")
-	if uifw.gui_button(gui, "Back to Menu", "back") {
-		app_ui_navigate(ui, .Main_Menu)
-	}
+	uifw.gui_scroll_begin(gui, viewport, content_height, &ui.options_scroll)
+	uifw.gui_heading(gui, "Options")
 
 	uifw.gui_spacer(gui, gui.style.spacing_2)
-	uifw.gui_heading(gui, "Display Settings")
+	uifw.gui_heading(gui, "Display")
 	uifw.gui_push_id(gui, "display")
-	if uifw.gui_toggle(gui, fmt.tprintf("FPS Limiter: %v", ui.settings.default_fps_limit_enabled), "fps_limiter", &ui.settings.default_fps_limit_enabled) {
-		ui.settings_dirty = true
-		app_ui_publish_settings_changed(ui, worker)
+	if uifw.gui_toggle(gui, "FPS Limiter", "fps_limiter", &ui.settings.default_fps_limit_enabled) {
+		app_ui_mark_settings_changed(ui, worker)
 	}
 	fps_limit := f32(ui.settings.default_fps_limit)
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("FPS Limit: %d", ui.settings.default_fps_limit), "fps_limit", &fps_limit, 1, 1, 1200) {
+	if uifw.gui_number_drag_f32(gui, fmt.tprintf("FPS Limit: %d", ui.settings.default_fps_limit), "fps_limit", &fps_limit, 1, 1, 1200, ui.settings.default_fps_limit_enabled) {
 		ui.settings.default_fps_limit = i32(fps_limit)
-		ui.settings_dirty = true
-		app_ui_publish_settings_changed(ui, worker)
+		app_ui_mark_settings_changed(ui, worker)
 	}
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("UI Scale: %.1f", ui.settings.ui_scale), "ui_scale", &ui.settings.ui_scale, 0.1, 0.5, 3.0) {
-		ui.settings_dirty = true
+		app_ui_mark_settings_changed(ui, worker)
 	}
 	if uifw.gui_selector(gui, fmt.tprintf("Texture Filtering: %s", TEXTURE_FILTERING_OPTIONS[ui.texture_filtering_index]), "texture_filtering", &ui.texture_filtering_index, TEXTURE_FILTERING_OPTIONS[:]) {
 		ui.settings.texture_filtering = TEXTURE_FILTERING_OPTIONS[ui.texture_filtering_index]
-		ui.settings_dirty = true
+		app_ui_mark_settings_changed(ui, worker)
 	}
 	uifw.gui_pop_id(gui)
 
 	uifw.gui_spacer(gui, gui.style.spacing_2)
-	uifw.gui_heading(gui, "Window Settings")
+	uifw.gui_heading(gui, "Window Defaults")
 	uifw.gui_push_id(gui, "window")
 	width := f32(ui.settings.window_width)
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Default Width: %d", ui.settings.window_width), "width", &width, 50, 800, 3840) {
 		ui.settings.window_width = i32(width)
-		ui.settings_dirty = true
+		app_ui_mark_settings_changed(ui, worker)
 	}
 	height := f32(ui.settings.window_height)
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Default Height: %d", ui.settings.window_height), "height", &height, 50, 600, 2160) {
 		ui.settings.window_height = i32(height)
-		ui.settings_dirty = true
+		app_ui_mark_settings_changed(ui, worker)
 	}
-	if uifw.gui_toggle(gui, fmt.tprintf("Start Maximized: %v", ui.settings.window_maximized), "maximized", &ui.settings.window_maximized) {
-		ui.settings_dirty = true
+	if uifw.gui_toggle(gui, "Start Maximized", "maximized", &ui.settings.window_maximized) {
+		app_ui_mark_settings_changed(ui, worker)
 	}
 	uifw.gui_pop_id(gui)
 
 	uifw.gui_spacer(gui, gui.style.spacing_2)
-	uifw.gui_heading(gui, "UI Behavior")
+	uifw.gui_heading(gui, "Interface")
 	uifw.gui_push_id(gui, "ui_behavior")
-	if uifw.gui_toggle(gui, fmt.tprintf("Auto-hide UI: %v", ui.settings.auto_hide_ui), "auto_hide", &ui.settings.auto_hide_ui) {
-		ui.settings_dirty = true
+	if uifw.gui_toggle(gui, "Auto-hide UI", "auto_hide", &ui.settings.auto_hide_ui) {
+		app_ui_mark_settings_changed(ui, worker)
 	}
 	delay := f32(ui.settings.auto_hide_delay)
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Auto-hide Delay: %d ms", ui.settings.auto_hide_delay), "auto_hide_delay", &delay, 500, 1000, 10000) {
+	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Auto-hide Delay: %d ms", ui.settings.auto_hide_delay), "auto_hide_delay", &delay, 500, 1000, 10000, ui.settings.auto_hide_ui) {
 		ui.settings.auto_hide_delay = i32(delay)
-		ui.settings_dirty = true
+		app_ui_mark_settings_changed(ui, worker)
 	}
 	if uifw.gui_selector(gui, fmt.tprintf("Menu Position: %s", MENU_POSITION_OPTIONS[ui.menu_position_index]), "menu_position", &ui.menu_position_index, MENU_POSITION_OPTIONS[:]) {
 		ui.settings.menu_position = MENU_POSITION_OPTIONS[ui.menu_position_index]
-		ui.settings_dirty = true
+		app_ui_mark_settings_changed(ui, worker)
 	}
 	uifw.gui_pop_id(gui)
 
 	uifw.gui_spacer(gui, gui.style.spacing_2)
-	uifw.gui_heading(gui, "Camera Settings")
+	uifw.gui_heading(gui, "Camera")
 	uifw.gui_push_id(gui, "camera")
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Camera Sensitivity: %.1f", ui.settings.default_camera_sensitivity), "sensitivity", &ui.settings.default_camera_sensitivity, 0.1, 0.1, 5.0) {
-		ui.settings_dirty = true
+		app_ui_mark_settings_changed(ui, worker)
 	}
 	uifw.gui_pop_id(gui)
 
-	uifw.gui_spacer(gui, gui.style.spacing_2)
-	if uifw.gui_button(gui, "Save", "save") {
-		app_ui_save_settings(ui, worker)
-	}
-	if uifw.gui_button(gui, "Reset to Defaults", "reset_defaults") {
-		ui.settings = settings_default()
-		ui.menu_position_index = option_index(ui.settings.menu_position, MENU_POSITION_OPTIONS[:], 1)
-		ui.texture_filtering_index = option_index(ui.settings.texture_filtering, TEXTURE_FILTERING_OPTIONS[:], 0)
-		app_ui_save_settings(ui, worker)
-	}
-	if ui.settings_dirty {
-		uifw.gui_label(gui, "Unsaved changes")
-	}
-	uifw.gui_pop_id(gui)
 	uifw.gui_scroll_end(gui)
+	footer := uifw.gui_next_rect(gui, height = footer_h)
+	app_ui_draw_options_footer(ui, gui, footer, worker)
+	uifw.gui_pop_id(gui)
 	uifw.gui_panel_end(gui)
 }
 
@@ -1708,6 +1693,18 @@ app_ui_save_settings :: proc(ui: ^App_Ui_State, worker: ^Render_Worker_State) {
 	}
 }
 
+app_ui_mark_settings_changed :: proc(ui: ^App_Ui_State, worker: ^Render_Worker_State) {
+	ui.settings_dirty = true
+	app_ui_publish_settings_changed(ui, worker)
+}
+
+app_ui_reset_settings_to_defaults :: proc(ui: ^App_Ui_State, worker: ^Render_Worker_State) {
+	ui.settings = settings_default()
+	ui.menu_position_index = option_index(ui.settings.menu_position, MENU_POSITION_OPTIONS[:], 1)
+	ui.texture_filtering_index = option_index(ui.settings.texture_filtering, TEXTURE_FILTERING_OPTIONS[:], 0)
+	app_ui_mark_settings_changed(ui, worker)
+}
+
 app_ui_publish_settings_changed :: proc(ui: ^App_Ui_State, worker: ^Render_Worker_State) {
 	msg: Render_To_Ui_Message
 	msg.kind = .App_Settings_Changed
@@ -2041,21 +2038,94 @@ app_ui_preview_swatch :: proc(gui: ^uifw.Gui_Context, label: string, color: uifw
 	uifw.gui_text(gui, {row.x + size + 12, row.y + 6}, label, gui.style.text)
 }
 
-app_ui_options_content_height :: proc(gui: ^uifw.Gui_Context, settings_dirty: bool) -> f32 {
-	item_count := 5 + 14 + 5
-	if settings_dirty {
-		item_count += 1
+app_ui_options_content_height :: proc(gui: ^uifw.Gui_Context) -> f32 {
+	height := f32(0)
+	item_count := 0
+
+	app_ui_options_measure_row(&height, &item_count, gui.style.heading_line_height)
+	app_ui_options_measure_row(&height, &item_count, gui.style.spacing_2)
+	app_ui_options_measure_section(&height, &item_count, gui, 4)
+	app_ui_options_measure_row(&height, &item_count, gui.style.spacing_2)
+	app_ui_options_measure_section(&height, &item_count, gui, 3)
+	app_ui_options_measure_row(&height, &item_count, gui.style.spacing_2)
+	app_ui_options_measure_section(&height, &item_count, gui, 3)
+	app_ui_options_measure_row(&height, &item_count, gui.style.spacing_2)
+	app_ui_options_measure_section(&height, &item_count, gui, 1)
+
+	return height + f32(max(item_count - 1, 0)) * gui.style.spacing
+}
+
+app_ui_options_measure_section :: proc(height: ^f32, item_count: ^int, gui: ^uifw.Gui_Context, control_count: int) {
+	app_ui_options_measure_row(height, item_count, gui.style.heading_line_height)
+	for _ in 0 ..< control_count {
+		app_ui_options_measure_row(height, item_count, gui.style.row_height)
 	}
-	heading_count := 5
-	control_count := 14
-	label_count := settings_dirty ? 1 : 0
-	spacer_height := f32(5) * gui.style.spacing_2
-	slider_extra := max(uifw.gui_slider_height(gui) - gui.style.row_height, 0) * 3
-	return f32(heading_count) * gui.style.heading_line_height +
-	       f32(control_count + label_count) * gui.style.row_height +
-	       spacer_height +
-	       f32(item_count) * gui.style.spacing +
-	       slider_extra
+}
+
+app_ui_options_measure_row :: proc(height: ^f32, item_count: ^int, row_height: f32) {
+	height^ += row_height
+	item_count^ += 1
+}
+
+app_ui_options_footer_height :: proc(gui: ^uifw.Gui_Context, width: f32) -> f32 {
+	action_rows := app_ui_options_footer_action_rows(gui, width)
+	return gui.style.spacing_1 +
+	       gui.style.body_line_height +
+	       gui.style.spacing +
+	       f32(action_rows) * gui.style.row_height +
+	       f32(max(action_rows - 1, 0)) * gui.style.spacing
+}
+
+app_ui_options_footer_action_rows :: proc(gui: ^uifw.Gui_Context, width: f32) -> int {
+	labels := [?]string{"Back to Menu", "Reset to Defaults", "Save"}
+	row_count := 1
+	row_w := f32(0)
+	available := max(width, gui.style.row_height)
+	for label in labels {
+		w := min(uifw.gui_button_content_width(gui, label), available)
+		if row_w > 0 && row_w + gui.style.spacing + w > available {
+			row_count += 1
+			row_w = w
+		} else if row_w > 0 {
+			row_w += gui.style.spacing + w
+		} else {
+			row_w = w
+		}
+	}
+	return row_count
+}
+
+app_ui_draw_options_footer :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bounds: uifw.Rect, worker: ^Render_Worker_State) {
+	uifw.gui_rect(gui, {bounds.x, bounds.y, bounds.w, gui.style.border_width}, {1, 1, 1, 0.16})
+
+	status := ui.settings_dirty ? "Unsaved changes. Save to keep after restart." : "No unsaved changes."
+	status_color := ui.settings_dirty ? gui.style.text : gui.style.text_muted
+	status_rect := uifw.Rect{bounds.x, bounds.y + gui.style.spacing_1, bounds.w, gui.style.body_line_height}
+	uifw.gui_text_clipped(gui, status_rect, {status_rect.x + gui.style.spacing_1, status_rect.y + max((status_rect.h - gui.style.body_text_height) * 0.5, 0)}, status, status_color)
+
+	cursor := uifw.Vec2{bounds.x, status_rect.y + status_rect.h + gui.style.spacing}
+	row_right := bounds.x + bounds.w
+	if app_ui_options_footer_button(gui, "Back to Menu", "back", &cursor, bounds.x, row_right, gui.style.row_height, gui.style.spacing, true) {
+		app_ui_navigate(ui, .Main_Menu)
+	}
+	if app_ui_options_footer_button(gui, "Reset to Defaults", "reset_defaults", &cursor, bounds.x, row_right, gui.style.row_height, gui.style.spacing, true) {
+		app_ui_reset_settings_to_defaults(ui, worker)
+	}
+	if app_ui_options_footer_button(gui, "Save", "save", &cursor, bounds.x, row_right, gui.style.row_height, gui.style.spacing, ui.settings_dirty) {
+		app_ui_save_settings(ui, worker)
+	}
+}
+
+app_ui_options_footer_button :: proc(gui: ^uifw.Gui_Context, label, key: string, cursor: ^uifw.Vec2, row_left, row_right, row_height, gap: f32, enabled: bool) -> bool {
+	available := max(row_right - row_left, 1)
+	w := min(uifw.gui_button_content_width(gui, label), available)
+	if cursor.x > row_left && cursor.x + w > row_right {
+		cursor.x = row_left
+		cursor.y += row_height + gap
+	}
+	rect := uifw.Rect{cursor.x, cursor.y, w, row_height}
+	cursor.x += w + gap
+	return uifw.gui_button_at(gui, uifw.gui_make_id(gui, key), rect, label, enabled)
 }
 
 centered_panel_styled :: proc(width, height: f32, window_width, window_height: i32, style: ^uifw.Gui_Style) -> uifw.Rect {

@@ -300,19 +300,20 @@ Gray_Scott_Gpu_State :: struct {
 	compute_pool: vk.DescriptorPool,
 	present_pool: vk.DescriptorPool,
 	compute_sets: [GRAY_SCOTT_COMPUTE_DISPATCH_SLOTS]vk.DescriptorSet,
-	present_set: vk.DescriptorSet,
+	present_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 	storage: [2]Gray_Scott_Gpu_Image,
 	sampler: vk.Sampler,
 	params_buffers: [GRAY_SCOTT_COMPUTE_DISPATCH_SLOTS]engine.Vk_Buffer,
 	nutrient_buffer: engine.Vk_Buffer,
 	lut_buffer: engine.Vk_Buffer,
-	present_params_buffer: engine.Vk_Buffer,
-	camera_buffer: engine.Vk_Buffer,
+	present_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	camera_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	fullscreen_vertices: engine.Vk_Buffer,
 	lut_uploaded_scheme: Color_Scheme_Name,
 	lut_uploaded_reversed: bool,
 	state_index: u32,
 	compute_dispatch_slot: u32,
+	present_frame_slot: u32,
 	width: i32,
 	height: i32,
 }
@@ -693,11 +694,13 @@ gray_scott_upload_lut :: proc(sim: ^Gray_Scott_Simulation) {
 	sim.gpu.lut_uploaded_reversed = sim.settings.color_scheme_reversed
 }
 
-gray_scott_upload_present_params :: proc(sim: ^Gray_Scott_Simulation) {
-	if sim.gpu.present_params_buffer.mapped == nil {
+gray_scott_upload_present_params :: proc(sim: ^Gray_Scott_Simulation, frame_slot: u32) {
+	slot := min(frame_slot, u32(engine.MAX_FRAMES_IN_FLIGHT - 1))
+	present_params_buffer := &sim.gpu.present_params_buffers[slot]
+	if present_params_buffer.mapped == nil {
 		return
 	}
-	params := cast(^Gray_Scott_Present_Params)sim.gpu.present_params_buffer.mapped
+	params := cast(^Gray_Scott_Present_Params)present_params_buffer.mapped
 	params^ = {
 		lut_reversed = sim.settings.color_scheme_reversed ? 1 : 0,
 		blur_enabled = sim.settings.blur_enabled ? 1 : 0,
@@ -713,13 +716,15 @@ gray_scott_upload_present_params :: proc(sim: ^Gray_Scott_Simulation) {
 	}
 }
 
-gray_scott_upload_camera :: proc(sim: ^Gray_Scott_Simulation) {
-	if sim.gpu.camera_buffer.mapped == nil {
+gray_scott_upload_camera :: proc(sim: ^Gray_Scott_Simulation, frame_slot: u32) {
+	slot := min(frame_slot, u32(engine.MAX_FRAMES_IN_FLIGHT - 1))
+	camera_buffer := &sim.gpu.camera_buffers[slot]
+	if camera_buffer.mapped == nil {
 		return
 	}
 	zoom := max(sim.runtime.camera_zoom, CAMERA_MIN_ZOOM)
 	aspect := f32(max(sim.gpu.width, 1)) / f32(max(sim.gpu.height, 1))
-	camera := cast(^Gray_Scott_Camera)sim.gpu.camera_buffer.mapped
+	camera := cast(^Gray_Scott_Camera)camera_buffer.mapped
 	camera^ = {
 		transform_matrix = {
 			zoom, 0, 0, 0,
@@ -734,11 +739,17 @@ gray_scott_upload_camera :: proc(sim: ^Gray_Scott_Simulation) {
 }
 
 gray_scott_sync_present_resources :: proc(sim: ^Gray_Scott_Simulation) {
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		gray_scott_sync_present_resources_for_slot(sim, u32(i))
+	}
+}
+
+gray_scott_sync_present_resources_for_slot :: proc(sim: ^Gray_Scott_Simulation, frame_slot: u32) {
 	if sim.gpu.lut_uploaded_scheme != sim.settings.color_scheme || sim.gpu.lut_uploaded_reversed != sim.settings.color_scheme_reversed {
 		gray_scott_upload_lut(sim)
 	}
-	gray_scott_upload_present_params(sim)
-	gray_scott_upload_camera(sim)
+	gray_scott_upload_present_params(sim, frame_slot)
+	gray_scott_upload_camera(sim, frame_slot)
 }
 
 gray_scott_hash01 :: proc(x, y, seed: u32) -> f32 {
@@ -1099,18 +1110,19 @@ gray_scott_create_present_resources :: proc(sim: ^Gray_Scott_Simulation, vk_ctx:
 		return false
 	}
 	present_params_size := vk.DeviceSize(size_of(Gray_Scott_Present_Params))
-	if !engine.vk_create_host_buffer(vk_ctx, present_params_size, {.UNIFORM_BUFFER}, &sim.gpu.present_params_buffer) {
-		gray_scott_destroy(sim, vk_ctx)
-		return false
-	}
 	camera_size := vk.DeviceSize(size_of(Gray_Scott_Camera))
-	if !engine.vk_create_host_buffer(vk_ctx, camera_size, {.UNIFORM_BUFFER}, &sim.gpu.camera_buffer) {
-		gray_scott_destroy(sim, vk_ctx)
-		return false
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, present_params_size, {.UNIFORM_BUFFER}, &sim.gpu.present_params_buffers[i]) {
+			gray_scott_destroy(sim, vk_ctx)
+			return false
+		}
+		if !engine.vk_create_host_buffer(vk_ctx, camera_size, {.UNIFORM_BUFFER}, &sim.gpu.camera_buffers[i]) {
+			gray_scott_destroy(sim, vk_ctx)
+			return false
+		}
 	}
 	gray_scott_upload_lut(sim)
-	gray_scott_upload_present_params(sim)
-	gray_scott_upload_camera(sim)
+	gray_scott_sync_present_resources(sim)
 
 	sampler_info := vk.SamplerCreateInfo {sType = .SAMPLER_CREATE_INFO}
 	sampler_info.magFilter = .LINEAR
@@ -1151,45 +1163,51 @@ gray_scott_create_present_resources :: proc(sim: ^Gray_Scott_Simulation, vk_ctx:
 	present_pool_sizes := [4]vk.DescriptorPoolSize {
 		{
 			type = .SAMPLER,
-			descriptorCount = 1,
+			descriptorCount = engine.MAX_FRAMES_IN_FLIGHT,
 		},
 		{
 			type = .SAMPLED_IMAGE,
-			descriptorCount = 1,
+			descriptorCount = engine.MAX_FRAMES_IN_FLIGHT,
 		},
 		{
 			type = .STORAGE_BUFFER,
-			descriptorCount = 1,
+			descriptorCount = engine.MAX_FRAMES_IN_FLIGHT,
 		},
 		{
 			type = .UNIFORM_BUFFER,
-			descriptorCount = 2,
+			descriptorCount = engine.MAX_FRAMES_IN_FLIGHT * 2,
 		},
 	}
 	present_pool_info := vk.DescriptorPoolCreateInfo {
 		sType = .DESCRIPTOR_POOL_CREATE_INFO,
 		poolSizeCount = u32(len(present_pool_sizes)),
 		pPoolSizes = raw_data(present_pool_sizes[:]),
-		maxSets = 1,
+		maxSets = engine.MAX_FRAMES_IN_FLIGHT,
 	}
 	if vk.CreateDescriptorPool(vk_ctx.device, &present_pool_info, nil, &sim.gpu.present_pool) != .SUCCESS {
 		gray_scott_destroy(sim, vk_ctx)
 		return false
 	}
 
+	present_layouts: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSetLayout
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		present_layouts[i] = sim.gpu.present_set_layout
+	}
 	present_set_alloc := vk.DescriptorSetAllocateInfo {
 		sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
 		descriptorPool = sim.gpu.present_pool,
-		descriptorSetCount = 1,
-		pSetLayouts = &sim.gpu.present_set_layout,
+		descriptorSetCount = u32(len(present_layouts)),
+		pSetLayouts = raw_data(present_layouts[:]),
 	}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &present_set_alloc, &sim.gpu.present_set) != .SUCCESS {
+	if vk.AllocateDescriptorSets(vk_ctx.device, &present_set_alloc, raw_data(sim.gpu.present_sets[:])) != .SUCCESS {
 		gray_scott_destroy(sim, vk_ctx)
 		return false
 	}
-	if !gray_scott_update_present_descriptor(sim, vk_ctx, 0) {
-		gray_scott_destroy(sim, vk_ctx)
-		return false
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !gray_scott_update_present_descriptor(sim, vk_ctx, 0, u32(i)) {
+			gray_scott_destroy(sim, vk_ctx)
+			return false
+		}
 	}
 
 	layout_info := vk.PipelineLayoutCreateInfo {
@@ -1352,8 +1370,10 @@ gray_scott_update_compute_descriptors :: proc(sim: ^Gray_Scott_Simulation, vk_ct
 	return true
 }
 
-gray_scott_update_present_descriptor :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^engine.Vk_Context, read_index: int) -> bool {
-	if sim.gpu.present_set == vk.DescriptorSet(0) {
+gray_scott_update_present_descriptor :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^engine.Vk_Context, read_index: int, frame_slot: u32) -> bool {
+	slot := min(frame_slot, u32(engine.MAX_FRAMES_IN_FLIGHT - 1))
+	present_set := sim.gpu.present_sets[slot]
+	if present_set == vk.DescriptorSet(0) {
 		return false
 	}
 	if read_index < 0 || read_index >= 2 {
@@ -1372,19 +1392,19 @@ gray_scott_update_present_descriptor :: proc(sim: ^Gray_Scott_Simulation, vk_ctx
 		range = vk.DeviceSize(size_of(u32) * GRAY_SCOTT_LUT_SIZE),
 	}
 	present_params_info := vk.DescriptorBufferInfo {
-		buffer = sim.gpu.present_params_buffer.handle,
+		buffer = sim.gpu.present_params_buffers[slot].handle,
 		offset = 0,
 		range = vk.DeviceSize(size_of(Gray_Scott_Present_Params)),
 	}
 	camera_info := vk.DescriptorBufferInfo {
-		buffer = sim.gpu.camera_buffer.handle,
+		buffer = sim.gpu.camera_buffers[slot].handle,
 		offset = 0,
 		range = vk.DeviceSize(size_of(Gray_Scott_Camera)),
 	}
 	writes := [5]vk.WriteDescriptorSet {
 		{
 			sType = .WRITE_DESCRIPTOR_SET,
-			dstSet = sim.gpu.present_set,
+			dstSet = present_set,
 			dstBinding = 0,
 			descriptorType = .SAMPLED_IMAGE,
 			descriptorCount = 1,
@@ -1392,7 +1412,7 @@ gray_scott_update_present_descriptor :: proc(sim: ^Gray_Scott_Simulation, vk_ctx
 		},
 		{
 			sType = .WRITE_DESCRIPTOR_SET,
-			dstSet = sim.gpu.present_set,
+			dstSet = present_set,
 			dstBinding = 1,
 			descriptorType = .SAMPLER,
 			descriptorCount = 1,
@@ -1400,7 +1420,7 @@ gray_scott_update_present_descriptor :: proc(sim: ^Gray_Scott_Simulation, vk_ctx
 		},
 		{
 			sType = .WRITE_DESCRIPTOR_SET,
-			dstSet = sim.gpu.present_set,
+			dstSet = present_set,
 			dstBinding = 2,
 			descriptorType = .STORAGE_BUFFER,
 			descriptorCount = 1,
@@ -1408,7 +1428,7 @@ gray_scott_update_present_descriptor :: proc(sim: ^Gray_Scott_Simulation, vk_ctx
 		},
 		{
 			sType = .WRITE_DESCRIPTOR_SET,
-			dstSet = sim.gpu.present_set,
+			dstSet = present_set,
 			dstBinding = 3,
 			descriptorType = .UNIFORM_BUFFER,
 			descriptorCount = 1,
@@ -1416,7 +1436,7 @@ gray_scott_update_present_descriptor :: proc(sim: ^Gray_Scott_Simulation, vk_ctx
 		},
 		{
 			sType = .WRITE_DESCRIPTOR_SET,
-			dstSet = sim.gpu.present_set,
+			dstSet = present_set,
 			dstBinding = 4,
 			descriptorType = .UNIFORM_BUFFER,
 			descriptorCount = 1,
@@ -1742,8 +1762,10 @@ gray_scott_gpu_prepare_present_viewport :: proc(sim: ^Gray_Scott_Simulation, vk_
 	if sim.gpu.storage[state_index].layout != .SHADER_READ_ONLY_OPTIMAL {
 		gray_scott_transition_image(sim, vk_ctx, state_index, sim.gpu.storage[state_index].layout, .SHADER_READ_ONLY_OPTIMAL, cmd)
 	}
-	gray_scott_sync_present_resources(sim)
-	if !gray_scott_update_present_descriptor(sim, vk_ctx, state_index) {
+	frame_slot := vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT
+	sim.gpu.present_frame_slot = frame_slot
+	gray_scott_sync_present_resources_for_slot(sim, frame_slot)
+	if !gray_scott_update_present_descriptor(sim, vk_ctx, state_index, frame_slot) {
 		return false
 	}
 	return true
@@ -1760,7 +1782,9 @@ gray_scott_gpu_draw_prepared_viewport :: proc(sim: ^Gray_Scott_Simulation, vk_ct
 	vk.CmdSetScissor(cmd, 0, 1, &local_scissor)
 	vk.CmdBindPipeline(cmd, .GRAPHICS, sim.gpu.present_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, sim.gpu.present_pipeline.layout, 0, 1, &sim.gpu.present_set, 0, nil)
+	frame_slot := min(sim.gpu.present_frame_slot, u32(engine.MAX_FRAMES_IN_FLIGHT - 1))
+	present_set := sim.gpu.present_sets[frame_slot]
+	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, sim.gpu.present_pipeline.layout, 0, 1, &present_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	tile_count := infinite_render_tile_count(sim.runtime.camera_zoom)
 	vk.CmdDraw(cmd, 6, tile_count * tile_count, 0, 0)
@@ -1830,11 +1854,13 @@ gray_scott_destroy :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^engine.Vk_Conte
 	if sim.gpu.lut_buffer.handle != vk.Buffer(0) {
 		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.lut_buffer)
 	}
-	if sim.gpu.present_params_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.present_params_buffer)
-	}
-	if sim.gpu.camera_buffer.handle != vk.Buffer(0) {
-		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.camera_buffer)
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if sim.gpu.present_params_buffers[i].handle != vk.Buffer(0) {
+			engine.vk_destroy_buffer(vk_ctx, &sim.gpu.present_params_buffers[i])
+		}
+		if sim.gpu.camera_buffers[i].handle != vk.Buffer(0) {
+			engine.vk_destroy_buffer(vk_ctx, &sim.gpu.camera_buffers[i])
+		}
 	}
 	if sim.gpu.fullscreen_vertices.handle != vk.Buffer(0) {
 		engine.vk_destroy_buffer(vk_ctx, &sim.gpu.fullscreen_vertices)
@@ -1851,7 +1877,9 @@ gray_scott_destroy :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^engine.Vk_Conte
 
 	sim.gpu.ready = false
 	sim.gpu.compute_sets = {}
-	sim.gpu.present_set = vk.DescriptorSet(0)
+	for i in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		sim.gpu.present_sets[i] = vk.DescriptorSet(0)
+	}
 	sim.gpu.state_index = 0
 	sim.gpu.step_shader_spirv_path = ""
 	sim.gpu.vertex_shader_spirv_path = ""

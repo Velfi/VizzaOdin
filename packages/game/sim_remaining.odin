@@ -101,7 +101,7 @@ VECTOR_BACKGROUND_MODE_NAMES := [?]string{"Black", "White", "Gray18", "Color Sch
 VECTOR_IMAGE_FIT_MODE_NAMES := [?]string{"Stretch", "Center", "Fit H", "Fit V"}
 PELLETS_FOREGROUND_MODE_NAMES := [?]string{"Density", "Velocity", "Random"}
 PRIMORDIAL_FOREGROUND_MODE_NAMES := [?]string{"Random", "Density", "Heading", "Velocity"}
-VORONOI_COLOR_MODE_NAMES := [?]string{"Random", "Density", "Age", "Binary"}
+VORONOI_COLOR_MODE_NAMES := [?]string{"Random", "Distance", "Rings"}
 PRIMORDIAL_POSITION_GENERATOR_NAMES := [?]string{"Random", "Center", "UniformCircle", "CenteredCircle", "Ring", "Line", "Spiral"}
 SLIME_POSITION_GENERATOR_NAMES := [?]string{"Random", "Center", "Uniform Circle", "Centered Circle", "Ring", "Line", "Spiral", "Image"}
 SLIME_MASK_PATTERN_NAMES := [?]string{"Disabled", "Checkerboard", "Diagonal Gradient", "Radial Gradient", "Vertical Stripes", "Horizontal Stripes", "Wave Function", "Cosine Grid", "Image"}
@@ -214,19 +214,11 @@ Voronoi_Settings :: struct {
 	color_scheme: Color_Scheme_Name,
 	color_scheme_reversed: bool,
 	post_processing: Post_Processing_Settings,
-	rulestring: [32]u8,
 	point_count: u32,
 	time_scale: f32,
 	drift: f32,
 	brownian_speed: f32,
-	timestep: f32,
-	steps_per_frame: u32,
 	random_seed: u32,
-	brush_radius: f32,
-	brush_strength: f32,
-	auto_reseed_enabled: bool,
-	auto_reseed_interval_secs: f32,
-	border_threshold: f32,
 	borders_enabled: bool,
 	border_width: f32,
 	color_mode: u32,
@@ -338,6 +330,17 @@ voronoi_color_mode_from_name :: proc(name: string, out: ^u32) -> bool {
 			out^ = u32(i)
 			return true
 		}
+	}
+	switch name {
+	case "Density":
+		out^ = 1
+		return true
+	case "Age":
+		out^ = 2
+		return true
+	case "Binary":
+		out^ = 0
+		return true
 	}
 	return false
 }
@@ -598,19 +601,11 @@ voronoi_settings_default :: proc() -> Voronoi_Settings {
 	color_scheme_name_set(&settings.color_scheme, "MATPLOTLIB_cubehelix")
 	settings.color_scheme_reversed = true
 	settings.post_processing = post_processing_default_settings()
-	write_fixed_string(settings.rulestring[:], "B3/S23")
 	settings.point_count = 300
 	settings.time_scale = 1.0
 	settings.drift = 1.0
 	settings.brownian_speed = 10.0
-	settings.timestep = 1.0
-	settings.steps_per_frame = 1
 	settings.random_seed = 0
-	settings.brush_radius = 10.0
-	settings.brush_strength = 1.0
-	settings.auto_reseed_enabled = false
-	settings.auto_reseed_interval_secs = 10.0
-	settings.border_threshold = 0.7
 	settings.borders_enabled = false
 	settings.border_width = 1.0
 	settings.color_mode = 0
@@ -930,6 +925,8 @@ remaining_sim_apply_frame_input :: proc(sim: ^Remaining_Sim_State, input: Ui_Fra
 }
 
 remaining_sim_apply_frame_input_for_kind :: proc(sim: ^Remaining_Sim_State, kind: Remaining_Sim_Kind, input: Ui_Frame_Input) {
+	was_cursor_active := sim.cursor_active
+	previous_cursor_velocity := sim.cursor_world_velocity
 	sim.cursor_active = 0
 	sim.cursor_mode = 0
 	if input.window_width <= 0 || input.window_height <= 0 {
@@ -941,10 +938,11 @@ remaining_sim_apply_frame_input_for_kind :: proc(sim: ^Remaining_Sim_State, kind
 		world[1] = -world[1]
 	}
 	dt := max(input.delta_time, 1.0 / 240.0)
-	sim.cursor_world_velocity = {
+	measured_velocity := [2]f32{
 		(world[0] - sim.cursor_world_prev[0]) / dt,
 		(world[1] - sim.cursor_world_prev[1]) / dt,
 	}
+	sim.cursor_world_velocity = remaining_sim_cursor_velocity_for_kind(kind, was_cursor_active, input.mouse_down, previous_cursor_velocity, measured_velocity)
 	sim.cursor_world = world
 	sim.cursor_world_prev = world
 	sim.cursor_pixel = {input.mouse_pos.x, input.mouse_pos.y}
@@ -954,6 +952,29 @@ remaining_sim_apply_frame_input_for_kind :: proc(sim: ^Remaining_Sim_State, kind
 	if input.mouse_down {
 		sim.cursor_active = 1
 		sim.cursor_mode = input.mouse_button == 3 ? u32(2) : u32(1)
+	}
+}
+
+remaining_sim_cursor_velocity_for_kind :: proc(kind: Remaining_Sim_Kind, was_cursor_active: u32, mouse_down: bool, previous_velocity, measured_velocity: [2]f32) -> [2]f32 {
+	if kind != .Pellets {
+		return measured_velocity
+	}
+
+	if mouse_down {
+		if was_cursor_active == 0 {
+			return measured_velocity
+		}
+		smoothing_factor := f32(0.7)
+		return {
+			previous_velocity[0] * (1.0 - smoothing_factor) + measured_velocity[0] * smoothing_factor,
+			previous_velocity[1] * (1.0 - smoothing_factor) + measured_velocity[1] * smoothing_factor,
+		}
+	}
+
+	decay_factor := f32(0.95)
+	return {
+		previous_velocity[0] * decay_factor,
+		previous_velocity[1] * decay_factor,
 	}
 }
 
@@ -986,7 +1007,7 @@ remaining_sim_name :: proc(kind: Remaining_Sim_Kind) -> string {
 	case .Pellets:
 		return "Pellets"
 	case .Voronoi_CA:
-		return "Voronoi CA"
+		return "Voronoi"
 	case .Moire:
 		return "Moire"
 	case .Vectors:
@@ -1006,7 +1027,7 @@ remaining_sim_description :: proc(kind: Remaining_Sim_Kind) -> string {
 	case .Pellets:
 		return "Particle physics with trails and density shading."
 	case .Voronoi_CA:
-		return "Cellular regions evolving through neighborhood rules."
+		return "Drifting nearest-site regions with color-map controls."
 	case .Moire:
 		return "Interference patterns from rotating frequency grids."
 	case .Vectors:
@@ -1155,17 +1176,19 @@ remaining_sim_draw_pellets :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Con
 
 remaining_sim_draw_voronoi :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, width, height: f32) {
 	settings := &sim.voronoi
-	cell := max(settings.brush_radius * 1.8 / max(sim.scale, 0.25), 12)
+	target_cells := max(math.sqrt(f32(max(settings.point_count, 1))) * 0.7, 4)
+	cell := max(min(width, height) / target_cells / max(sim.scale, 0.25), 12)
 	cols := int(width / cell) + 2
 	rows := int(height / cell) + 2
 	for y in 0 ..< rows {
 		for x in 0 ..< cols {
-			phase := math.sin(f32(x) * 0.7 + f32(y) * 1.1 + sim.time * settings.timestep)
-			border := phase > settings.border_threshold * 2 - 1
-			color := uifw.Color{0.30 + phase * 0.08, 0.24 + phase * 0.10, border ? f32(0.76) : f32(0.58), 0.36 * sim.intensity}
+			phase := math.sin(f32(x) * 0.7 + f32(y) * 1.1 + sim.time * settings.time_scale)
+			color := uifw.Color{0.30 + phase * 0.08, 0.24 + phase * 0.10, 0.58 + phase * 0.10, 0.36 * sim.intensity}
 			rect := uifw.Rect{f32(x) * cell - cell, f32(y) * cell - cell, cell + 1, cell + 1}
 			uifw.gui_rect(gui, rect, color)
-			uifw.gui_stroke(gui, rect, {1, 1, 1, 0.06})
+			if settings.borders_enabled {
+				uifw.gui_stroke(gui, rect, {1, 1, 1, 0.06})
+			}
 		}
 	}
 }
@@ -1477,13 +1500,13 @@ remaining_sim_draw_display_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 	case .Voronoi_CA:
 		settings := &sim.voronoi
 		_ = color_scheme_editor_draw_selector(gui, color_editor, "voronoi_color_scheme", &settings.color_scheme, &settings.color_scheme_reversed)
+		settings.color_mode_index = max(min(settings.color_mode_index, len(VORONOI_COLOR_MODE_NAMES) - 1), 0)
 		if uifw.gui_selector(gui, fmt.tprintf("Coloring Mode: %s", VORONOI_COLOR_MODE_NAMES[settings.color_mode_index]), "voronoi_color_mode", &settings.color_mode_index, VORONOI_COLOR_MODE_NAMES[:]) {
 			settings.color_mode = u32(settings.color_mode_index)
 		}
 		_ = uifw.gui_toggle(gui, fmt.tprintf("Borders: %v", settings.borders_enabled), "voronoi_borders", &settings.borders_enabled)
 		if settings.borders_enabled {
 			_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Border Width: %.1f", settings.border_width), "voronoi_border_width", &settings.border_width, 0.5, 0, 64)
-			_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Border Threshold: %.2f", settings.border_threshold), "border_threshold", &settings.border_threshold, 0.01, 0, 1)
 		}
 	case .Primordial:
 		settings := &sim.primordial
@@ -1524,7 +1547,7 @@ remaining_sim_draw_interaction_controls :: proc(sim: ^Remaining_Sim_State, gui: 
 	case .Pellets:
 		options.mouse_interaction_text = "Left click: Attract particles"
 	case .Voronoi_CA:
-		options.cursor_settings_title = sim.paused ? "Painting Settings" : "Cursor Settings"
+		options.cursor_settings_title = "Cursor Settings"
 		options.cursor.strength_step = 0.01
 	case .Primordial:
 		options.mouse_interaction_text = "Mouse: Fling particles | Scroll: Zoom"
@@ -1756,7 +1779,6 @@ remaining_sim_draw_voronoi_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 	settings := &sim.voronoi
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, "Voronoi Parameters")
-	uifw.gui_label(gui, fmt.tprintf("Rulestring: %s", fixed_string(settings.rulestring[:])))
 	point_count := f32(settings.point_count)
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Points: %d", settings.point_count), "voronoi_points", &point_count, 100, 32, 20000) {
 		settings.point_count = u32(point_count)
@@ -1764,19 +1786,10 @@ remaining_sim_draw_voronoi_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Drift: %.2f", settings.drift), "voronoi_drift", &settings.drift, 0.01, 0, 4)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Brownian Speed: %.1f", settings.brownian_speed), "voronoi_brownian_speed", &settings.brownian_speed, 1, 0, 500)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Time Scale: %.2f", settings.time_scale), "voronoi_time_scale", &settings.time_scale, 0.01, 0, 10)
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Timestep: %.2f", settings.timestep), "timestep", &settings.timestep, 0.01, 0, 10)
-	steps := f32(settings.steps_per_frame)
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Steps Per Frame: %d", settings.steps_per_frame), "steps_per_frame", &steps, 1, 1, 128) {
-		settings.steps_per_frame = u32(steps)
-	}
 	seed := f32(settings.random_seed)
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Random Seed: %d", settings.random_seed), "random_seed", &seed, 1, 0, 4294967295) {
 		settings.random_seed = u32(seed)
 	}
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Brush Radius: %.1f", settings.brush_radius), "brush_radius", &settings.brush_radius, 0.5, 1, 200)
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Brush Strength: %.2f", settings.brush_strength), "brush_strength", &settings.brush_strength, 0.01, 0, 4)
-	_ = uifw.gui_toggle(gui, fmt.tprintf("Auto Reseed: %v", settings.auto_reseed_enabled), "auto_reseed", &settings.auto_reseed_enabled)
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Auto Reseed Interval: %.1f", settings.auto_reseed_interval_secs), "auto_reseed_interval", &settings.auto_reseed_interval_secs, 0.5, 1, 120)
 }
 
 remaining_sim_draw_pellets_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context) {

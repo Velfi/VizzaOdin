@@ -57,7 +57,7 @@ preset_fieldset_draw :: proc(
 
 	if len(presets) > 0 {
 		state.selected_index = max(min(state.selected_index, len(presets) - 1), 0)
-		if uifw.gui_combobox(ctx, "Select preset...", "preset_select", &state.selected_index, presets[:], state.query_buffer[:]) {
+		if preset_fieldset_draw_selector(ctx, state, presets[:]) {
 			preset_fieldset_apply_selection(state.selected_index, worker, simulation_directory, builtin_names, presets[:], builtin_context)
 		}
 	} else {
@@ -69,6 +69,33 @@ preset_fieldset_draw :: proc(
 		state.save_open_frame = ctx.frame_index
 		state.save_name_len = 0
 	}
+}
+
+preset_fieldset_draw_selector :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fieldset_State, presets: []string) -> bool {
+	row := uifw.gui_next_rect(ctx)
+	arrow_w := min(max(row.h, f32(35)), row.w * 0.22)
+	left := uifw.Rect{row.x, row.y, arrow_w, row.h}
+	right := uifw.Rect{row.x + row.w - arrow_w, row.y, arrow_w, row.h}
+	center := uifw.Rect{row.x + arrow_w, row.y, max(row.w - arrow_w * 2, 0), row.h}
+	changed := false
+
+	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "preset_previous"), left, -1, true) {
+		state.selected_index = (state.selected_index - 1 + len(presets)) % len(presets)
+		changed = true
+	}
+	uifw.gui_tooltip(ctx, left, "Previous preset")
+
+	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "preset_next"), right, 1, true) {
+		state.selected_index = (state.selected_index + 1) % len(presets)
+		changed = true
+	}
+	uifw.gui_tooltip(ctx, right, "Next preset")
+
+	uifw.gui_layout_begin(ctx, center, .Column, 0, center.h)
+	changed = uifw.gui_combobox(ctx, "Select preset...", "preset_select", &state.selected_index, presets, state.query_buffer[:]) || changed
+	uifw.gui_layout_end(ctx)
+
+	return changed
 }
 
 preset_fieldset_content_rows :: proc(state: ^Preset_Fieldset_State) -> int {

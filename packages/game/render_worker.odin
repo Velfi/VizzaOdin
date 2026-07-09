@@ -456,7 +456,9 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 		} else if runtime.app_ui.mode == .Primordial {
 			remaining_sim_apply_frame_input_for_kind(&runtime.app_ui.primordial, .Primordial, simulation_input)
 		}
+		mode_before_ui := runtime.app_ui.mode
 		app_ui_draw(&runtime.app_ui, &runtime.gui, &runtime.sim, &runtime.particle_life, &runtime.vk_ctx, state)
+		render_worker_apply_main_menu_palette_after_navigation(runtime, mode_before_ui)
 		uifw.gui_end_frame(&runtime.gui)
 		if runtime.gui.clipboard_set_pending {
 			msg: Render_To_Ui_Message
@@ -517,7 +519,9 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 			video_recorder_stop(&runtime.video_recorder)
 			app_ui_video_recording_apply_command_state(&runtime.app_ui, .Idle)
 		}
+		mode_before_navigation := runtime.app_ui.mode
 		app_ui_navigate(&runtime.app_ui, cmd.app_mode)
+		render_worker_apply_main_menu_palette_after_navigation(runtime, mode_before_navigation)
 	case .Start_Video_Recording:
 		file_path := cmd.file_path
 		path := fixed_string(file_path[:])
@@ -843,6 +847,14 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 			}
 		}
 	}
+}
+
+render_worker_apply_main_menu_palette_after_navigation :: proc(runtime: ^Render_Worker_Runtime, previous_mode: App_Mode) {
+	if runtime == nil || previous_mode != .Main_Menu || !app_ui_live_preview_supported(runtime.app_ui.mode) {
+		return
+	}
+	palette_name := main_menu_backdrop_current_palette_name(&runtime.render_backend.main_menu_backdrop)
+	_ = render_main_menu_apply_palette_to_mode(&runtime.app_ui, &runtime.sim.settings, &runtime.particle_life.settings, runtime.app_ui.mode, palette_name)
 }
 
 render_worker_profile_record :: proc(runtime: ^Render_Worker_Runtime, frame_index: u64, sim_seconds, ui_seconds, render_seconds: f64) {

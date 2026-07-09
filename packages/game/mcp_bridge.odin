@@ -338,7 +338,7 @@ MCP_TOOLS_JSON :: `[
 {"name":"mouse_up","description":"Release a mouse button at a window-relative position.","inputSchema":{"type":"object","required":["x","y"],"properties":{"x":{"type":"number"},"y":{"type":"number"},"button":{"type":"number","description":"SDL-style button: 1 left, 2 middle, 3 right. Defaults to 1."}}}},
 {"name":"move","description":"Move the app's logical mouse position.","inputSchema":{"type":"object","required":["x","y"],"properties":{"x":{"type":"number"},"y":{"type":"number"}}}},
 {"name":"wheel","description":"Inject mouse wheel delta.","inputSchema":{"type":"object","required":["delta"],"properties":{"delta":{"type":"number"}}}},
-{"name":"set_mode","description":"Navigate directly to an app mode by status name, e.g. Slime_Mold, Flow_Field, Pellets, Voronoi_CA, Moire, Vectors, Primordial, Main_Menu.","inputSchema":{"type":"object","required":["mode"],"properties":{"mode":{"type":"string"}}}},
+{"name":"set_mode","description":"Navigate directly to an app mode by status name, e.g. Slime_Mold, Flow_Field, Pellets, Voronoi, Moire, Vectors, Primordial, Main_Menu.","inputSchema":{"type":"object","required":["mode"],"properties":{"mode":{"type":"string"}}}},
 {"name":"load_vectors_image","description":"Load an image path into the Vectors image-field mode.","inputSchema":{"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}},
 {"name":"load_moire_image","description":"Load an image path into Moire image mode.","inputSchema":{"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}},
 {"name":"load_flow_image","description":"Load an image path into Flow vector-field image mode.","inputSchema":{"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}},
@@ -900,7 +900,7 @@ mcp_bridge_app_mode_from_name :: proc(name: string, out: ^App_Mode) -> bool {
 		out^ = .Pellets
 	case "Gradient_Editor", "gradient_editor":
 		out^ = .Gradient_Editor
-	case "Voronoi_CA", "voronoi_ca":
+	case "Voronoi", "voronoi", "Voronoi_CA", "voronoi_ca":
 		out^ = .Voronoi_CA
 	case "Moire", "moire":
 		out^ = .Moire

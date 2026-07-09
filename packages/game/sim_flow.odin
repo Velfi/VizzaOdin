@@ -31,6 +31,7 @@ FLOW_VERTEX_ENTRY :: cstring("main")
 FLOW_FRAGMENT_ENTRY :: cstring("main")
 FLOW_FIELD_RESOLUTION :: u32(128)
 FLOW_IMAGE_FORMAT :: vk.Format(.R8G8B8A8_UNORM)
+FLOW_RETIRED_VECTOR_FIELD_IMAGE_CAP :: 4
 
 Flow_Particle :: struct #align(8) {
 	position: [2]f32,
@@ -159,6 +160,11 @@ Flow_Image :: struct {
 	height: u32,
 }
 
+Flow_Retired_Vector_Field_Image :: struct {
+	image: Flow_Image,
+	pending_frame_slots: u32,
+}
+
 Flow_Gpu_State :: struct {
 	vector_shader: engine.Vk_Shader_Module,
 	particle_update_shader: engine.Vk_Shader_Module,
@@ -185,25 +191,26 @@ Flow_Gpu_State :: struct {
 	particle_set_layout: vk.DescriptorSetLayout,
 	camera_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool: vk.DescriptorPool,
-	vector_set: vk.DescriptorSet,
-	update_set: vk.DescriptorSet,
-	background_set: vk.DescriptorSet,
-	trail_set: vk.DescriptorSet,
-	shape_drawing_set: vk.DescriptorSet,
-	particle_set: vk.DescriptorSet,
-	camera_set: vk.DescriptorSet,
+	vector_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	update_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	background_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	trail_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	shape_drawing_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	particle_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	camera_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 	particle_buffer: engine.Vk_Buffer,
 	flow_vector_buffer: engine.Vk_Buffer,
-	sim_params_buffer: engine.Vk_Buffer,
-	vector_params_buffer: engine.Vk_Buffer,
+	sim_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	vector_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	lut_buffer: engine.Vk_Buffer,
-	background_color_buffer: engine.Vk_Buffer,
+	background_color_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	spawn_control_buffer: engine.Vk_Buffer,
-	shape_params_buffer: engine.Vk_Buffer,
-	camera_buffer: engine.Vk_Buffer,
+	shape_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	camera_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	trail_image: Flow_Image,
 	default_image: Flow_Image,
 	vector_field_image: Flow_Image,
+	retired_vector_field_images: [FLOW_RETIRED_VECTOR_FIELD_IMAGE_CAP]Flow_Retired_Vector_Field_Image,
 	vector_field_image_loaded: bool,
 	vector_field_image_path: [MAX_FILE_PATH]u8,
 	vector_field_image_fit_uploaded: Vector_Image_Fit_Mode,
@@ -254,15 +261,20 @@ flow_gpu_ensure_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, s
 	}
 	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Flow_Particle) * int(target_pool)), {.STORAGE_BUFFER}, &gpu.particle_buffer) ||
 	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Flow_Vector) * int(FLOW_FIELD_RESOLUTION * FLOW_FIELD_RESOLUTION)), {.STORAGE_BUFFER}, &gpu.flow_vector_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Flow_Sim_Params)), {.UNIFORM_BUFFER}, &gpu.sim_params_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Flow_Vector_Params)), {.UNIFORM_BUFFER}, &gpu.vector_params_buffer) ||
 	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT), {.STORAGE_BUFFER}, &gpu.lut_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of([4]f32)), {.UNIFORM_BUFFER}, &gpu.background_color_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Flow_Spawn_Control)), {.STORAGE_BUFFER}, &gpu.spawn_control_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Flow_Shape_Params)), {.UNIFORM_BUFFER}, &gpu.shape_params_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Flow_Camera)), {.UNIFORM_BUFFER}, &gpu.camera_buffer) {
+	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Flow_Spawn_Control)), {.STORAGE_BUFFER}, &gpu.spawn_control_buffer) {
 		flow_gpu_destroy(gpu, vk_ctx)
 		return false
+	}
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Flow_Sim_Params)), {.UNIFORM_BUFFER}, &gpu.sim_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Flow_Vector_Params)), {.UNIFORM_BUFFER}, &gpu.vector_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of([4]f32)), {.UNIFORM_BUFFER}, &gpu.background_color_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Flow_Shape_Params)), {.UNIFORM_BUFFER}, &gpu.shape_params_buffers[frame_slot]) ||
+		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Flow_Camera)), {.UNIFORM_BUFFER}, &gpu.camera_buffers[frame_slot]) {
+			flow_gpu_destroy(gpu, vk_ctx)
+			return false
+		}
 	}
 	if !flow_create_image(gpu, vk_ctx, &gpu.trail_image, gpu.trail_width, gpu.trail_height, {.STORAGE, .SAMPLED, .TRANSFER_DST}) ||
 	   !flow_create_image(gpu, vk_ctx, &gpu.default_image, 1, 1, {.SAMPLED, .TRANSFER_DST}) ||
@@ -271,7 +283,9 @@ flow_gpu_ensure_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, s
 		return false
 	}
 	flow_initialize_particles(gpu, settings)
-	flow_upload_camera(gpu, vk_ctx)
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		flow_upload_camera(gpu, frame_slot, vk_ctx)
+	}
 	if !flow_create_descriptors(gpu, vk_ctx) {
 		flow_gpu_destroy(gpu, vk_ctx)
 		return false
@@ -423,22 +437,25 @@ flow_gpu_load_vector_field_image_path :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^eng
 		}
 	}
 
-	flow_destroy_image(vk_ctx, &gpu.vector_field_image)
-	if !flow_create_image(gpu, vk_ctx, &gpu.vector_field_image, u32(target_width), u32(target_height), {.SAMPLED, .TRANSFER_DST}) {
-		gpu.vector_field_image_loaded = false
+	new_image: Flow_Image
+	if !flow_create_image(gpu, vk_ctx, &new_image, u32(target_width), u32(target_height), {.SAMPLED, .TRANSFER_DST}) {
 		return false
 	}
-	if !flow_upload_sampled_image(vk_ctx, &gpu.vector_field_image, u32(target_width), u32(target_height), pixels) {
-		gpu.vector_field_image_loaded = false
+	if !flow_upload_sampled_image(vk_ctx, &new_image, u32(target_width), u32(target_height), pixels) {
+		flow_destroy_image(vk_ctx, &new_image)
 		return false
 	}
+	if !flow_retire_vector_field_image(gpu) {
+		flow_destroy_image(vk_ctx, &new_image)
+		return false
+	}
+	gpu.vector_field_image = new_image
 	write_fixed_string(gpu.vector_field_image_path[:], path)
 	gpu.vector_field_image_fit_uploaded = settings.image_fit_mode
 	gpu.vector_field_image_mirror_horizontal_uploaded = settings.image_mirror_horizontal
 	gpu.vector_field_image_mirror_vertical_uploaded = settings.image_mirror_vertical
 	gpu.vector_field_image_invert_tone_uploaded = settings.image_invert_tone
 	gpu.vector_field_image_loaded = true
-	flow_update_descriptors(gpu, vk_ctx)
 	return true
 }
 
@@ -459,13 +476,13 @@ flow_upload_lut :: proc(gpu: ^Flow_Gpu_State, settings: ^Flow_Settings) {
 	_ = color_scheme_write_u32_buffer(scheme, data)
 }
 
-flow_upload_camera :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context) {
-	flow_upload_camera_size(gpu, f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
+flow_upload_camera :: proc(gpu: ^Flow_Gpu_State, frame_slot: int, vk_ctx: ^engine.Vk_Context) {
+	flow_upload_camera_size(gpu, frame_slot, f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
 }
 
-flow_upload_camera_size :: proc(gpu: ^Flow_Gpu_State, width, height: f32) {
-	if gpu.camera_buffer.mapped == nil {return}
-	camera := cast(^Flow_Camera)gpu.camera_buffer.mapped
+flow_upload_camera_size :: proc(gpu: ^Flow_Gpu_State, frame_slot: int, width, height: f32) {
+	if gpu.camera_buffers[frame_slot].mapped == nil {return}
+	camera := cast(^Flow_Camera)gpu.camera_buffers[frame_slot].mapped
 	camera^ = {
 		transform_matrix = {
 			1, 0, 0, 0,
@@ -479,11 +496,11 @@ flow_upload_camera_size :: proc(gpu: ^Flow_Gpu_State, width, height: f32) {
 	}
 }
 
-flow_upload_background_color :: proc(gpu: ^Flow_Gpu_State, settings: ^Flow_Settings) {
-	if gpu.background_color_buffer.mapped == nil {
+flow_upload_background_color :: proc(gpu: ^Flow_Gpu_State, frame_slot: int, settings: ^Flow_Settings) {
+	if gpu.background_color_buffers[frame_slot].mapped == nil {
 		return
 	}
-	color := cast(^[4]f32)gpu.background_color_buffer.mapped
+	color := cast(^[4]f32)gpu.background_color_buffers[frame_slot].mapped
 	#partial switch settings.background_color_mode {
 	case .Black:
 		color^ = {0, 0, 0, 1}
@@ -506,19 +523,19 @@ flow_mouse_button_down_from_cursor :: proc(sim: ^Remaining_Sim_State) -> u32 {
 	return sim.cursor_mode
 }
 
-flow_write_params :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, sim: ^Remaining_Sim_State, dt: f32) {
-	flow_write_params_size(gpu, vk_ctx, sim, dt, vk_ctx.swapchain_extent.width, vk_ctx.swapchain_extent.height)
+flow_write_params :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int, sim: ^Remaining_Sim_State, dt: f32) {
+	flow_write_params_size(gpu, vk_ctx, frame_slot, sim, dt, vk_ctx.swapchain_extent.width, vk_ctx.swapchain_extent.height)
 }
 
-flow_write_params_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, sim: ^Remaining_Sim_State, dt: f32, screen_width, screen_height: u32) {
+flow_write_params_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int, sim: ^Remaining_Sim_State, dt: f32, screen_width, screen_height: u32) {
 	settings := &sim.flow
 	gpu.show_particles = settings.show_particles
 	flow_upload_lut(gpu, settings)
-	flow_upload_background_color(gpu, settings)
+	flow_upload_background_color(gpu, frame_slot, settings)
 	width := max(screen_width, 1)
 	height := max(screen_height, 1)
-	if gpu.vector_params_buffer.mapped != nil {
-		params := cast(^Flow_Vector_Params)gpu.vector_params_buffer.mapped
+	if gpu.vector_params_buffers[frame_slot].mapped != nil {
+		params := cast(^Flow_Vector_Params)gpu.vector_params_buffers[frame_slot].mapped
 		noise := &settings.noise
 		noise_sync_indices(noise)
 		params^ = {
@@ -558,8 +575,8 @@ flow_write_params_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context,
 			vector_magnitude = settings.vector_magnitude,
 		}
 	}
-	if gpu.sim_params_buffer.mapped != nil {
-		params := cast(^Flow_Sim_Params)gpu.sim_params_buffer.mapped
+	if gpu.sim_params_buffers[frame_slot].mapped != nil {
+		params := cast(^Flow_Sim_Params)gpu.sim_params_buffers[frame_slot].mapped
 		params^ = {
 			autospawn_pool_size = min(settings.total_pool_size, max(settings.total_pool_size / 2, 1)),
 			autospawn_rate = settings.autospawn_rate,
@@ -599,12 +616,12 @@ flow_write_params_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context,
 	}
 }
 
-flow_write_shape_params :: proc(gpu: ^Flow_Gpu_State, sim: ^Remaining_Sim_State) {
-	if gpu.shape_params_buffer.mapped == nil {
+flow_write_shape_params :: proc(gpu: ^Flow_Gpu_State, frame_slot: int, sim: ^Remaining_Sim_State) {
+	if gpu.shape_params_buffers[frame_slot].mapped == nil {
 		return
 	}
 	settings := &sim.flow
-	params := cast(^Flow_Shape_Params)gpu.shape_params_buffer.mapped
+	params := cast(^Flow_Shape_Params)gpu.shape_params_buffers[frame_slot].mapped
 	params^ = {
 		center_x = sim.cursor_world[0],
 		center_y = sim.cursor_world[1],
@@ -649,14 +666,22 @@ flow_create_descriptors :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context
 	   !flow_create_set_layout(vk_ctx, shape_bindings[:], &gpu.shape_drawing_set_layout) ||
 	   !flow_create_set_layout(vk_ctx, particle_bindings[:], &gpu.particle_set_layout) ||
 	   !flow_create_set_layout(vk_ctx, camera_bindings[:], &gpu.camera_set_layout) {return false}
-	pool_sizes := [5]vk.DescriptorPoolSize{{type = .STORAGE_BUFFER, descriptorCount = 12}, {type = .UNIFORM_BUFFER, descriptorCount = 8}, {type = .STORAGE_IMAGE, descriptorCount = 3}, {type = .SAMPLED_IMAGE, descriptorCount = 1}, {type = .SAMPLER, descriptorCount = 1}}
-	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 7}
+	pool_sizes := [5]vk.DescriptorPoolSize{{type = .STORAGE_BUFFER, descriptorCount = 12 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .UNIFORM_BUFFER, descriptorCount = 8 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .STORAGE_IMAGE, descriptorCount = 3 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .SAMPLED_IMAGE, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}, {type = .SAMPLER, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}}
+	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 7 * engine.MAX_FRAMES_IN_FLIGHT}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {return false}
-	layouts := [7]vk.DescriptorSetLayout{gpu.vector_set_layout, gpu.update_set_layout, gpu.background_set_layout, gpu.trail_set_layout, gpu.shape_drawing_set_layout, gpu.particle_set_layout, gpu.camera_set_layout}
-	sets: [7]vk.DescriptorSet
-	alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = 7, pSetLayouts = raw_data(layouts[:])}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {return false}
-	gpu.vector_set = sets[0]; gpu.update_set = sets[1]; gpu.background_set = sets[2]; gpu.trail_set = sets[3]; gpu.shape_drawing_set = sets[4]; gpu.particle_set = sets[5]; gpu.camera_set = sets[6]
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		layouts := [7]vk.DescriptorSetLayout{gpu.vector_set_layout, gpu.update_set_layout, gpu.background_set_layout, gpu.trail_set_layout, gpu.shape_drawing_set_layout, gpu.particle_set_layout, gpu.camera_set_layout}
+		sets: [7]vk.DescriptorSet
+		alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = 7, pSetLayouts = raw_data(layouts[:])}
+		if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {return false}
+		gpu.vector_sets[frame_slot] = sets[0]
+		gpu.update_sets[frame_slot] = sets[1]
+		gpu.background_sets[frame_slot] = sets[2]
+		gpu.trail_sets[frame_slot] = sets[3]
+		gpu.shape_drawing_sets[frame_slot] = sets[4]
+		gpu.particle_sets[frame_slot] = sets[5]
+		gpu.camera_sets[frame_slot] = sets[6]
+	}
 	flow_update_descriptors(gpu, vk_ctx)
 	return true
 }
@@ -667,45 +692,58 @@ flow_create_set_layout :: proc(vk_ctx: ^engine.Vk_Context, bindings: []vk.Descri
 }
 
 flow_update_descriptors :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context) {
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		flow_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
+	}
+}
+
+flow_update_descriptors_for_slot :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
 	particle_info := vk.DescriptorBufferInfo{buffer = gpu.particle_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Particle) * int(gpu.total_pool_size))}
 	vector_info := vk.DescriptorBufferInfo{buffer = gpu.flow_vector_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Vector) * int(FLOW_FIELD_RESOLUTION * FLOW_FIELD_RESOLUTION))}
-	sim_info := vk.DescriptorBufferInfo{buffer = gpu.sim_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Sim_Params))}
-	vector_params_info := vk.DescriptorBufferInfo{buffer = gpu.vector_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Vector_Params))}
+	sim_info := vk.DescriptorBufferInfo{buffer = gpu.sim_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Sim_Params))}
+	vector_params_info := vk.DescriptorBufferInfo{buffer = gpu.vector_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Vector_Params))}
 	lut_info := vk.DescriptorBufferInfo{buffer = gpu.lut_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT)}
-	background_color_info := vk.DescriptorBufferInfo{buffer = gpu.background_color_buffer.handle, offset = 0, range = vk.DeviceSize(size_of([4]f32))}
+	background_color_info := vk.DescriptorBufferInfo{buffer = gpu.background_color_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of([4]f32))}
 	spawn_info := vk.DescriptorBufferInfo{buffer = gpu.spawn_control_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Spawn_Control))}
-	shape_params_info := vk.DescriptorBufferInfo{buffer = gpu.shape_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Shape_Params))}
-	camera_info := vk.DescriptorBufferInfo{buffer = gpu.camera_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Camera))}
+	shape_params_info := vk.DescriptorBufferInfo{buffer = gpu.shape_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Shape_Params))}
+	camera_info := vk.DescriptorBufferInfo{buffer = gpu.camera_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Camera))}
 	default_image_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.default_image.view}
 	if gpu.vector_field_image_loaded && gpu.vector_field_image.view != vk.ImageView(0) {
 		default_image_info = vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.vector_field_image.view}
 	}
 	sampler_info := vk.DescriptorImageInfo{sampler = gpu.sampler}
 	trail_info := vk.DescriptorImageInfo{imageLayout = .GENERAL, imageView = gpu.trail_image.view}
+	vector_set := gpu.vector_sets[frame_slot]
+	update_set := gpu.update_sets[frame_slot]
+	background_set := gpu.background_sets[frame_slot]
+	trail_set := gpu.trail_sets[frame_slot]
+	shape_drawing_set := gpu.shape_drawing_sets[frame_slot]
+	particle_set := gpu.particle_sets[frame_slot]
+	camera_set := gpu.camera_sets[frame_slot]
 	writes := [?]vk.WriteDescriptorSet{
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.vector_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vector_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.vector_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &vector_params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.vector_set, dstBinding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &default_image_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.vector_set, dstBinding = 3, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.update_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.update_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vector_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.update_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.update_set, dstBinding = 3, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &trail_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.update_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.update_set, dstBinding = 5, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &spawn_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.background_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vector_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.background_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.background_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.background_set, dstBinding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &background_color_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.trail_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.trail_set, dstBinding = 1, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &trail_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.trail_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vector_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.shape_drawing_set, dstBinding = 0, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &trail_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.shape_drawing_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &shape_params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.particle_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.particle_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.particle_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.camera_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = vector_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vector_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = vector_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &vector_params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = vector_set, dstBinding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &default_image_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = vector_set, dstBinding = 3, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vector_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 3, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &trail_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 5, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &spawn_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vector_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &background_color_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = trail_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = trail_set, dstBinding = 1, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &trail_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = trail_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &vector_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = shape_drawing_set, dstBinding = 0, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &trail_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = shape_drawing_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &shape_params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = particle_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = particle_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = particle_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = camera_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info},
 	}
 	vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 }
@@ -816,7 +854,10 @@ flow_gpu_step :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.
 flow_gpu_step_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim: ^Remaining_Sim_State, dt: f32, trail_width, trail_height, screen_width, screen_height: u32) {
 	settings := &sim.flow
 	if !flow_gpu_ensure_size(gpu, vk_ctx, settings, trail_width, trail_height) {return}
-	flow_write_params_size(gpu, vk_ctx, sim, dt, screen_width, screen_height)
+	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
+	flow_write_params_size(gpu, vk_ctx, frame_slot, sim, dt, screen_width, screen_height)
+	flow_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
+	flow_collect_retired_vector_field_images(gpu, vk_ctx, frame_slot)
 	if sim.paused {return}
 	flow_transition_image(vk_ctx, cmd, &gpu.trail_image, .GENERAL)
 	if !gpu.default_image_initialized {
@@ -834,25 +875,29 @@ flow_gpu_step_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd
 		gpu.trail_cleared = true
 	}
 	flow_write_spawn_control(gpu, sim, dt)
+	vector_set := gpu.vector_sets[frame_slot]
+	trail_set := gpu.trail_sets[frame_slot]
+	shape_drawing_set := gpu.shape_drawing_sets[frame_slot]
+	update_set := gpu.update_sets[frame_slot]
 	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.vector_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.vector_pipeline.layout, 0, 1, &gpu.vector_set, 0, nil)
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.vector_pipeline.layout, 0, 1, &vector_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDispatch(cmd, (FLOW_FIELD_RESOLUTION + 15) / 16, (FLOW_FIELD_RESOLUTION + 15) / 16, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
 	flow_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
 	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.trail_decay_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.trail_decay_pipeline.layout, 0, 1, &gpu.trail_set, 0, nil)
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.trail_decay_pipeline.layout, 0, 1, &trail_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDispatch(cmd, (max(gpu.trail_width, 1) + 15) / 16, (max(gpu.trail_height, 1) + 15) / 16, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
 	flow_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
 	if sim.cursor_active != 0 && sim.cursor_mode == 1 && gpu.shape_drawing_pipeline.pipeline != vk.Pipeline(0) {
-		flow_write_shape_params(gpu, sim)
+		flow_write_shape_params(gpu, frame_slot, sim)
 		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.shape_drawing_pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.shape_drawing_pipeline.layout, 0, 1, &gpu.shape_drawing_set, 0, nil)
+		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.shape_drawing_pipeline.layout, 0, 1, &shape_drawing_set, 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		vk.CmdDispatch(cmd, (max(gpu.trail_width, 1) + 7) / 8, (max(gpu.trail_height, 1) + 7) / 8, 1)
 		engine.vk_cmd_count_compute_dispatch(vk_ctx)
@@ -860,7 +905,7 @@ flow_gpu_step_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd
 	}
 	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.particle_update_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.particle_update_pipeline.layout, 0, 1, &gpu.update_set, 0, nil)
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.particle_update_pipeline.layout, 0, 1, &update_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDispatch(cmd, (gpu.total_pool_size + 63) / 64, 1, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
@@ -879,7 +924,10 @@ flow_gpu_present :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, frame
 
 flow_gpu_present_viewport :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, viewport: vk.Viewport, scissor: vk.Rect2D) {
 	if !gpu.ready || gpu.particle_pipeline.pipeline == vk.Pipeline(0) {return}
-	flow_upload_camera_size(gpu, viewport.width, viewport.height)
+	frame_slot := int(frame.frame_index)
+	flow_upload_camera_size(gpu, frame_slot, viewport.width, viewport.height)
+	flow_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
+	flow_collect_retired_vector_field_images(gpu, vk_ctx, frame_slot)
 	if gpu.trail_pipeline.pipeline != vk.Pipeline(0) {
 		flow_transition_image(vk_ctx, frame.command_buffer, &gpu.trail_image, .GENERAL)
 	}
@@ -891,13 +939,18 @@ flow_gpu_draw_prepared_viewport :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk
 	cmd := frame.command_buffer
 	local_viewport := viewport
 	local_scissor := scissor
+	frame_slot := int(frame.frame_index)
+	background_set := gpu.background_sets[frame_slot]
+	trail_set := gpu.trail_sets[frame_slot]
+	particle_set := gpu.particle_sets[frame_slot]
+	camera_set := gpu.camera_sets[frame_slot]
 	vk.CmdSetViewport(cmd, 0, 1, &local_viewport)
 	vk.CmdSetScissor(cmd, 0, 1, &local_scissor)
 	if gpu.background_pipeline.pipeline != vk.Pipeline(0) {
 		vk.CmdBindPipeline(cmd, .GRAPHICS, gpu.background_pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.background_pipeline.layout, 0, 1, &gpu.background_set, 0, nil)
-		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.background_pipeline.layout, 1, 1, &gpu.camera_set, 0, nil)
+		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.background_pipeline.layout, 0, 1, &background_set, 0, nil)
+		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.background_pipeline.layout, 1, 1, &camera_set, 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		vk.CmdDraw(cmd, 6, 1, 0, 0)
 		engine.vk_cmd_count_draw(vk_ctx)
@@ -905,8 +958,8 @@ flow_gpu_draw_prepared_viewport :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk
 	if gpu.trail_pipeline.pipeline != vk.Pipeline(0) {
 		vk.CmdBindPipeline(cmd, .GRAPHICS, gpu.trail_pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.trail_pipeline.layout, 0, 1, &gpu.trail_set, 0, nil)
-		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.trail_pipeline.layout, 1, 1, &gpu.camera_set, 0, nil)
+		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.trail_pipeline.layout, 0, 1, &trail_set, 0, nil)
+		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.trail_pipeline.layout, 1, 1, &camera_set, 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		vk.CmdDraw(cmd, 6, 1, 0, 0)
 		engine.vk_cmd_count_draw(vk_ctx)
@@ -914,8 +967,8 @@ flow_gpu_draw_prepared_viewport :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk
 	if gpu.show_particles {
 		vk.CmdBindPipeline(cmd, .GRAPHICS, gpu.particle_pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.particle_pipeline.layout, 0, 1, &gpu.particle_set, 0, nil)
-		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.particle_pipeline.layout, 1, 1, &gpu.camera_set, 0, nil)
+		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.particle_pipeline.layout, 0, 1, &particle_set, 0, nil)
+		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, gpu.particle_pipeline.layout, 1, 1, &camera_set, 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		vk.CmdDraw(cmd, 6, gpu.total_pool_size, 0, 0)
 		engine.vk_cmd_count_draw(vk_ctx)
@@ -940,6 +993,42 @@ flow_destroy_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Flow_Image) {
 	image^ = {}
 }
 
+flow_frame_slot_mask :: proc() -> u32 {
+	return (u32(1) << u32(engine.MAX_FRAMES_IN_FLIGHT)) - 1
+}
+
+flow_collect_retired_vector_field_images :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
+	bit := u32(1) << u32(frame_slot)
+	for i in 0 ..< FLOW_RETIRED_VECTOR_FIELD_IMAGE_CAP {
+		retired := &gpu.retired_vector_field_images[i]
+		if retired.pending_frame_slots == 0 {
+			continue
+		}
+		retired.pending_frame_slots = retired.pending_frame_slots & (~bit)
+		if retired.pending_frame_slots == 0 {
+			flow_destroy_image(vk_ctx, &retired.image)
+		}
+	}
+}
+
+flow_retire_vector_field_image :: proc(gpu: ^Flow_Gpu_State) -> bool {
+	if gpu.vector_field_image.handle == vk.Image(0) {
+		gpu.vector_field_image = {}
+		return true
+	}
+	for i in 0 ..< FLOW_RETIRED_VECTOR_FIELD_IMAGE_CAP {
+		retired := &gpu.retired_vector_field_images[i]
+		if retired.pending_frame_slots == 0 {
+			retired.image = gpu.vector_field_image
+			retired.pending_frame_slots = flow_frame_slot_mask()
+			gpu.vector_field_image = {}
+			return true
+		}
+	}
+	engine.log_warn("flow: vector field image retire slots exhausted")
+	return false
+}
+
 flow_gpu_destroy :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context) {
 	if vk_ctx == nil || vk_ctx.device == nil {gpu^ = {}; return}
 	flow_destroy_compute_pipeline(vk_ctx, &gpu.vector_pipeline)
@@ -960,13 +1049,18 @@ flow_gpu_destroy :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context) {
 	if gpu.sampler != vk.Sampler(0) {vk.DestroySampler(vk_ctx.device, gpu.sampler, nil)}
 	engine.vk_destroy_buffer(vk_ctx, &gpu.particle_buffer)
 	engine.vk_destroy_buffer(vk_ctx, &gpu.flow_vector_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.sim_params_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.vector_params_buffer)
 	engine.vk_destroy_buffer(vk_ctx, &gpu.lut_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.background_color_buffer)
 	engine.vk_destroy_buffer(vk_ctx, &gpu.spawn_control_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.shape_params_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.camera_buffer)
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		engine.vk_destroy_buffer(vk_ctx, &gpu.sim_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.vector_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.background_color_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.shape_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.camera_buffers[frame_slot])
+	}
+	for i in 0 ..< FLOW_RETIRED_VECTOR_FIELD_IMAGE_CAP {
+		flow_destroy_image(vk_ctx, &gpu.retired_vector_field_images[i].image)
+	}
 	flow_destroy_image(vk_ctx, &gpu.trail_image)
 	flow_destroy_image(vk_ctx, &gpu.default_image)
 	flow_destroy_image(vk_ctx, &gpu.vector_field_image)

@@ -12,6 +12,8 @@ UI_MAX_CLEAR_RECTS :: 4096
 UI_MAX_DRAW_BATCHES :: 4096
 UI_MAX_TEXTURES :: 32
 UI_BLEND_MODE_COUNT :: 4
+UI_BACKDROP_BLUR_VERTICES_PER_PASS :: 6
+UI_BACKDROP_BLUR_PASS_COUNT :: 2
 UI_STROKE_WIDTH :: f32(1)
 UI_IMAGE_GLYPH :: f32(-2)
 UI_SHADER_GLYPH_BASE :: f32(-10)
@@ -103,8 +105,9 @@ Ui_Texture :: struct {
 }
 
 Ui_Renderer :: struct {
-	vertex_buffer: Vk_Buffer,
+	vertex_buffers: [MAX_FRAMES_IN_FLIGHT]Vk_Buffer,
 	vertex_count: u32,
+	active_frame_slot: u32,
 	needs_backdrop_blur: bool,
 	clear_rects: [UI_MAX_CLEAR_RECTS]Ui_Clear_Rect,
 	clear_rect_count: u32,
@@ -118,7 +121,7 @@ Ui_Renderer :: struct {
 	backdrop_layouts: [UI_MAX_TEXTURES]vk.ImageLayout,
 	backdrop_render_pass: vk.RenderPass,
 	backdrop_blur_pipeline: Vk_Graphics_Pipeline,
-	backdrop_vertex_buffer: Vk_Buffer,
+	backdrop_vertex_buffers: [MAX_FRAMES_IN_FLIGHT]Vk_Buffer,
 	pipelines: [UI_BLEND_MODE_COUNT]Vk_Graphics_Pipeline,
 	font_atlases: [UI_FONT_TEXTURE_COUNT]Ui_Font_Atlas_Cache_Entry,
 	font_atlas_generation: u32,
@@ -130,20 +133,25 @@ Ui_Renderer :: struct {
 ui_renderer_init :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) -> bool {
 	renderer^ = {}
 	buffer_size := vk.DeviceSize(size_of(Ui_Vertex) * UI_MAX_VERTICES)
-	if !vk_create_host_buffer(ctx, buffer_size, {.VERTEX_BUFFER}, &renderer.vertex_buffer) {
-		log_error("ui_renderer_init: vertex buffer creation failed")
-		return false
+	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+		if !vk_create_host_buffer(ctx, buffer_size, {.VERTEX_BUFFER}, &renderer.vertex_buffers[i]) {
+			log_error("ui_renderer_init: vertex buffer creation failed frame_slot=", i)
+			ui_renderer_destroy(renderer, ctx)
+			return false
+		}
 	}
 	if !ui_renderer_create_texture_resources(renderer, ctx) {
 		log_error("ui_renderer_init: texture resources creation failed")
 		ui_renderer_destroy(renderer, ctx)
 		return false
 	}
-	blur_vertex_size := vk.DeviceSize(size_of(Ui_Vertex) * 6)
-	if !vk_create_host_buffer(ctx, blur_vertex_size, {.VERTEX_BUFFER}, &renderer.backdrop_vertex_buffer) {
-		log_error("ui_renderer_init: backdrop blur vertex buffer creation failed")
-		ui_renderer_destroy(renderer, ctx)
-		return false
+	blur_vertex_size := vk.DeviceSize(size_of(Ui_Vertex) * UI_BACKDROP_BLUR_VERTICES_PER_PASS * UI_BACKDROP_BLUR_PASS_COUNT)
+	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+		if !vk_create_host_buffer(ctx, blur_vertex_size, {.VERTEX_BUFFER}, &renderer.backdrop_vertex_buffers[i]) {
+			log_error("ui_renderer_init: backdrop blur vertex buffer creation failed frame_slot=", i)
+			ui_renderer_destroy(renderer, ctx)
+			return false
+		}
 	}
 	if !ui_renderer_create_backdrop_render_pass(renderer, ctx) {
 		log_error("ui_renderer_init: backdrop blur render pass creation failed")
@@ -187,8 +195,10 @@ ui_renderer_destroy :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) {
 	if renderer.descriptor_set_layout != vk.DescriptorSetLayout(0) {
 		vk.DestroyDescriptorSetLayout(ctx.device, renderer.descriptor_set_layout, nil)
 	}
-	vk_destroy_buffer(ctx, &renderer.backdrop_vertex_buffer)
-	vk_destroy_buffer(ctx, &renderer.vertex_buffer)
+	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+		vk_destroy_buffer(ctx, &renderer.backdrop_vertex_buffers[i])
+		vk_destroy_buffer(ctx, &renderer.vertex_buffers[i])
+	}
 	if renderer.text_shape_cache != nil {
 		delete(renderer.text_shape_cache)
 		renderer.text_shape_cache = nil
@@ -684,10 +694,16 @@ ui_renderer_upload_texture :: proc(ctx: ^Vk_Context, image: vk.Image, width, hei
 }
 
 ui_renderer_build :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, commands: []uifw.Draw_Command) -> bool {
-	if !renderer.ready || renderer.vertex_buffer.mapped == nil {
+	if !renderer.ready {
 		return false
 	}
-	out := cast([^]Ui_Vertex)renderer.vertex_buffer.mapped
+	frame_slot := ui_renderer_active_frame_slot(ctx)
+	vertex_buffer := &renderer.vertex_buffers[frame_slot]
+	if vertex_buffer.mapped == nil {
+		return false
+	}
+	renderer.active_frame_slot = frame_slot
+	out := cast([^]Ui_Vertex)vertex_buffer.mapped
 	count: int
 	renderer.batch_count = 0
 	renderer.clear_rect_count = 0
@@ -777,6 +793,11 @@ ui_renderer_draw :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, cmd: vk.Comma
 	if !renderer.ready || renderer.vertex_count == 0 {
 		return
 	}
+	frame_slot := min(renderer.active_frame_slot, u32(MAX_FRAMES_IN_FLIGHT - 1))
+	vertex_buffer := &renderer.vertex_buffers[frame_slot]
+	if vertex_buffer.handle == vk.Buffer(0) {
+		return
+	}
 
 	viewport := vk.Viewport {
 		x = 0,
@@ -792,7 +813,7 @@ ui_renderer_draw :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, cmd: vk.Comma
 	}
 	vk.CmdSetViewport(cmd, 0, 1, &viewport)
 	vk.CmdSetScissor(cmd, 0, 1, &scissor)
-	buffer := renderer.vertex_buffer.handle
+	buffer := vertex_buffer.handle
 	offset := vk.DeviceSize(0)
 	vk.CmdBindVertexBuffers(cmd, 0, 1, &buffer, &offset)
 	vk_cmd_count_ui_batches(ctx, renderer.batch_count)
@@ -910,16 +931,17 @@ ui_renderer_prepare_backdrop_blur :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Conte
 	vk_cmd_count_pipeline_barrier(ctx, u32(len(post_barriers)))
 	renderer.backdrop_layouts[UI_BACKDROP_SOURCE_TEXTURE_ID] = .SHADER_READ_ONLY_OPTIMAL
 
-	if !ui_renderer_run_backdrop_blur_pass(renderer, ctx, frame.command_buffer, UI_BACKDROP_SOURCE_TEXTURE_ID, UI_BACKDROP_TEMP_TEXTURE_ID, {1.85 / f32(renderer.backdrop_width), 0}) {
+	frame_slot := frame.frame_index % MAX_FRAMES_IN_FLIGHT
+	if !ui_renderer_run_backdrop_blur_pass(renderer, ctx, frame.command_buffer, frame_slot, UI_BACKDROP_SOURCE_TEXTURE_ID, UI_BACKDROP_TEMP_TEXTURE_ID, {1.85 / f32(renderer.backdrop_width), 0}, 0) {
 		return false
 	}
-	if !ui_renderer_run_backdrop_blur_pass(renderer, ctx, frame.command_buffer, UI_BACKDROP_TEMP_TEXTURE_ID, UI_BACKDROP_TEXTURE_ID, {0, 1.85 / f32(renderer.backdrop_height)}) {
+	if !ui_renderer_run_backdrop_blur_pass(renderer, ctx, frame.command_buffer, frame_slot, UI_BACKDROP_TEMP_TEXTURE_ID, UI_BACKDROP_TEXTURE_ID, {0, 1.85 / f32(renderer.backdrop_height)}, UI_BACKDROP_BLUR_VERTICES_PER_PASS) {
 		return false
 	}
 	return true
 }
 
-ui_renderer_run_backdrop_blur_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, cmd: vk.CommandBuffer, source_index, dest_index: int, texel_step: uifw.Vec2) -> bool {
+ui_renderer_run_backdrop_blur_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, cmd: vk.CommandBuffer, frame_slot: u32, source_index, dest_index: int, texel_step: uifw.Vec2, vertex_offset: u32) -> bool {
 	source := &renderer.textures[source_index]
 	dest := &renderer.textures[dest_index]
 	if !source.ready || !dest.ready || dest.framebuffer == vk.Framebuffer(0) {
@@ -970,9 +992,12 @@ ui_renderer_run_backdrop_blur_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Cont
 	vk.CmdSetViewport(cmd, 0, 1, &viewport)
 	vk.CmdSetScissor(cmd, 0, 1, &scissor)
 
-	ui_renderer_write_blur_quad(renderer, texel_step)
-	buffer := renderer.backdrop_vertex_buffer.handle
-	offset := vk.DeviceSize(0)
+	if !ui_renderer_write_blur_quad(renderer, frame_slot, vertex_offset, texel_step) {
+		vk.CmdEndRenderPass(cmd)
+		return false
+	}
+	buffer := renderer.backdrop_vertex_buffers[min(frame_slot, u32(MAX_FRAMES_IN_FLIGHT - 1))].handle
+	offset := vk.DeviceSize(size_of(Ui_Vertex) * int(vertex_offset))
 	vk.CmdBindVertexBuffers(cmd, 0, 1, &buffer, &offset)
 	vk.CmdBindPipeline(cmd, .GRAPHICS, renderer.backdrop_blur_pipeline.pipeline)
 	vk_cmd_count_pipeline_bind(ctx)
@@ -999,8 +1024,16 @@ ui_renderer_run_backdrop_blur_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Cont
 	return true
 }
 
-ui_renderer_write_blur_quad :: proc(renderer: ^Ui_Renderer, texel_step: uifw.Vec2) {
-	out := cast([^]Ui_Vertex)renderer.backdrop_vertex_buffer.mapped
+ui_renderer_write_blur_quad :: proc(renderer: ^Ui_Renderer, frame_slot, vertex_offset: u32, texel_step: uifw.Vec2) -> bool {
+	slot := min(frame_slot, u32(MAX_FRAMES_IN_FLIGHT - 1))
+	buffer := &renderer.backdrop_vertex_buffers[slot]
+	if buffer.mapped == nil || buffer.handle == vk.Buffer(0) {
+		return false
+	}
+	if vertex_offset + UI_BACKDROP_BLUR_VERTICES_PER_PASS > UI_BACKDROP_BLUR_VERTICES_PER_PASS * UI_BACKDROP_BLUR_PASS_COUNT {
+		return false
+	}
+	out := cast([^]Ui_Vertex)buffer.mapped
 	effect := uifw.Color{texel_step.x, texel_step.y, 0, 0}
 	verts := [?]Ui_Vertex {
 		{{-1, -1}, {1, 1, 1, 1}, {0, 1}, UI_IMAGE_GLYPH, effect},
@@ -1011,8 +1044,9 @@ ui_renderer_write_blur_quad :: proc(renderer: ^Ui_Renderer, texel_step: uifw.Vec
 		{{-1,  1}, {1, 1, 1, 1}, {0, 0}, UI_IMAGE_GLYPH, effect},
 	}
 	for vertex, i in verts {
-		out[i] = vertex
+		out[int(vertex_offset) + i] = vertex
 	}
+	return true
 }
 
 ui_renderer_draw_clear_fallback :: proc(renderer: ^Ui_Renderer, cmd: vk.CommandBuffer) {
@@ -1364,6 +1398,13 @@ ui_renderer_blend_index :: proc(mode: uifw.Gui_Blend_Mode) -> u32 {
 		return 3
 	}
 	return 0
+}
+
+ui_renderer_active_frame_slot :: proc(ctx: ^Vk_Context) -> u32 {
+	if ctx == nil {
+		return 0
+	}
+	return ctx.current_frame % MAX_FRAMES_IN_FLIGHT
 }
 
 ui_renderer_add_batch :: proc(renderer: ^Ui_Renderer, first, count, texture_index, blend_mode: u32) {

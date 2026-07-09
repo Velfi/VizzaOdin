@@ -7,6 +7,8 @@ import "core:math"
 import "core:strings"
 
 COLOR_SCHEME_EDITOR_MAX_STOPS :: 16
+// Keep the mini/modal editor compiled but unavailable until it is ready to ship.
+COLOR_SCHEME_MINI_EDITOR_ENABLED :: false
 
 Color_Scheme_Editor_Stop :: struct {
 	position: f32,
@@ -106,24 +108,55 @@ color_scheme_editor_draw_selector :: proc(ctx: ^uifw.Gui_Context, editor: ^Color
 	uifw.gui_push_id(ctx, key_prefix)
 	color_names := color_scheme_available_names_cached()
 	if len(color_names) > 0 {
-		color_index := color_scheme_index_of(color_names, color_scheme_name_get(color_name))
-		if uifw.gui_combobox(ctx, color_scheme_name_get(color_name), "color_scheme", &color_index, color_names, editor.selector_query[:]) {
-			color_index = max(min(color_index, len(color_names) - 1), 0)
-			color_scheme_name_set(color_name, color_names[color_index])
-			changed = true
-		}
+		changed = color_scheme_editor_draw_scheme_picker(ctx, color_name, color_names, editor.selector_query[:]) || changed
 	}
 	if uifw.gui_toggle(ctx, fmt.tprintf("Reverse Colors: %v", reversed^), "reverse_colors", reversed) {
 		changed = true
 	}
-	if uifw.gui_button(ctx, "Edit Color Scheme", "edit_color_scheme") {
-		editor.modal_open = true
-		editor.modal_scroll = 0
-		if color_name != nil {
-			color_scheme_name_set(&editor.modal_original_name, color_scheme_name_get(color_name))
+	if COLOR_SCHEME_MINI_EDITOR_ENABLED {
+		if uifw.gui_button(ctx, "Edit Color Scheme", "edit_color_scheme") {
+			editor.modal_open = true
+			editor.modal_scroll = 0
+			if color_name != nil {
+				color_scheme_name_set(&editor.modal_original_name, color_scheme_name_get(color_name))
+			}
 		}
 	}
 	uifw.gui_pop_id(ctx)
+	return changed
+}
+
+color_scheme_editor_draw_scheme_picker :: proc(ctx: ^uifw.Gui_Context, color_name: ^Color_Scheme_Name, color_names: []string, query_buffer: []u8) -> bool {
+	color_index := color_scheme_index_of(color_names, color_scheme_name_get(color_name))
+	row := uifw.gui_next_rect(ctx)
+	arrow_w := min(max(row.h, f32(35)), row.w * 0.22)
+	left := uifw.Rect{row.x, row.y, arrow_w, row.h}
+	right := uifw.Rect{row.x + row.w - arrow_w, row.y, arrow_w, row.h}
+	center := uifw.Rect{row.x + arrow_w, row.y, max(row.w - arrow_w * 2, 0), row.h}
+	changed := false
+
+	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "color_scheme_previous"), left, -1, true) {
+		color_index = (color_index - 1 + len(color_names)) % len(color_names)
+		color_scheme_name_set(color_name, color_names[color_index])
+		changed = true
+	}
+	uifw.gui_tooltip(ctx, left, "Previous color scheme")
+
+	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "color_scheme_next"), right, 1, true) {
+		color_index = (color_index + 1) % len(color_names)
+		color_scheme_name_set(color_name, color_names[color_index])
+		changed = true
+	}
+	uifw.gui_tooltip(ctx, right, "Next color scheme")
+
+	uifw.gui_layout_begin(ctx, center, .Column, 0, center.h)
+	if uifw.gui_combobox(ctx, color_scheme_name_get(color_name), "color_scheme", &color_index, color_names, query_buffer) {
+		color_index = max(min(color_index, len(color_names) - 1), 0)
+		color_scheme_name_set(color_name, color_names[color_index])
+		changed = true
+	}
+	uifw.gui_layout_end(ctx)
+
 	return changed
 }
 
@@ -196,6 +229,11 @@ color_scheme_editor_draw :: proc(ctx: ^uifw.Gui_Context, editor: ^Color_Scheme_E
 }
 
 color_scheme_editor_draw_modal :: proc(ctx: ^uifw.Gui_Context, editor: ^Color_Scheme_Editor_State, color_name: ^Color_Scheme_Name) -> bool {
+	if !COLOR_SCHEME_MINI_EDITOR_ENABLED {
+		editor.modal_open = false
+		editor.modal_scroll = 0
+		return false
+	}
 	if !editor.initialized {
 		color_scheme_editor_init(editor)
 	}

@@ -69,10 +69,10 @@ passes.
 
 ![Gradient Editor Example](https://raw.githubusercontent.com/Velfi/Vizza/main/example-gradient-editor.png)
 
-### Voronoi CA
+### Voronoi
 
-Cellular automata playground driven by nearest-neighbor Voronoi regions and
-local state transitions.
+Nearest-site Voronoi regions with drifting points, color-map modes, and
+optional borders.
 
 ### Moire
 

@@ -19,12 +19,18 @@ MOIRE_PRESENT_VERTEX_ENTRY :: cstring("main")
 MOIRE_PRESENT_FRAGMENT_ENTRY :: cstring("main")
 MOIRE_IMAGE_FORMAT :: vk.Format(.R8G8B8A8_UNORM)
 MOIRE_WORKGROUP_SIZE :: u32(8)
+MOIRE_RETIRED_IMAGE_TEXTURE_CAP :: 4
 
 Moire_Image :: struct {
 	handle: vk.Image,
 	memory: vk.DeviceMemory,
 	view: vk.ImageView,
 	layout: vk.ImageLayout,
+}
+
+Moire_Retired_Image_Texture :: struct {
+	image: Moire_Image,
+	pending_frame_slots: u32,
 }
 
 Moire_Params :: struct #align(16) {
@@ -81,17 +87,18 @@ Moire_Gpu_State :: struct {
 	texture_set_layout: vk.DescriptorSetLayout,
 	camera_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool: vk.DescriptorPool,
-	compute_sets: [2]vk.DescriptorSet,
-	texture_sets: [2]vk.DescriptorSet,
-	camera_set: vk.DescriptorSet,
-	params_buffer: engine.Vk_Buffer,
+	compute_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
+	texture_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
+	camera_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	lut_buffer: engine.Vk_Buffer,
-	render_params_buffer: engine.Vk_Buffer,
-	camera_buffer: engine.Vk_Buffer,
+	render_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	camera_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	sampler: vk.Sampler,
 	lut_uploaded_scheme: Color_Scheme_Name,
 	lut_uploaded_reversed: bool,
 	image_texture: Moire_Image,
+	retired_image_textures: [MOIRE_RETIRED_IMAGE_TEXTURE_CAP]Moire_Retired_Image_Texture,
 	image_loaded: bool,
 	image_path: [MAX_FILE_PATH]u8,
 	image_fit_uploaded: Vector_Image_Fit_Mode,
@@ -130,24 +137,28 @@ moire_gpu_ensure :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context, widt
 			return false
 		}
 	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Moire_Params)), {.UNIFORM_BUFFER}, &gpu.params_buffer) {
-		moire_gpu_destroy(gpu, vk_ctx)
-		return false
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Moire_Params)), {.UNIFORM_BUFFER}, &gpu.params_buffers[frame_slot]) {
+			moire_gpu_destroy(gpu, vk_ctx)
+			return false
+		}
 	}
 	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT), {.STORAGE_BUFFER}, &gpu.lut_buffer) {
 		moire_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Moire_Render_Params)), {.UNIFORM_BUFFER}, &gpu.render_params_buffer) {
-		moire_gpu_destroy(gpu, vk_ctx)
-		return false
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Moire_Render_Params)), {.UNIFORM_BUFFER}, &gpu.render_params_buffers[frame_slot]) {
+			moire_gpu_destroy(gpu, vk_ctx)
+			return false
+		}
+		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Moire_Camera)), {.UNIFORM_BUFFER}, &gpu.camera_buffers[frame_slot]) {
+			moire_gpu_destroy(gpu, vk_ctx)
+			return false
+		}
+		moire_upload_render_params(gpu, frame_slot)
+		moire_upload_camera(gpu, frame_slot)
 	}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Moire_Camera)), {.UNIFORM_BUFFER}, &gpu.camera_buffer) {
-		moire_gpu_destroy(gpu, vk_ctx)
-		return false
-	}
-	moire_upload_render_params(gpu)
-	moire_upload_camera(gpu)
 	if !moire_create_sampler(gpu, vk_ctx) {
 		moire_gpu_destroy(gpu, vk_ctx)
 		return false
@@ -267,6 +278,42 @@ moire_destroy_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Moire_Image) {
 	image^ = {}
 }
 
+moire_frame_slot_mask :: proc() -> u32 {
+	return (u32(1) << u32(engine.MAX_FRAMES_IN_FLIGHT)) - 1
+}
+
+moire_collect_retired_image_textures :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
+	bit := u32(1) << u32(frame_slot)
+	for i in 0 ..< MOIRE_RETIRED_IMAGE_TEXTURE_CAP {
+		retired := &gpu.retired_image_textures[i]
+		if retired.pending_frame_slots == 0 {
+			continue
+		}
+		retired.pending_frame_slots = retired.pending_frame_slots & (~bit)
+		if retired.pending_frame_slots == 0 {
+			moire_destroy_image(vk_ctx, &retired.image)
+		}
+	}
+}
+
+moire_retire_image_texture :: proc(gpu: ^Moire_Gpu_State) -> bool {
+	if gpu.image_texture.handle == vk.Image(0) {
+		gpu.image_texture = {}
+		return true
+	}
+	for i in 0 ..< MOIRE_RETIRED_IMAGE_TEXTURE_CAP {
+		retired := &gpu.retired_image_textures[i]
+		if retired.pending_frame_slots == 0 {
+			retired.image = gpu.image_texture
+			retired.pending_frame_slots = moire_frame_slot_mask()
+			gpu.image_texture = {}
+			return true
+		}
+	}
+	engine.log_warn("moire: image texture retire slots exhausted")
+	return false
+}
+
 moire_upload_sampled_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Moire_Image, width, height: u32, pixels: []u8) -> bool {
 	if !vk_ctx.frame_resources_ready || image.handle == vk.Image(0) || len(pixels) < int(width * height * 4) {
 		return false
@@ -358,15 +405,21 @@ moire_gpu_load_image_path :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Cont
 		}
 	}
 
-	moire_destroy_image(vk_ctx, &gpu.image_texture)
-	if !moire_create_sampled_image(vk_ctx, &gpu.image_texture, u32(target_width), u32(target_height)) {
+	new_texture: Moire_Image
+	if !moire_create_sampled_image(vk_ctx, &new_texture, u32(target_width), u32(target_height)) {
 		gpu.image_loaded = false
 		return false
 	}
-	if !moire_upload_sampled_image(vk_ctx, &gpu.image_texture, u32(target_width), u32(target_height), pixels) {
+	if !moire_upload_sampled_image(vk_ctx, &new_texture, u32(target_width), u32(target_height), pixels) {
+		moire_destroy_image(vk_ctx, &new_texture)
 		gpu.image_loaded = false
 		return false
 	}
+	if !moire_retire_image_texture(gpu) {
+		moire_destroy_image(vk_ctx, &new_texture)
+		return false
+	}
+	gpu.image_texture = new_texture
 	write_fixed_string(gpu.image_path[:], path)
 	gpu.image_fit_uploaded = settings.image_fit_mode
 	gpu.image_mirror_horizontal_uploaded = settings.image_mirror_horizontal
@@ -375,7 +428,6 @@ moire_gpu_load_image_path :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Cont
 	gpu.image_width = i32(target_width)
 	gpu.image_height = i32(target_height)
 	gpu.image_loaded = true
-	moire_update_all_descriptors(gpu, vk_ctx)
 	return true
 }
 
@@ -413,19 +465,19 @@ moire_upload_lut :: proc(gpu: ^Moire_Gpu_State, settings: ^Moire_Settings) -> bo
 	return true
 }
 
-moire_upload_render_params :: proc(gpu: ^Moire_Gpu_State) {
-	if gpu.render_params_buffer.mapped == nil {
+moire_upload_render_params :: proc(gpu: ^Moire_Gpu_State, frame_slot: int) {
+	if gpu.render_params_buffers[frame_slot].mapped == nil {
 		return
 	}
-	params := cast(^Moire_Render_Params)gpu.render_params_buffer.mapped
+	params := cast(^Moire_Render_Params)gpu.render_params_buffers[frame_slot].mapped
 	params^ = {filtering_mode = 1}
 }
 
-moire_upload_camera :: proc(gpu: ^Moire_Gpu_State) {
-	if gpu.camera_buffer.mapped == nil {
+moire_upload_camera :: proc(gpu: ^Moire_Gpu_State, frame_slot: int) {
+	if gpu.camera_buffers[frame_slot].mapped == nil {
 		return
 	}
-	camera := cast(^Moire_Camera)gpu.camera_buffer.mapped
+	camera := cast(^Moire_Camera)gpu.camera_buffers[frame_slot].mapped
 	camera^ = {
 		transform_matrix = {
 			1, 0, 0, 0,
@@ -480,44 +532,52 @@ moire_create_descriptors :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Conte
 		return false
 	}
 	pool_sizes := [4]vk.DescriptorPoolSize {
-		{type = .STORAGE_IMAGE, descriptorCount = 2},
-		{type = .SAMPLED_IMAGE, descriptorCount = 8},
-		{type = .SAMPLER, descriptorCount = 4},
-		{type = .UNIFORM_BUFFER, descriptorCount = 5},
+		{type = .STORAGE_IMAGE, descriptorCount = 2 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .SAMPLED_IMAGE, descriptorCount = 8 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .SAMPLER, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .UNIFORM_BUFFER, descriptorCount = 5 * engine.MAX_FRAMES_IN_FLIGHT},
 	}
-	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 5}
+	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 5 * engine.MAX_FRAMES_IN_FLIGHT}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {
 		return false
 	}
-	layouts := [5]vk.DescriptorSetLayout{gpu.compute_set_layout, gpu.compute_set_layout, gpu.texture_set_layout, gpu.texture_set_layout, gpu.camera_set_layout}
-	sets: [5]vk.DescriptorSet
-	alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = u32(len(layouts)), pSetLayouts = raw_data(layouts[:])}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {
-		return false
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		layouts := [5]vk.DescriptorSetLayout{gpu.compute_set_layout, gpu.compute_set_layout, gpu.texture_set_layout, gpu.texture_set_layout, gpu.camera_set_layout}
+		sets: [5]vk.DescriptorSet
+		alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = u32(len(layouts)), pSetLayouts = raw_data(layouts[:])}
+		if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {
+			return false
+		}
+		gpu.compute_sets[frame_slot][0] = sets[0]
+		gpu.compute_sets[frame_slot][1] = sets[1]
+		gpu.texture_sets[frame_slot][0] = sets[2]
+		gpu.texture_sets[frame_slot][1] = sets[3]
+		gpu.camera_sets[frame_slot] = sets[4]
 	}
-	gpu.compute_sets[0] = sets[0]
-	gpu.compute_sets[1] = sets[1]
-	gpu.texture_sets[0] = sets[2]
-	gpu.texture_sets[1] = sets[3]
-	gpu.camera_set = sets[4]
 	moire_update_all_descriptors(gpu, vk_ctx)
 	return true
 }
 
 moire_update_all_descriptors :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context) {
-	for write_index in 0 ..< 2 {
-		read_index := 1 - write_index
-		moire_update_compute_descriptor(gpu, vk_ctx, read_index, write_index)
-		moire_update_texture_descriptor(gpu, vk_ctx, write_index)
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		for write_index in 0 ..< 2 {
+			read_index := 1 - write_index
+			moire_update_compute_descriptor(gpu, vk_ctx, frame_slot, read_index, write_index)
+			moire_update_texture_descriptor(gpu, vk_ctx, frame_slot, write_index)
+		}
+		moire_update_camera_descriptor(gpu, vk_ctx, frame_slot)
 	}
-	camera_info := vk.DescriptorBufferInfo{buffer = gpu.camera_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Moire_Camera))}
-	write := vk.WriteDescriptorSet{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.camera_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info}
+}
+
+moire_update_camera_descriptor :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
+	camera_info := vk.DescriptorBufferInfo{buffer = gpu.camera_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Moire_Camera))}
+	write := vk.WriteDescriptorSet{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.camera_sets[frame_slot], dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info}
 	vk.UpdateDescriptorSets(vk_ctx.device, 1, &write, 0, nil)
 }
 
-moire_update_compute_descriptor :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context, read_index, write_index: int) {
+moire_update_compute_descriptor :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot, read_index, write_index: int) {
 	output_info := vk.DescriptorImageInfo{imageLayout = .GENERAL, imageView = gpu.images[write_index].view}
-	params_info := vk.DescriptorBufferInfo{buffer = gpu.params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Moire_Params))}
+	params_info := vk.DescriptorBufferInfo{buffer = gpu.params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Moire_Params))}
 	lut_info := vk.DescriptorBufferInfo{buffer = gpu.lut_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT)}
 	prev_info := vk.DescriptorImageInfo{imageLayout = .GENERAL, imageView = gpu.images[read_index].view}
 	sampler_info := vk.DescriptorImageInfo{sampler = gpu.sampler}
@@ -525,25 +585,27 @@ moire_update_compute_descriptor :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.V
 	if gpu.image_loaded && gpu.image_texture.view != vk.ImageView(0) {
 		image_info = vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.image_texture.view}
 	}
+	set := gpu.compute_sets[frame_slot][write_index]
 	writes := [6]vk.WriteDescriptorSet {
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.compute_sets[write_index], dstBinding = 0, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &output_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.compute_sets[write_index], dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.compute_sets[write_index], dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.compute_sets[write_index], dstBinding = 3, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &prev_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.compute_sets[write_index], dstBinding = 4, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.compute_sets[write_index], dstBinding = 5, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 0, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &output_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 3, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &prev_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 4, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 5, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
 	}
 	vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 }
 
-moire_update_texture_descriptor :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context, index: int) {
+moire_update_texture_descriptor :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot, index: int) {
 	image_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.images[index].view}
 	sampler_info := vk.DescriptorImageInfo{sampler = gpu.sampler}
-	params_info := vk.DescriptorBufferInfo{buffer = gpu.render_params_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Moire_Render_Params))}
+	params_info := vk.DescriptorBufferInfo{buffer = gpu.render_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Moire_Render_Params))}
+	set := gpu.texture_sets[frame_slot][index]
 	writes := [3]vk.WriteDescriptorSet {
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.texture_sets[index], dstBinding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.texture_sets[index], dstBinding = 1, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.texture_sets[index], dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 1, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
 	}
 	vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
 }
@@ -646,11 +708,11 @@ moire_transition_image :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context
 	gpu.images[index].layout = new_layout
 }
 
-moire_write_params :: proc(gpu: ^Moire_Gpu_State, settings: ^Moire_Settings, time: f32) {
-	if gpu.params_buffer.mapped == nil {
+moire_write_params :: proc(gpu: ^Moire_Gpu_State, frame_slot: int, settings: ^Moire_Settings, time: f32) {
+	if gpu.params_buffers[frame_slot].mapped == nil {
 		return
 	}
-	params := cast(^Moire_Params)gpu.params_buffer.mapped
+	params := cast(^Moire_Params)gpu.params_buffers[frame_slot].mapped
 	params^ = {
 		time = time,
 		width = f32(gpu.width),
@@ -685,19 +747,24 @@ moire_gpu_step :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: v
 	if !moire_gpu_ensure(gpu, vk_ctx, width, height) {
 		return
 	}
+	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
 	lut_changed := moire_upload_lut(gpu, settings)
-	moire_write_params(gpu, settings, time)
-	if paused && !lut_changed {
-		return
-	}
+	moire_write_params(gpu, frame_slot, settings, time)
 	read_index := int(gpu.state_index)
 	write_index := 1 - read_index
+	if paused && !lut_changed {
+		moire_update_compute_descriptor(gpu, vk_ctx, frame_slot, read_index, write_index)
+		moire_collect_retired_image_textures(gpu, vk_ctx, frame_slot)
+		return
+	}
 	moire_transition_image(gpu, vk_ctx, read_index, .GENERAL, cmd)
 	moire_transition_image(gpu, vk_ctx, write_index, .GENERAL, cmd)
-	moire_update_compute_descriptor(gpu, vk_ctx, read_index, write_index)
+	moire_update_compute_descriptor(gpu, vk_ctx, frame_slot, read_index, write_index)
+	moire_collect_retired_image_textures(gpu, vk_ctx, frame_slot)
 	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.compute_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.compute_pipeline.layout, 0, 1, &gpu.compute_sets[write_index], 0, nil)
+	compute_set := gpu.compute_sets[frame_slot][write_index]
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.compute_pipeline.layout, 0, 1, &compute_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	group_x := (u32(gpu.width) + MOIRE_WORKGROUP_SIZE - 1) / MOIRE_WORKGROUP_SIZE
 	group_y := (u32(gpu.height) + MOIRE_WORKGROUP_SIZE - 1) / MOIRE_WORKGROUP_SIZE
@@ -719,10 +786,11 @@ moire_gpu_present_viewport :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Con
 	if !gpu.ready || gpu.present_pipeline.pipeline == vk.Pipeline(0) {
 		return
 	}
+	frame_slot := int(frame.frame_index)
 	index := int(gpu.state_index)
 	moire_transition_image(gpu, vk_ctx, index, .SHADER_READ_ONLY_OPTIMAL, frame.command_buffer)
-	moire_update_texture_descriptor(gpu, vk_ctx, index)
-	moire_upload_camera(gpu)
+	moire_update_texture_descriptor(gpu, vk_ctx, frame_slot, index)
+	moire_upload_camera(gpu, frame_slot)
 	moire_gpu_draw_prepared_viewport(gpu, vk_ctx, frame, viewport, scissor)
 }
 
@@ -730,6 +798,7 @@ moire_gpu_draw_prepared_viewport :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.
 	if !gpu.ready || gpu.present_pipeline.pipeline == vk.Pipeline(0) {
 		return
 	}
+	frame_slot := int(frame.frame_index)
 	index := int(gpu.state_index)
 	local_viewport := viewport
 	local_scissor := scissor
@@ -737,8 +806,10 @@ moire_gpu_draw_prepared_viewport :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.
 	vk.CmdSetScissor(frame.command_buffer, 0, 1, &local_scissor)
 	vk.CmdBindPipeline(frame.command_buffer, .GRAPHICS, gpu.present_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.present_pipeline.layout, 0, 1, &gpu.texture_sets[index], 0, nil)
-	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.present_pipeline.layout, 1, 1, &gpu.camera_set, 0, nil)
+	texture_set := gpu.texture_sets[frame_slot][index]
+	camera_set := gpu.camera_sets[frame_slot]
+	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.present_pipeline.layout, 0, 1, &texture_set, 0, nil)
+	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.present_pipeline.layout, 1, 1, &camera_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDraw(frame.command_buffer, 6, 25, 0, 0)
 	engine.vk_cmd_count_draw(vk_ctx)
@@ -765,20 +836,25 @@ moire_gpu_destroy :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context) {
 	if gpu.texture_set_layout != vk.DescriptorSetLayout(0) {
 		vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.texture_set_layout, nil)
 	}
-	if gpu.camera_set_layout != vk.DescriptorSetLayout(0) {
-		vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.camera_set_layout, nil)
+		if gpu.camera_set_layout != vk.DescriptorSetLayout(0) {
+			vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.camera_set_layout, nil)
+		}
+		if gpu.sampler != vk.Sampler(0) {
+			vk.DestroySampler(vk_ctx.device, gpu.sampler, nil)
+		}
+		moire_destroy_image(vk_ctx, &gpu.image_texture)
+		for i in 0 ..< MOIRE_RETIRED_IMAGE_TEXTURE_CAP {
+			moire_destroy_image(vk_ctx, &gpu.retired_image_textures[i].image)
+		}
+		for i in 0 ..< 2 {
+			moire_destroy_image(vk_ctx, &gpu.images[i])
+		}
+	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
+		engine.vk_destroy_buffer(vk_ctx, &gpu.params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.render_params_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.camera_buffers[frame_slot])
 	}
-	if gpu.sampler != vk.Sampler(0) {
-		vk.DestroySampler(vk_ctx.device, gpu.sampler, nil)
-	}
-	moire_destroy_image(vk_ctx, &gpu.image_texture)
-	for i in 0 ..< 2 {
-		moire_destroy_image(vk_ctx, &gpu.images[i])
-	}
-	engine.vk_destroy_buffer(vk_ctx, &gpu.params_buffer)
 	engine.vk_destroy_buffer(vk_ctx, &gpu.lut_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.render_params_buffer)
-	engine.vk_destroy_buffer(vk_ctx, &gpu.camera_buffer)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.compute_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.present_vertex_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.present_fragment_shader)
