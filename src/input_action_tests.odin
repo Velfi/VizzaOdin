@@ -133,19 +133,34 @@ test_space_resolves_distinct_pause_and_control_deck_actions :: proc(t: ^testing.
 	app := new(host.App_State)
 	defer free(app)
 	host.app_apply_key_event(app, sdl.K_SPACE, .SPACE, true)
-	pressed := host.app_resolve_input_actions(app, 1.0 / 60.0)
-	testing.expect(t, pressed.pause.pressed)
-	testing.expect(t, pressed.control_deck.pressed)
-	testing.expect_value(t, pressed.pause.owner, game.Input_Action_Source.Mouse_Keyboard)
-	testing.expect_value(t, pressed.control_deck.owner, game.Input_Action_Source.Mouse_Keyboard)
+	held := host.app_resolve_input_actions(app, 1.0 / 60.0)
+	testing.expect(t, !held.pause.pressed)
+	testing.expect(t, !held.control_deck.pressed)
 
 	app.input.key_space = false
 	app.input.key_space_pressed = false
 	app.keyboard_action_released = {}
 	host.app_apply_key_event(app, sdl.K_SPACE, .SPACE, false)
 	released := host.app_resolve_input_actions(app, 1.0 / 60.0)
+	testing.expect(t, released.pause.pressed)
+	testing.expect(t, released.control_deck.pressed)
 	testing.expect(t, released.pause.released)
 	testing.expect(t, released.control_deck.released)
+	testing.expect_value(t, released.pause.owner, game.Input_Action_Source.Mouse_Keyboard)
+	testing.expect_value(t, released.control_deck.owner, game.Input_Action_Source.Mouse_Keyboard)
+}
+
+@(test)
+test_space_left_drag_consumes_standalone_space_actions :: proc(t: ^testing.T) {
+	app := new(host.App_State)
+	defer free(app)
+	host.app_apply_key_event(app, sdl.K_SPACE, .SPACE, true)
+	host.app_apply_mouse_button_event(app, 1, 100, 100, true)
+	host.app_apply_mouse_button_event(app, 1, 120, 100, false)
+	host.app_apply_key_event(app, sdl.K_SPACE, .SPACE, false)
+	actions := host.app_resolve_input_actions(app, 1.0 / 60.0)
+	testing.expect(t, !actions.pause.pressed)
+	testing.expect(t, !actions.control_deck.pressed)
 }
 
 @(test)
@@ -167,8 +182,10 @@ test_letter_shortcut_profile_routes_pause_ui_and_help_semantically :: proc(t: ^t
 	host.app_apply_key_event(app, sdl.K_SPACE, .SPACE, true)
 	space := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, !space.pause.pressed)
-	testing.expect(t, space.control_deck.pressed)
+	testing.expect(t, !space.control_deck.pressed)
 	host.app_apply_key_event(app, sdl.K_SPACE, .SPACE, false)
+	space_released := host.app_resolve_input_actions(app, 1.0 / 60.0)
+	testing.expect(t, space_released.control_deck.pressed)
 
 	app.input.toggle_ui = false
 	app.keyboard_action_released = {}
@@ -369,14 +386,14 @@ test_keyboard_profile_change_releases_held_semantic_shortcuts :: proc(t: ^testin
 	app.settings = game.settings_default()
 	host.app_apply_key_event(app, sdl.K_SPACE, .SPACE, true)
 	pressed := host.app_resolve_input_actions(app, 1.0 / 60.0)
-	testing.expect(t, pressed.pause.down)
+	testing.expect(t, !pressed.pause.down)
 
 	changed := app.settings
 	game.settings_apply_keyboard_profile(&changed, "Letter Shortcuts")
 	host.app_apply_settings(app, changed)
 	testing.expect(t, !app.keyboard_pause_down)
 	released := host.app_resolve_input_actions(app, 1.0 / 60.0)
-	testing.expect(t, released.pause.released)
+	testing.expect(t, !released.pause.released)
 	testing.expect(t, !released.pause.down)
 }
 

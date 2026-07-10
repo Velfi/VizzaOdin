@@ -29,6 +29,7 @@ App_State :: struct {
 	last_frame_tick: time.Tick,
 	input: uifw.Input_State,
 	held_mouse_button: u32,
+	space_pan_consumed: bool,
 	input_sequence: u64,
 	last_mouse_keyboard_input_sequence: u64,
 	last_controller_input_sequence: u64,
@@ -418,6 +419,9 @@ app_poll_events :: proc(app: ^App_State) {
 
 app_apply_mouse_button_event :: proc(app: ^App_State, button: u32, x, y: f32, down: bool) {
 	app.input.mouse_pos = {x, y}
+	if down && button == 1 && app.input.key_space_down {
+		app.space_pan_consumed = true
+	}
 	if down {
 		app.input.mouse_down = true
 		app.input.mouse_pressed = true
@@ -495,15 +499,29 @@ app_apply_key_event :: proc(app: ^App_State, key: sdl.Keycode, scancode: sdl.Sca
 	if down && is_repeat && app_key_is_non_repeating_action(key, scancode) {
 		return
 	}
+	space_key := app_key_matches(key, scancode, sdl.K_SPACE, .SPACE)
+	space_tap_release := space_key && !down && app.input.key_space_down && !app.space_pan_consumed
 	if app_key_matches_pause_shortcut(app.settings, key, scancode) {
 		if down && is_repeat {return}
-		if !down && app.keyboard_pause_down {app.keyboard_action_released.pause = true}
-		app.keyboard_pause_down = down
-		if down {
+		if space_key {
+			// Space is both a standalone shortcut and the laptop pan modifier.
+			// Resolve it on release so holding Space before clicking cannot pause
+			// before the camera chord is known.
+			app.keyboard_pause_down = false
+			if space_tap_release {
+				app.keyboard_pause_pressed = true
+				app.keyboard_action_released.pause = true
+				app.input.pause = true
+			}
+		} else {
+			if !down && app.keyboard_pause_down {app.keyboard_action_released.pause = true}
+			app.keyboard_pause_down = down
+		}
+		if down && !space_key {
 			app.keyboard_pause_pressed = true
 			app.input.pause = true
 		}
-		if !app_key_matches(key, scancode, sdl.K_SPACE, .SPACE) {return}
+		if !space_key {return}
 	}
 	if app_key_matches_toggle_ui_shortcut(app.settings, key, scancode) {
 		if down && is_repeat {return}
@@ -596,14 +614,17 @@ app_apply_key_event :: proc(app: ^App_State, key: sdl.Keycode, scancode: sdl.Sca
 		if down {app.input.key_slash = true}
 	} else if app_key_matches(key, scancode, sdl.K_SPACE, .SPACE) {
 		if down && !app.input.key_space_down {
-			app.input.key_space = true
-			app.input.key_space_pressed = true
+			app.space_pan_consumed = false
 		} else if !down && app.input.key_space_down {
 			app.input.key_space_released = true
-			app.keyboard_action_released.pause = true
 			app.keyboard_action_released.control_deck = true
+			if space_tap_release {
+				app.input.key_space = true
+				app.input.key_space_pressed = true
+			}
 		}
 		app.input.key_space_down = down
+		if !down {app.space_pan_consumed = false}
 	} else if key == sdl.K_LSHIFT || key == sdl.K_RSHIFT || scancode == .LSHIFT || scancode == .RSHIFT {
 		app.input.key_shift = down
 	} else if key == sdl.K_LCTRL || key == sdl.K_RCTRL || scancode == .LCTRL || scancode == .RCTRL {
@@ -1128,7 +1149,7 @@ app_resolve_input_actions :: proc(app: ^App_State, delta_time: f32) -> Input_Act
 		controller_released = app.controller_action_released.toggle_ui,
 	})
 	actions.control_deck = input_action_resolve_button(&app.action_resolver.control_deck, {
-		mouse_keyboard_down = app.input.key_space_down,
+		mouse_keyboard_down = false,
 		mouse_keyboard_pressed = app.input.key_space || app.input.key_space_pressed,
 		mouse_keyboard_released = app.keyboard_action_released.control_deck,
 	})
@@ -1370,7 +1391,8 @@ app_send_frame :: proc(app: ^App_State) {
 		key_f1 = app.input.key_f1,
 		key_slash = app.input.key_slash,
 		key_space = app.input.key_space,
-		key_space_down = app.input.key_space_down,
+		key_space_down = false,
+		camera_pan_modifier_down = app.input.key_space_down,
 		key_space_pressed = app.input.key_space_pressed,
 		key_space_released = app.input.key_space_released,
 	}

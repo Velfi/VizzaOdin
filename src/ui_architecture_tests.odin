@@ -1101,7 +1101,7 @@ test_app_ui_virtual_controller_cursor_remains_visible_for_hidden_canvas :: proc(
 test_app_ui_camera_pan_gestures_never_reach_simulation_interaction :: proc(t: ^testing.T) {
 	inputs := [?]game.Ui_Frame_Input{
 		game.Ui_Frame_Input{window_width = 1280, window_height = 720, mouse_pos = {640, 360}, mouse_down = true, mouse_pressed = true, mouse_button = 2},
-		game.Ui_Frame_Input{window_width = 1280, window_height = 720, mouse_pos = {640, 360}, mouse_down = true, mouse_pressed = true, mouse_button = 1, key_space = true, key_space_down = true, key_space_pressed = true, pause = true},
+		game.Ui_Frame_Input{window_width = 1280, window_height = 720, mouse_pos = {640, 360}, mouse_down = true, mouse_pressed = true, mouse_button = 1, camera_pan_modifier_down = true},
 	}
 	for input in inputs {
 		ctx: uifw.Gui_Context
@@ -1137,10 +1137,25 @@ test_app_ui_primary_drag_stays_interaction_when_space_is_pressed_mid_gesture :: 
 
 	continued := game.app_ui_simulation_filter_input(&ui, &ctx, {
 		window_width = 1280, window_height = 720, mouse_pos = {650, 360},
-		mouse_down = true, mouse_button = 1, key_space_down = true,
+		mouse_down = true, mouse_button = 1, camera_pan_modifier_down = true,
 	})
 	testing.expect(t, !continued.camera_pan_down)
 	testing.expect(t, continued.mouse_down)
+}
+
+@(test)
+test_gui_middle_mouse_cannot_activate_regular_controls :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	uifw.gui_begin_frame(&ctx, {
+		mouse_pos = {20, 20}, mouse_down = true, mouse_pressed = true, mouse_button = 2,
+	})
+	id := uifw.gui_make_id(&ctx, "middle_button")
+	pressed := uifw.gui_button_at(&ctx, id, {0, 0, 100, 40}, "Button", true)
+	uifw.gui_end_frame(&ctx)
+	testing.expect(t, !pressed)
+	testing.expect_value(t, ctx.active, uifw.GUI_ID_NONE)
 }
 
 @(test)

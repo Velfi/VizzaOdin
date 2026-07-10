@@ -84,6 +84,7 @@ Ui_Frame_Input :: struct {
 	key_slash: bool,
 	key_space: bool,
 	key_space_down: bool,
+	camera_pan_modifier_down: bool,
 	key_space_pressed: bool,
 	key_space_released: bool,
 }

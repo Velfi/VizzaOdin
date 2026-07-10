@@ -1050,6 +1050,7 @@ app_ui_simulation_shell_update :: proc(ui: ^App_Ui_State, input: Ui_Frame_Input,
 	reveal_activity := input.mouse_pressed ||
 		input.mouse_released ||
 		input.mouse_moved ||
+		input.wheel_delta_x != 0 ||
 		input.wheel_delta != 0 ||
 		input.help ||
 		input.toggle_ui ||
@@ -1278,7 +1279,7 @@ app_ui_simulation_filter_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context
 	dismiss_help := ui.controls_help_open && (input.key_f1 || input.help || input.actions.help.pressed)
 	if dismiss_help {app_ui_close_controls_help(ui, gui)}
 	pan_chord_candidate := input.mouse_pressed &&
-		(input.mouse_button == 2 || (input.mouse_button == 1 && input.key_space_down))
+		(input.mouse_button == 2 || (input.mouse_button == 1 && input.camera_pan_modifier_down))
 	routing_input := input
 	if pan_chord_candidate {
 		// Resolve the pointer hit before Space's shell/control-deck binding can
@@ -1400,9 +1401,9 @@ app_ui_simulation_filter_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context
 		filtered.wheel_delta = 0
 	}
 	if route.pointer_over_ui && !gesture_owned {
-		filtered.primary_down = filtered.mouse_down && filtered.mouse_button == 1
-		filtered.primary_pressed = filtered.mouse_pressed && filtered.mouse_button == 1
-		filtered.primary_released = filtered.mouse_released && filtered.mouse_button == 1
+		filtered.primary_down = filtered.mouse_down && filtered.mouse_button != 2 && filtered.mouse_button != 3
+		filtered.primary_pressed = filtered.mouse_pressed && filtered.mouse_button != 2 && filtered.mouse_button != 3
+		filtered.primary_released = filtered.mouse_released && filtered.mouse_button != 2 && filtered.mouse_button != 3
 		filtered.secondary_down = filtered.mouse_down && filtered.mouse_button == 3
 		filtered.secondary_pressed = filtered.mouse_pressed && filtered.mouse_button == 3
 		filtered.secondary_released = filtered.mouse_released && filtered.mouse_button == 3

@@ -880,6 +880,14 @@ gui_begin_frame :: proc(ctx: ^Gui_Context, input: Input_State) {
 	clear(&ctx.commands)
 	frame_input := input
 	gui_input_apply_keyboard_fallbacks(&frame_input, ctx.input)
+	if frame_input.mouse_button == 2 || frame_input.mouse_button == 3 {
+		// Regular widgets only capture the primary pointer. Secondary input stays
+		// available through its semantic fields, while middle mouse remains an
+		// application-level camera gesture and cannot click or drag UI controls.
+		frame_input.mouse_down = false
+		frame_input.mouse_pressed = false
+		frame_input.mouse_released = false
+	}
 	ctx.previous_input = ctx.input
 	// Controller focus is navigational until the user explicitly accepts an
 	// editable control. Mouse and keyboard retain their direct-manipulation
@@ -979,9 +987,9 @@ gui_input_apply_keyboard_fallbacks :: proc(input: ^Input_State, previous: Input_
 	input.back = input.back || input.key_escape
 	input.focus_next = input.focus_next || (input.key_tab && !input.key_shift)
 	input.focus_prev = input.focus_prev || (input.key_tab && input.key_shift)
-	input.primary_down = input.primary_down || (input.mouse_down && input.mouse_button == 1)
-	input.primary_pressed = input.primary_pressed || (input.mouse_pressed && input.mouse_button == 1)
-	input.primary_released = input.primary_released || (input.mouse_released && input.mouse_button == 1)
+	input.primary_down = input.primary_down || (input.mouse_down && input.mouse_button != 2 && input.mouse_button != 3)
+	input.primary_pressed = input.primary_pressed || (input.mouse_pressed && input.mouse_button != 2 && input.mouse_button != 3)
+	input.primary_released = input.primary_released || (input.mouse_released && input.mouse_button != 2 && input.mouse_button != 3)
 	input.secondary_down = input.secondary_down || (input.mouse_down && input.mouse_button == 3)
 	input.secondary_pressed = input.secondary_pressed || (input.mouse_pressed && input.mouse_button == 3)
 	input.secondary_released = input.secondary_released || (input.mouse_released && input.mouse_button == 3)
