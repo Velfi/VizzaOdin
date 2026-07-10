@@ -1430,7 +1430,7 @@ test_app_ui_main_menu_keyboard_scrolls_all_sims_into_view :: proc(t: ^testing.T)
 	list_y := max(title_y + title_h + theme.inner_gap, height * 0.39)
 	list_bottom := height - max(height * 0.050, ctx.style.spacing_4)
 	list_h := max(list_bottom - list_y, theme.row_height * 2.25)
-	viewport := uifw.Rect{margin_x, list_y, list_w, list_h}
+	viewport := game.app_ui_main_menu_list_viewport(&ctx, {margin_x, list_y, list_w, list_h})
 	selected_top := f32(ui.main_menu_selected) * (theme.row_height + ctx.style.spacing)
 	selected_bottom := selected_top + theme.row_height
 
@@ -1538,6 +1538,7 @@ test_app_ui_main_menu_keyboard_selection_ignores_stationary_hover :: proc(t: ^te
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.main_menu_selected, 2)
 
+	ui.main_menu_scroll = 0
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = mouse, mouse_pressed = true, mouse_down = true})
 	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
 	uifw.gui_end_frame(&ctx)
@@ -1557,7 +1558,7 @@ test_app_ui_main_menu_hover_selection_draws_same_frame :: proc(t: ^testing.T) {
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
 	worker: host.Render_Worker_State
-	mouse := uifw.Vec2{200, 980}
+	mouse := uifw.Vec2{200, 930}
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = mouse})
 	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
@@ -1686,7 +1687,7 @@ test_app_ui_main_menu_preview_slots_keep_unclipped_rect_when_scrolled :: proc(t:
 			found_partially_clipped = true
 			expected_left_w := slot.rect.w * game.MAIN_MENU_SIM_BUTTON_GRADIENT_MIDPOINT
 			for command in ctx.commands {
-				if test_is_black_horizontal_fade(command, 1, 0.5) &&
+				if test_is_black_horizontal_fade(command, 1, 0.62) &&
 				   math.abs(command.rect.x - slot.clip_rect.x) <= 0.01 &&
 				   math.abs(command.rect.y - slot.clip_rect.y) <= 0.01 &&
 				   math.abs(command.rect.w - expected_left_w) <= 0.01 &&
@@ -1747,11 +1748,11 @@ test_app_ui_main_menu_preview_overlay_starts_fully_dark :: proc(t: ^testing.T) {
 
 	found := false
 	for command in ctx.commands {
-		if !test_is_black_horizontal_fade(command, 1, 0.5) {
+		if !test_is_black_horizontal_fade(command, 1, 0.62) {
 			continue
 		}
 		for next in ctx.commands {
-			if test_is_black_horizontal_fade(next, 0.5, 0) &&
+			if test_is_black_horizontal_fade(next, 0.62, 0) &&
 			   math.abs(next.rect.x - (command.rect.x + command.rect.w)) <= 0.01 &&
 			   math.abs(next.rect.y - command.rect.y) <= 0.01 &&
 			   math.abs(next.rect.h - command.rect.h) <= 0.01 {
@@ -1791,7 +1792,8 @@ test_app_ui_main_menu_simulation_list_draws_scroll_edge_fades :: proc(t: ^testin
 	list_y := max(title_y + title_h + theme.inner_gap, height * 0.39)
 	list_bottom := height - max(height * 0.050, ctx.style.spacing_4)
 	list_h := max(list_bottom - list_y, theme.row_height * 2.25)
-	viewport := uifw.Rect{margin_x, list_y, list_w, list_h}
+	list_bounds := uifw.Rect{margin_x, list_y, list_w, list_h}
+	viewport := game.app_ui_main_menu_list_viewport(&ctx, list_bounds)
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
@@ -1816,6 +1818,105 @@ test_app_ui_main_menu_simulation_list_draws_scroll_edge_fades :: proc(t: ^testin
 	top, bottom = test_count_scroll_fades(ctx.commands[:], viewport)
 	testing.expect_value(t, top, 1)
 	testing.expect(t, bottom >= 1)
+}
+
+@(test)
+test_app_ui_main_menu_discovery_chrome_is_visible_and_tracks_selection :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default())
+	ui.main_menu_selected = 4
+	vk_ctx: engine.Vk_Context
+	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
+	worker: host.Render_Worker_State
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1920, 1080, 1)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}})
+	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect_value(t, game.app_ui_main_menu_position_label(&ui), "5 / 10")
+	saw_position := false
+	saw_keyboard_hint := false
+	saw_wide_scrollbar := false
+	for command in ctx.commands {
+		if command.kind == .Text && command.text == "5 / 10" {
+			saw_position = true
+		}
+		if command.kind == .Text && command.text == "Scroll / \u2191\u2193  Browse   \u2022   Enter / Click  Start" {
+			saw_keyboard_hint = true
+		}
+		if command.kind == .Filled_Rounded_Rect && command.rect.w >= 9 && command.rect.w <= 16 && command.rect.h > 100 {
+			saw_wide_scrollbar = true
+		}
+	}
+	testing.expect(t, saw_position)
+	testing.expect(t, saw_keyboard_hint)
+	testing.expect(t, saw_wide_scrollbar)
+}
+
+@(test)
+test_app_ui_main_menu_controller_hint_uses_accept_preference :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	settings := game.settings_default()
+	settings.controller_face_layout = "East Accept"
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, settings)
+	vk_ctx: engine.Vk_Context
+	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
+	worker: host.Render_Worker_State
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1920, 1080, 1)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, active_device = .Controller, controller_prompt_style = .Xbox})
+	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	uifw.gui_end_frame(&ctx)
+
+	expected_accept_uv := game.controller_prompt_icon_uv(.East, .Xbox)
+	saw_browse := false
+	saw_start := false
+	saw_accept := false
+	for command in ctx.commands {
+		if command.kind == .Text && command.text == "Browse" {
+			saw_browse = true
+		}
+		if command.kind == .Text && command.text == "Start" {
+			saw_start = true
+		}
+		if command.kind == .Image &&
+		   command.image_id == uifw.Gui_Image_Id(rendervk.UI_KENNEY_INPUT_ATLAS_TEXTURE_ID) &&
+		   test_approx_f32(command.rect_2.x, expected_accept_uv.x) {
+			saw_accept = true
+		}
+	}
+	testing.expect(t, saw_browse)
+	testing.expect(t, saw_start)
+	testing.expect(t, saw_accept)
+}
+
+@(test)
+test_app_ui_main_menu_instruction_strip_stays_outside_catalog_viewport :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	bounds_cases := [?]uifw.Rect{uifw.Rect{100, 400, 1080, 620}, uifw.Rect{24, 220, 520, 410}}
+	window_widths := [?]i32{1920, 800}
+	for bounds, index in bounds_cases {
+		ctx.input.window_width = window_widths[index]
+		viewport := game.app_ui_main_menu_list_viewport(&ctx, bounds)
+		hint := game.app_ui_main_menu_list_hint_rect(&ctx, bounds)
+		disjoint := viewport.y + viewport.h <= hint.y || hint.y + hint.h <= viewport.y
+		testing.expect(t, disjoint)
+		testing.expect(t, hint.y + hint.h <= bounds.y + bounds.h + 0.01)
+		testing.expect_value(t, viewport.x, bounds.x)
+		testing.expect_value(t, viewport.w, bounds.w)
+	}
 }
 
 @(test)

@@ -117,7 +117,7 @@ app_ui_draw_main_menu :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx:
 				gui.focused = uifw.GUI_ID_NONE
 			}
 		}
-		if app_ui_draw_main_menu_text_button(gui, {actions.x, actions.y + button_h + action_gap, button_w, button_h}, "quit", "QUIT", theme) {
+		if app_ui_draw_main_menu_text_button(gui, {actions.x, actions.y + button_h + action_gap, button_w, button_h}, "quit", "QUIT", theme, true) {
 			ui.main_menu_focus_slot = app_ui_main_menu_quit_slot()
 			app_ui_main_menu_activate_slot(ui, ui.main_menu_focus_slot, worker)
 		}
@@ -152,7 +152,7 @@ app_ui_draw_main_menu :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx:
 				gui.focused = uifw.GUI_ID_NONE
 			}
 		}
-		if app_ui_draw_main_menu_text_button(gui, {button_x, actions.y + theme.footer_height + action_gap, button_w, theme.footer_height}, "quit", "QUIT", theme) {
+		if app_ui_draw_main_menu_text_button(gui, {button_x, actions.y + theme.footer_height + action_gap, button_w, theme.footer_height}, "quit", "QUIT", theme, true) {
 			ui.main_menu_focus_slot = app_ui_main_menu_quit_slot()
 			app_ui_main_menu_activate_slot(ui, ui.main_menu_focus_slot, worker)
 		}
@@ -426,7 +426,7 @@ app_ui_draw_main_menu_button :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, ke
 	return control.activated || (control.hovered && gui.active == id && gui.input.mouse_released)
 }
 
-app_ui_draw_main_menu_text_button :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, key, label: string, theme: Menu_Theme) -> bool {
+app_ui_draw_main_menu_text_button :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, key, label: string, theme: Menu_Theme, muted_at_rest := false) -> bool {
 	text_scale := gui.style.heading_text_scale * MAIN_MENU_TEXT_BUTTON_SCALE_MULTIPLIER
 	bytes := transmute([]u8)label
 	fallback_advance := gui.style.char_width * text_scale / max(gui.style.text_scale, 0.001)
@@ -461,7 +461,8 @@ app_ui_draw_main_menu_text_button :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rec
 		stroke := uifw.gui_apply_opacity(theme.text, 0.95 * hot_t)
 		uifw.gui_round_stroke(gui, button, theme.card_radius, stroke, MAIN_MENU_TEXT_BUTTON_FOCUS_BORDER_WIDTH)
 	}
-	uifw.gui_text_aligned_font(gui, text_rect, label, theme.text, .Left, .SimStart, text_scale)
+	text_color := muted_at_rest ? uifw.gui_lerp_color(theme.text_dim, theme.text, hot_t) : theme.text
+	uifw.gui_text_aligned_font(gui, text_rect, label, text_color, .Left, .SimStart, text_scale)
 	return control.activated || (control.hovered && gui.active == id && gui.input.mouse_released)
 }
 
@@ -522,10 +523,18 @@ app_ui_draw_main_menu_content :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context,
 app_ui_draw_main_menu_list :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bounds: uifw.Rect, theme: Menu_Theme) {
 	row_gap := gui.style.spacing
 	content_h := f32(len(APP_SIMULATION_NAMES)) * theme.row_height + f32(max(len(APP_SIMULATION_NAMES) - 1, 0)) * row_gap
-	viewport := bounds
+	viewport := app_ui_main_menu_list_viewport(gui, bounds)
 	if ui.main_menu_focus_navigation_active {
 		app_ui_main_menu_scroll_simulation_into_view(ui, viewport, content_h, row_gap, theme)
 	}
+	saved_scrollbar_width := gui.style.scrollbar_width
+	saved_scrollbar_gutter := gui.style.scrollbar_gutter
+	saved_control := gui.style.control
+	saved_text_muted := gui.style.text_muted
+	gui.style.scrollbar_width = max(saved_scrollbar_width * 1.65, f32(9))
+	gui.style.scrollbar_gutter = max(saved_scrollbar_gutter, gui.style.spacing_1)
+	gui.style.control = uifw.gui_apply_opacity(theme.text, 0.24)
+	gui.style.text_muted = theme.text
 	uifw.gui_scroll_begin(gui, viewport, content_h, &ui.main_menu_scroll)
 	uifw.gui_push_id(gui, "main_menu_simulations")
 	if ui.main_menu_focus_navigation_active {
@@ -575,6 +584,78 @@ app_ui_draw_main_menu_list :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bo
 	}
 	uifw.gui_pop_id(gui)
 	uifw.gui_scroll_end(gui)
+	gui.style.scrollbar_width = saved_scrollbar_width
+	gui.style.scrollbar_gutter = saved_scrollbar_gutter
+	gui.style.control = saved_control
+	gui.style.text_muted = saved_text_muted
+
+	max_scroll := max(content_h - viewport.h, 0)
+	if ui.main_menu_scroll < max_scroll - 0.5 {
+		fade_h := min(max(gui.style.rhythm * 0.78, f32(14)), viewport.h * 0.18)
+		uifw.gui_gradient_rect(gui, {viewport.x, viewport.y + viewport.h - fade_h, viewport.w, fade_h}, {0, 0, 0, 0}, {0, 0, 0, 0.58})
+	}
+	app_ui_draw_main_menu_position_indicator(ui, gui, viewport, theme)
+	app_ui_draw_main_menu_instruction_strip(ui, gui, app_ui_main_menu_list_hint_rect(gui, bounds), theme)
+}
+
+app_ui_main_menu_list_hint_height :: proc(gui: ^uifw.Gui_Context) -> f32 {
+	return max(gui.style.small_line_height * 1.65, f32(28))
+}
+
+app_ui_main_menu_list_viewport :: proc(gui: ^uifw.Gui_Context, bounds: uifw.Rect) -> uifw.Rect {
+	hint_h := app_ui_main_menu_list_hint_height(gui)
+	gap := max(gui.style.spacing_1, f32(5))
+	if gui.input.window_width > 0 && gui.input.window_width < 920 {
+		return {bounds.x, bounds.y + hint_h + gap, bounds.w, max(bounds.h - hint_h - gap, gui.style.row_height)}
+	}
+	return {bounds.x, bounds.y, bounds.w, max(bounds.h - hint_h - gap, gui.style.row_height)}
+}
+
+app_ui_main_menu_list_hint_rect :: proc(gui: ^uifw.Gui_Context, bounds: uifw.Rect) -> uifw.Rect {
+	hint_h := app_ui_main_menu_list_hint_height(gui)
+	if gui.input.window_width > 0 && gui.input.window_width < 920 {
+		return {bounds.x, bounds.y, bounds.w, hint_h}
+	}
+	return {bounds.x, bounds.y + bounds.h - hint_h, bounds.w, hint_h}
+}
+
+app_ui_main_menu_position_label :: proc(ui: ^App_Ui_State) -> string {
+	selected := max(min(ui.main_menu_selected, len(APP_SIMULATION_NAMES) - 1), 0)
+	return fmt.tprintf("%d / %d", selected + 1, len(APP_SIMULATION_NAMES))
+}
+
+app_ui_draw_main_menu_position_indicator :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, viewport: uifw.Rect, theme: Menu_Theme) {
+	label := app_ui_main_menu_position_label(ui)
+	padding_x := max(gui.style.spacing_1, f32(7))
+	indicator_h := max(gui.style.small_line_height * 1.35, f32(24))
+	indicator_w := uifw.gui_text_width(gui, label) + padding_x * 2
+	right_inset := max(gui.style.scrollbar_width + gui.style.scrollbar_gutter + gui.style.spacing_1, f32(18))
+	rect := uifw.Rect{viewport.x + viewport.w - right_inset - indicator_w, viewport.y + gui.style.spacing_1, indicator_w, indicator_h}
+	uifw.gui_round_rect(gui, rect, rect.h * 0.5, {0, 0, 0, 0.62})
+	uifw.gui_round_stroke(gui, rect, rect.h * 0.5, uifw.gui_apply_opacity(theme.text, 0.30), theme.border_width)
+	app_ui_draw_menu_centered_text(gui, rect, label, theme.text_muted)
+}
+
+app_ui_draw_main_menu_instruction_strip :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, rect: uifw.Rect, theme: Menu_Theme) {
+	if rect.w <= 1 || rect.h <= 1 {
+		return
+	}
+	uifw.gui_round_rect(gui, rect, theme.card_radius, {0, 0, 0, 0.32})
+	content := uifw.gui_inset_edges(rect, {left = gui.style.spacing_1, top = 0, right = gui.style.spacing_1, bottom = 0})
+	if gui.input.active_device == .Controller {
+		accept, _ := controller_prompt_face_icons(&ui.settings)
+		items := [?]Controller_Prompt_Hint {
+			{icons = {.Dpad, .Dpad, .Dpad}, icon_count = 1, label = "Browse"},
+			{icons = {accept, .Dpad, .Dpad}, icon_count = 1, label = "Start"},
+		}
+		controller_prompt_draw_items(gui, content, items[:])
+		return
+	}
+	label := "Scroll / \u2191\u2193  Browse   \u2022   Enter / Click  Start"
+	if rect.w < gui.style.body_char_width * 43 {
+		label = "Scroll / \u2191\u2193 Browse  \u2022  Enter Start"
+	}
+	app_ui_draw_menu_centered_text(gui, content, label, theme.text_muted)
 }
 
 app_ui_draw_simulation_row :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bounds, clip_bounds: uifw.Rect, index: int, theme: Menu_Theme) -> bool {
@@ -617,17 +698,18 @@ app_ui_draw_simulation_row :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bo
 			clipped_preview,
 		)
 		if left_fade.w > 1 && left_fade.h > 1 {
-			uifw.gui_horizontal_gradient_rect(gui, left_fade, {0, 0, 0, 1.0}, {0, 0, 0, 0.5})
+			uifw.gui_horizontal_gradient_rect(gui, left_fade, {0, 0, 0, 1.0}, {0, 0, 0, 0.62})
 		}
 		if right_fade.w > 1 && right_fade.h > 1 {
-			uifw.gui_horizontal_gradient_rect(gui, right_fade, {0, 0, 0, 0.5}, {0, 0, 0, 0.0})
+			uifw.gui_horizontal_gradient_rect(gui, right_fade, {0, 0, 0, 0.62}, {0, 0, 0, 0.0})
 		}
 	}
 	if hover_t > 0.01 {
 		uifw.gui_round_rect(gui, card, theme.card_radius, uifw.gui_lerp_color({1, 1, 1, 0.0}, {1, 1, 1, 0.13}, hover_t))
 	}
 	label_inset := max(theme.inner_gap, 22)
-	label_max_w := max(card.w - label_inset * 2, 1)
+	utility_reserve := max(gui.style.scrollbar_width + gui.style.scrollbar_gutter + gui.style.body_char_width * 9, f32(88))
+	label_max_w := max(card.w - label_inset * 2 - utility_reserve, 1)
 	label_scale := app_ui_fit_sim_start_text_scale(gui, APP_SIMULATION_NAMES[index], gui.style.heading_text_scale * (card.h >= 96 ? f32(1.95) : f32(1.35)), label_max_w)
 	label_h := uifw.GUI_FONT_LOGICAL_HEIGHT * label_scale
 	label := uifw.Rect{
@@ -770,4 +852,3 @@ app_ui_draw_simulation_preview :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, 
 	}
 	uifw.gui_scissor_end(gui)
 }
-

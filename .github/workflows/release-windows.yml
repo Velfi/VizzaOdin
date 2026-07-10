@@ -51,9 +51,9 @@ jobs:
           path: |
             C:\vcpkg\installed
             ~\AppData\Local\vcpkg\archives
-          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v1-${{ hashFiles('.github/workflows/release-windows.yml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v2-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-vcpkg-v1-
+            ${{ runner.os }}-${{ runner.arch }}-vcpkg-v2-
 
       - name: Install Windows build dependencies
         shell: pwsh
@@ -63,10 +63,8 @@ jobs:
             & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
           }
           & "$env:VCPKG_ROOT\vcpkg.exe" install `
-            "sdl3:$env:VCPKG_DEFAULT_TRIPLET" `
-            "harfbuzz:$env:VCPKG_DEFAULT_TRIPLET" `
-            "freetype:$env:VCPKG_DEFAULT_TRIPLET" `
-            "vulkan-loader:$env:VCPKG_DEFAULT_TRIPLET"
+            --triplet "$env:VCPKG_DEFAULT_TRIPLET" `
+            --x-install-root "$env:VCPKG_ROOT\installed"
 
       - name: Cache Slang compiler
         id: slang-cache
