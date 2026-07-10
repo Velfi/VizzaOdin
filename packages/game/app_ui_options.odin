@@ -5,6 +5,8 @@ import engine "../engine"
 
 import "core:fmt"
 import "core:math"
+import "core:c"
+import sdl "vendor:sdl3"
 
 app_ui_draw_theme_preview :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx: ^engine.Vk_Context) {
 	_ = ui
@@ -473,6 +475,47 @@ app_ui_draw_options_interface :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context,
 app_ui_draw_options_camera :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, worker: ^Product_Context) {
 	uifw.gui_heading(gui, "Camera")
 	uifw.gui_push_id(gui, "camera")
+	count: c.int
+	ids := sdl.GetCameras(&count)
+	defer if ids != nil {sdl.free(ids)}
+	device_names: [16]string
+	device_count := min(max(int(count), 0), len(device_names))
+	for i in 0..<device_count {
+		name := sdl.GetCameraName(ids[i])
+		device_names[i] = name == nil ? "Unnamed camera" : string(name)
+	}
+	if device_count > 0 {
+		if ui.camera_device_index >= device_count || (ui.camera_device_index == 0 && len(ui.settings.preferred_camera) > 0) {
+			ui.camera_device_index = 0
+			for name, i in device_names[:device_count] {if name == ui.settings.preferred_camera {ui.camera_device_index = i; break}}
+		}
+		if uifw.gui_selector(gui, fmt.tprintf("Preferred Camera: %s", device_names[ui.camera_device_index]), "preferred_device", &ui.camera_device_index, device_names[:device_count]) {
+			ui.settings.preferred_camera = device_names[ui.camera_device_index]
+			if ui.camera_test != nil {sdl.CloseCamera(ui.camera_test); ui.camera_test = nil}
+			app_ui_mark_settings_changed(ui, worker)
+		}
+		if ui.camera_test == nil {
+			if uifw.gui_button(gui, "Test Camera", "test_camera") {
+				ui.camera_test = sdl.OpenCamera(ids[ui.camera_device_index], nil)
+				ui.camera_test_frames = 0
+				write_fixed_string(ui.camera_test_status[:], ui.camera_test == nil ? "Could not open camera" : "Waiting for camera permission and first frame…")
+			}
+		} else {
+			timestamp: u64
+			frame := sdl.AcquireCameraFrame(ui.camera_test, &timestamp)
+			if frame != nil {
+				ui.camera_test_frames += 1
+				sdl.ReleaseCameraFrame(ui.camera_test, frame)
+				write_fixed_string(ui.camera_test_status[:], fmt.tprintf("Camera working — %d frames received", ui.camera_test_frames))
+			}
+			if uifw.gui_button(gui, "Stop Test", "stop_camera_test") {sdl.CloseCamera(ui.camera_test); ui.camera_test = nil}
+		}
+		uifw.gui_label(gui, fixed_string(ui.camera_test_status[:]))
+	} else {
+		uifw.gui_label(gui, "No cameras detected. Connect a camera and reopen Options.")
+	}
+	uifw.gui_spacer(gui, gui.style.spacing_2)
+	uifw.gui_heading(gui, "View Controls")
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Keyboard / Wheel Sensitivity: %.1f", ui.settings.default_camera_sensitivity), "sensitivity", &ui.settings.default_camera_sensitivity, 0.1, 0.1, 5.0) {
 		app_ui_mark_settings_changed(ui, worker)
 	}

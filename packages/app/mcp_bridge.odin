@@ -235,17 +235,23 @@ Mcp_Bridge :: struct {
 
 mcp_bridge_start :: proc(bridge: ^Mcp_Bridge) -> bool {
 	bridge^ = {}
-	flags := posix.fcntl(posix.FD(0), .GETFL)
-	if flags < 0 {
+	when ODIN_OS == .Windows {
+		// The bridge currently relies on Unix nonblocking stdio. Keep the
+		// regular Windows app available while reporting --mcp as unsupported.
 		return false
+	} else {
+		flags := posix.fcntl(posix.FD(0), .GETFL)
+		if flags < 0 {
+			return false
+		}
+		if posix.fcntl(posix.FD(0), .SETFL, flags | posix.O_NONBLOCK) < 0 {
+			return false
+		}
+		bridge.running = true
+		bridge.stdin_open = true
+		bridge.status.running = true
+		return true
 	}
-	if posix.fcntl(posix.FD(0), .SETFL, flags | posix.O_NONBLOCK) < 0 {
-		return false
-	}
-	bridge.running = true
-	bridge.stdin_open = true
-	bridge.status.running = true
-	return true
 }
 
 mcp_bridge_stop :: proc(bridge: ^Mcp_Bridge) {
@@ -254,69 +260,77 @@ mcp_bridge_stop :: proc(bridge: ^Mcp_Bridge) {
 }
 
 mcp_bridge_write_response :: proc(bridge: ^Mcp_Bridge, response: string) {
-	sync.mutex_lock(&bridge.stdout_mutex)
-	defer sync.mutex_unlock(&bridge.stdout_mutex)
-	bytes := transmute([]u8)response
-	total := int(len(bytes))
-	written := 0
-	for written < total {
-		n := posix.write(posix.FD(1), raw_data(bytes[written:]), c.size_t(total - written))
-		if n <= 0 {
-			break
+	when ODIN_OS == .Windows {
+		return
+	} else {
+		sync.mutex_lock(&bridge.stdout_mutex)
+		defer sync.mutex_unlock(&bridge.stdout_mutex)
+		bytes := transmute([]u8)response
+		total := int(len(bytes))
+		written := 0
+		for written < total {
+			n := posix.write(posix.FD(1), raw_data(bytes[written:]), c.size_t(total - written))
+			if n <= 0 {
+				break
+			}
+			written += int(n)
 		}
-		written += int(n)
+		newline := [?]u8{'\n'}
+		_ = posix.write(posix.FD(1), raw_data(newline[:]), 1)
 	}
-	newline := [?]u8{'\n'}
-	_ = posix.write(posix.FD(1), raw_data(newline[:]), 1)
 }
 
 mcp_bridge_poll_stdio :: proc(bridge: ^Mcp_Bridge) {
-	if !bridge.stdin_open {
+	when ODIN_OS == .Windows {
 		return
-	}
+	} else {
+		if !bridge.stdin_open {
+			return
+		}
 
-	pfd := posix.pollfd {
-		fd = posix.FD(0),
-		events = {.IN, .HUP},
-	}
-	ready := posix.poll(&pfd, 1, 0)
-	if ready <= 0 {
-		return
-	}
-	if !(.IN in pfd.revents) {
+		pfd := posix.pollfd {
+			fd = posix.FD(0),
+			events = {.IN, .HUP},
+		}
+		ready := posix.poll(&pfd, 1, 0)
+		if ready <= 0 {
+			return
+		}
+		if !(.IN in pfd.revents) {
+			if .HUP in pfd.revents {
+				bridge.stdin_open = false
+				bridge.close_requested = true
+				_ = mcp_bridge_enqueue_command(bridge, Mcp_Command{kind = .Close})
+			}
+			return
+		}
+
+		if bridge.input_len >= len(bridge.input) {
+			bridge.input_len = 0
+		}
+		n := posix.read(
+			posix.FD(0),
+			raw_data(bridge.input[bridge.input_len:]),
+			c.size_t(len(bridge.input) - bridge.input_len),
+		)
+		if n < 0 {
+			return
+		}
+		if n == 0 {
+			bridge.stdin_open = false
+			bridge.close_requested = true
+			_ = mcp_bridge_enqueue_command(bridge, Mcp_Command{kind = .Close})
+			return
+		}
+
+		bridge.input_len += int(n)
+		mcp_bridge_process_input(bridge)
+
 		if .HUP in pfd.revents {
 			bridge.stdin_open = false
 			bridge.close_requested = true
 			_ = mcp_bridge_enqueue_command(bridge, Mcp_Command{kind = .Close})
 		}
-		return
-	}
-
-	if bridge.input_len >= len(bridge.input) {
-		bridge.input_len = 0
-	}
-	n := posix.read(
-		posix.FD(0),
-		raw_data(bridge.input[bridge.input_len:]),
-		c.size_t(len(bridge.input) - bridge.input_len),
-	)
-	if n < 0 {
-		return
-	}
-	if n == 0 {
-		bridge.stdin_open = false
-		bridge.close_requested = true
-		_ = mcp_bridge_enqueue_command(bridge, Mcp_Command{kind = .Close})
-		return
-	}
-
-	bridge.input_len += int(n)
-	mcp_bridge_process_input(bridge)
-
-	if .HUP in pfd.revents {
-		bridge.stdin_open = false
-		bridge.close_requested = true
-		_ = mcp_bridge_enqueue_command(bridge, Mcp_Command{kind = .Close})
 	}
 }
 

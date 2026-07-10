@@ -112,7 +112,7 @@ test_options_camera_section_exposes_device_specific_tuning :: proc(t: ^testing.T
 	uifw.gui_layout_begin(&ctx, {0, 0, 520, 240}, .Column, 8, 44)
 	game.app_ui_draw_options_camera(&ui, &ctx, &worker)
 	uifw.gui_layout_end(&ctx)
-	expected := [?]string{"Keyboard / Wheel Sensitivity: 1.0", "Controller Sensitivity: 1.0", "Invert Controller Y"}
+	expected := [?]string{"View Controls", "Keyboard / Wheel Sensitivity: 1.0", "Controller Sensitivity: 1.0", "Invert Controller Y"}
 	for label in expected {
 		found := false
 		for command in ctx.commands {

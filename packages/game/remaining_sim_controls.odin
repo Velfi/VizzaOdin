@@ -5,6 +5,9 @@ import engine "../engine"
 
 import "core:fmt"
 import "core:math"
+import "core:c"
+import "core:strings"
+import sdl "vendor:sdl3"
 
 remaining_sim_directory :: proc(kind: Remaining_Sim_Kind) -> string {
 	#partial switch kind {
@@ -551,6 +554,53 @@ remaining_sim_enqueue_image_command :: proc(worker: ^Product_Context, kind: Ui_T
 	_ = engine.queue_try_push(worker.ui_to_render, cmd)
 }
 
+// Captures one frame from the preferred camera and routes it through the same
+// decoded-image path as file sources. Keeping this asynchronous lets SDL finish
+// permission negotiation without blocking the render/UI frame.
+remaining_sim_webcam_capture_control :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, worker: ^Product_Context, command: Ui_To_Render_Command_Kind, key: string) {
+	count: c.int
+	ids := sdl.GetCameras(&count)
+	defer if ids != nil {sdl.free(ids)}
+	available := ids != nil && count > 0
+	capture_requested := false
+	if sim.webcam_capture == nil {
+		if available {capture_requested = uifw.gui_button(gui, "Capture Webcam Frame", key)} else {uifw.gui_disabled_button(gui, "Capture Webcam Frame")}
+	}
+	if capture_requested {
+		selected := 0
+		if worker != nil && len(worker.settings.preferred_camera) > 0 {
+			for i in 0..<int(count) {
+				name := sdl.GetCameraName(ids[i])
+				if name != nil && string(name) == worker.settings.preferred_camera {selected = i; break}
+			}
+		}
+		sim.webcam_capture = sdl.OpenCamera(ids[selected], nil)
+		sim.webcam_capture_command = command
+		write_fixed_string(sim.webcam_capture_status[:], sim.webcam_capture == nil ? "Could not open preferred camera" : "Waiting for camera permission…")
+	}
+	if sim.webcam_capture != nil {
+		timestamp: u64
+		frame := sdl.AcquireCameraFrame(sim.webcam_capture, &timestamp)
+		if frame != nil {
+			path := "config/webcam_capture.png"
+			cpath, err := strings.clone_to_cstring(path, context.temp_allocator)
+			ok := err == nil && sdl.SavePNG(frame, cpath)
+			sdl.ReleaseCameraFrame(sim.webcam_capture, frame)
+			sdl.CloseCamera(sim.webcam_capture)
+			sim.webcam_capture = nil
+			if ok {
+				remaining_sim_enqueue_image_command(worker, sim.webcam_capture_command, path)
+				write_fixed_string(sim.webcam_capture_status[:], "Captured frame from preferred camera")
+			} else {
+				write_fixed_string(sim.webcam_capture_status[:], "Could not save captured camera frame")
+			}
+		}
+	}
+	if !available && sim.webcam_capture == nil {uifw.gui_label(gui, "No webcam devices")}
+	status := fixed_string(sim.webcam_capture_status[:])
+	if len(status) > 0 {uifw.gui_label(gui, status)}
+}
+
 remaining_sim_draw_moire_menu :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, color_editor: ^Color_Scheme_Editor_State, worker: ^Product_Context = nil) {
 	remaining_sim_draw_moire_display_settings(sim, gui, color_editor, worker)
 	uifw.gui_spacer(gui, 8)
@@ -594,6 +644,7 @@ remaining_sim_draw_moire_display_settings :: proc(sim: ^Remaining_Sim_State, gui
 	image_options.empty_label = fmt.tprintf("No image selected (%s)", IMAGE_FILE_FORMAT_LABEL)
 	image_options.selected_path = fixed_string(settings.image_path[:])
 	image_result := shared_image_selector(gui, &settings.image_fit_index, VECTOR_IMAGE_FIT_MODE_NAMES[:], image_options)
+	remaining_sim_webcam_capture_control(sim, gui, worker, .Load_Moire_Image, "moire_capture_webcam")
 	reload_image := false
 	if image_result.fit_changed {
 		settings.image_fit_mode = Vector_Image_Fit_Mode(settings.image_fit_index)
@@ -691,6 +742,7 @@ remaining_sim_draw_vectors_field :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 		image_options.empty_label = fmt.tprintf("No image selected (%s)", IMAGE_FILE_FORMAT_LABEL)
 		image_options.selected_path = fixed_string(settings.image_path[:])
 		image_result := shared_image_selector(gui, &settings.image_fit_index, VECTOR_IMAGE_FIT_MODE_NAMES[:], image_options)
+		remaining_sim_webcam_capture_control(sim, gui, worker, .Load_Vectors_Image, "vectors_capture_webcam")
 		if image_result.fit_changed {
 			settings.image_fit_mode = Vector_Image_Fit_Mode(settings.image_fit_index)
 		}
@@ -825,6 +877,7 @@ remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 		image_options.empty_label = fmt.tprintf("No image selected (%s)", IMAGE_FILE_FORMAT_LABEL)
 		image_options.selected_path = fixed_string(settings.image_path[:])
 		image_result := shared_image_selector(gui, &settings.image_fit_index, VECTOR_IMAGE_FIT_MODE_NAMES[:], image_options)
+		remaining_sim_webcam_capture_control(sim, gui, worker, .Load_Flow_Image, "flow_capture_webcam")
 		reload_image := false
 		if image_result.fit_changed {
 			settings.image_fit_mode = Vector_Image_Fit_Mode(settings.image_fit_index)
@@ -934,6 +987,7 @@ remaining_sim_draw_slime_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.
 		position_options.empty_label = fmt.tprintf("No position image selected (%s)", IMAGE_FILE_FORMAT_LABEL)
 		position_options.selected_path = fixed_string(settings.position_image_path[:])
 		position_result := shared_image_selector(gui, &settings.position_image_fit_index, VECTOR_IMAGE_FIT_MODE_NAMES[:], position_options)
+		remaining_sim_webcam_capture_control(sim, gui, worker, .Load_Slime_Position_Image, "slime_position_capture_webcam")
 		reload_position_image := false
 		if position_result.fit_changed {
 			settings.position_image_fit_mode = Vector_Image_Fit_Mode(settings.position_image_fit_index)
@@ -980,6 +1034,7 @@ remaining_sim_draw_slime_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.
 		mask_options.empty_label = fmt.tprintf("No mask image selected (%s)", IMAGE_FILE_FORMAT_LABEL)
 		mask_options.selected_path = fixed_string(settings.mask_image_path[:])
 		mask_result := shared_image_selector(gui, &settings.mask_image_fit_index, VECTOR_IMAGE_FIT_MODE_NAMES[:], mask_options)
+		remaining_sim_webcam_capture_control(sim, gui, worker, .Load_Slime_Mask_Image, "slime_mask_capture_webcam")
 		reload_mask_image := false
 		if mask_result.fit_changed {
 			settings.mask_image_fit_mode = Vector_Image_Fit_Mode(settings.mask_image_fit_index)

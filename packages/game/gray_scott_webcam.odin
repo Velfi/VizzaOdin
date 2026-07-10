@@ -20,7 +20,7 @@ gray_scott_stop_webcam :: proc(sim: ^Gray_Scott_Simulation) {
 	sim.runtime.webcam_active = false
 }
 
-gray_scott_start_webcam :: proc(sim: ^Gray_Scott_Simulation) -> bool {
+gray_scott_start_webcam :: proc(sim: ^Gray_Scott_Simulation, preferred_camera := "") -> bool {
 	if sim.runtime.webcam_active && sim.runtime.webcam != nil {
 		return true
 	}
@@ -32,7 +32,14 @@ gray_scott_start_webcam :: proc(sim: ^Gray_Scott_Simulation) -> bool {
 	}
 	defer sdl.free(ids)
 
-	camera := sdl.OpenCamera(ids[0], nil)
+	selected := 0
+	if len(preferred_camera) > 0 {
+		for i in 0..<int(count) {
+			name := sdl.GetCameraName(ids[i])
+			if name != nil && string(name) == preferred_camera {selected = i; break}
+		}
+	}
+	camera := sdl.OpenCamera(ids[selected], nil)
 	if camera == nil {
 		sim.runtime.webcam_permission_denied = false
 		return false
@@ -43,5 +50,4 @@ gray_scott_start_webcam :: proc(sim: ^Gray_Scott_Simulation) -> bool {
 	sim.runtime.webcam_frames = 0
 	return true
 }
-
 

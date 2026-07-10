@@ -5,6 +5,7 @@ import engine "../engine"
 
 import "core:fmt"
 import "core:math"
+import sdl "vendor:sdl3"
 
 App_Mode :: enum {
 	Main_Menu,
@@ -131,6 +132,10 @@ App_Ui_State :: struct {
 	main_menu_quit_hold_highlight: bool,
 	options_section_index: int,
 	options_scroll: f32,
+	camera_device_index: int,
+	camera_test: ^sdl.Camera,
+	camera_test_frames: u64,
+	camera_test_status: [128]u8,
 	how_to_play_scroll: f32,
 	controls_help_open: bool,
 	controls_help_open_frame: u64,
@@ -365,6 +370,11 @@ app_ui_init :: proc(ui: ^App_Ui_State, settings: App_Settings, theme_preview := 
 }
 
 app_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Gray_Scott_Simulation, particle_life: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, worker: ^Product_Context) {
+	if ui.mode != .Options && ui.camera_test != nil {
+		sdl.CloseCamera(ui.camera_test)
+		ui.camera_test = nil
+		ui.camera_test_frames = 0
+	}
 	app_ui_mode_transition_update(ui, max(gui.input.delta_time, 0))
 	app_ui_handle_controller_disconnect(ui, gui, sim, particle_life)
 	app_ui_update_device_notice(ui, gui)
@@ -1799,6 +1809,21 @@ app_ui_simulation_bar_scale :: proc(gui: ^uifw.Gui_Context) -> f32 {
 app_ui_simulation_bar_height :: proc(gui: ^uifw.Gui_Context) -> f32 {
 	content_h := gui.style.spacing_1 * 2 + gui.style.row_height
 	return max(SIMULATION_BAR_HEIGHT, content_h)
+}
+
+// Simulation controls deliberately remain a single, temporary playground
+// surface. On large displays, cap its line length instead of turning the UI
+// into a dense expert workspace; the recovered space belongs to the artwork.
+app_ui_simulation_control_panel_width :: proc(gui: ^uifw.Gui_Context, width, minimum: f32) -> f32 {
+	margin := max(gui.style.spacing_3, f32(18))
+	available := max(width - margin * 2, 1)
+	target := max(width * 0.52, minimum)
+	readable_cap := max(gui.style.body_char_width * 48, minimum)
+	return min(target, min(readable_cap, available))
+}
+
+app_ui_simulation_control_panel_height_fraction :: proc(width: f32, compact, wide: f32) -> f32 {
+	return uifw.gui_breakpoint(width) == .Wide ? wide : compact
 }
 
 app_ui_simulation_menu_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, width, height: f32) -> uifw.Rect {

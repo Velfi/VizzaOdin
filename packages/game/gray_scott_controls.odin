@@ -502,7 +502,8 @@ gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Con
 				gray_scott_request_nutrient_upload(sim)
 				changed = true
 			} else if webcam_result.action == .Start {
-				if gray_scott_start_webcam(sim) {
+				preferred_camera := worker == nil ? "" : worker.settings.preferred_camera
+				if gray_scott_start_webcam(sim, preferred_camera) {
 					changed = true
 				}
 			}

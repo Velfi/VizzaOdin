@@ -5,6 +5,7 @@ import engine "../engine"
 
 import "core:fmt"
 import "core:math"
+import sdl "vendor:sdl3"
 
 Remaining_Sim_Kind :: enum {
 	Slime_Mold,
@@ -40,6 +41,9 @@ Remaining_Sim_State :: struct {
 	flow_image_dialog_requested: bool,
 	slime_mask_image_dialog_requested: bool,
 	slime_position_image_dialog_requested: bool,
+	webcam_capture: ^sdl.Camera,
+	webcam_capture_command: Ui_To_Render_Command_Kind,
+	webcam_capture_status: [128]u8,
 	slime_reset_requested: bool,
 	slime_clear_trails_requested: bool,
 	slime_randomize_undo: Slime_Randomize_Undo,

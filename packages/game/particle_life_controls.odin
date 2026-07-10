@@ -246,6 +246,7 @@ particle_life_draw_matrix_transform_row :: proc(sim: ^Particle_Life_Simulation, 
 
 particle_life_draw_force_matrix_editor :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.Gui_Context) {
 	n := int(max(min(sim.settings.species_count, PARTICLE_LIFE_MAX_SPECIES), 1))
+	scheme := color_scheme_effective(&sim.settings.color_scheme, sim.settings.color_scheme_reversed)
 	available := max(ctx.content_width, 220)
 	cell := min(max(ctx.style.row_height * 1.35, f32(58)), available / f32(n + 1))
 	grid_w := cell * f32(n + 1)
@@ -255,11 +256,11 @@ particle_life_draw_force_matrix_editor :: proc(sim: ^Particle_Life_Simulation, c
 	text_scale := cell < 58 ? f32(0.56) : f32(0.66)
 	for j in 0 ..< n {
 		r := uifw.Rect{left + cell * f32(j + 1), header_y, cell, cell}
-		uifw.gui_text_aligned_scaled(ctx, r, fmt.tprintf("S%d", j + 1), ctx.style.text, .Center, 0.72)
+		uifw.gui_text_aligned_scaled(ctx, r, fmt.tprintf("S%d", j + 1), particle_life_species_label_color(sim, scheme, j, n), .Center, 0.72)
 	}
 	for i in 0 ..< n {
 		row_y := grid_bounds.y + cell * f32(i + 1)
-		uifw.gui_text_aligned_scaled(ctx, {left, row_y, cell, cell}, fmt.tprintf("S%d", i + 1), ctx.style.text, .Center, 0.72)
+		uifw.gui_text_aligned_scaled(ctx, {left, row_y, cell, cell}, fmt.tprintf("S%d", i + 1), particle_life_species_label_color(sim, scheme, i, n), .Center, 0.72)
 		for j in 0 ..< n {
 			index := i * PARTICLE_LIFE_MAX_SPECIES + j
 			value := sim.runtime.force_matrix[index]
@@ -288,7 +289,10 @@ particle_life_draw_force_matrix_editor :: proc(sim: ^Particle_Life_Simulation, c
 			}
 			uifw.gui_rect(ctx, rect, color)
 			uifw.gui_stroke(ctx, rect, ctx.style.panel_border)
-			uifw.gui_text_aligned_scaled(ctx, rect, particle_life_force_cell_label(value), ctx.style.text, .Center, text_scale)
+			force_text_scale := max(ctx.style.text_scale * text_scale, 0.5)
+			force_text_h := uifw.GUI_FONT_LOGICAL_HEIGHT * force_text_scale
+			text_rect := uifw.Rect{rect.x, rect.y + max((rect.h - force_text_h) * 0.5, 0), rect.w, force_text_h}
+			uifw.gui_text_aligned_scaled(ctx, text_rect, particle_life_force_cell_label(value), ctx.style.text, .Center, text_scale)
 			uifw.gui_focus_or_edit_ring(ctx, id, rect)
 		}
 	}
@@ -301,6 +305,22 @@ particle_life_draw_force_matrix_editor :: proc(sim: ^Particle_Life_Simulation, c
 	particle_life_draw_matrix_transform_row(sim, ctx, []string{"Shift L", "Shift R"}, []string{"pl_matrix_shift_l", "pl_matrix_shift_r"}, []Particle_Life_Matrix_Transform{.Shift_Left, .Shift_Right})
 	particle_life_draw_matrix_transform_row(sim, ctx, []string{"Shift U", "Shift D"}, []string{"pl_matrix_shift_u", "pl_matrix_shift_d"}, []Particle_Life_Matrix_Transform{.Shift_Up, .Shift_Down})
 	particle_life_draw_matrix_transform_row(sim, ctx, []string{"Zero", "Flip Sign"}, []string{"pl_matrix_zero", "pl_matrix_sign"}, []Particle_Life_Matrix_Transform{.Zero, .Flip_Sign})
+}
+
+particle_life_species_label_color :: proc(sim: ^Particle_Life_Simulation, scheme: Color_Scheme, species_index, species_count: int) -> uifw.Color {
+	t := 0
+	if sim.settings.background_color_mode == .Color_Scheme && species_count > 0 {
+		t = int(((species_index + 1) * (COLOR_SCHEME_SIZE - 1)) / species_count)
+	} else if PARTICLE_LIFE_MAX_SPECIES > 1 {
+		t = int((species_index * (COLOR_SCHEME_SIZE - 1)) / (PARTICLE_LIFE_MAX_SPECIES - 1))
+	}
+	t = max(min(t, COLOR_SCHEME_SIZE - 1), 0)
+	return {
+		f32(scheme.red[t]) / 255.0,
+		f32(scheme.green[t]) / 255.0,
+		f32(scheme.blue[t]) / 255.0,
+		1,
+	}
 }
 
 particle_life_draw_controls :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.Gui_Context, panel: uifw.Rect, scroll: ^f32, worker: ^Product_Context, color_editor: ^Color_Scheme_Editor_State, section := -1) {

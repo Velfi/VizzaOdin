@@ -143,6 +143,7 @@ App_Settings :: struct {
 	default_camera_sensitivity: f32,
 	controller_camera_sensitivity: f32,
 	controller_camera_invert_y: bool,
+	preferred_camera: string,
 	texture_filtering: string,
 	gpu_memory_ceiling_fraction: f32,
 	preset_directory: string,
@@ -178,6 +179,7 @@ settings_default :: proc() -> App_Settings {
 		default_camera_sensitivity = 1.0,
 		controller_camera_sensitivity = 1.0,
 		controller_camera_invert_y = false,
+		preferred_camera = "",
 		texture_filtering = "Linear",
 		gpu_memory_ceiling_fraction = 0,
 		preset_directory = "presets",
@@ -455,6 +457,9 @@ settings_load_app :: proc(path: string) -> (App_Settings, bool) {
 	if v, ok := toml_bool(result.toptab, "camera.controller_invert_y"); ok {
 		settings.controller_camera_invert_y = v
 	}
+	if v, ok := toml_string(result.toptab, "camera.preferred_device"); ok {
+		if cloned, aerr := strings.clone(v); aerr == nil {settings.preferred_camera = cloned}
+	}
 	if v, ok := toml_f64(result.toptab, "gpu.memory_ceiling_fraction"); ok {
 		settings.gpu_memory_ceiling_fraction = f32(v)
 	}
@@ -490,7 +495,7 @@ settings_save_app :: proc(path: string, settings: App_Settings) -> bool {
 	buf: [1536]u8
 	text := fmt.bprintf(
 		buf[:],
-		"[display]\nfps_limit_enabled = %v\nfps_limit = %d\nui_scale = %.2f\ntexture_filtering = \"%s\"\n\n[window]\nwidth = %d\nheight = %d\nmaximized = %v\n\n[ui]\nauto_hide_delay = %d\nmenu_position = \"%s\"\nremember_controller_focus = %v\n\n[input]\ncontroller_deadzone = %.2f\ncontroller_cursor_speed = %.2f\nnavigation_repeat_delay_ms = %d\nnavigation_repeat_interval_ms = %d\ncontroller_face_layout = \"%s\"\ncontroller_menu_layout = \"%s\"\ncontroller_shoulder_layout = \"%s\"\ncontroller_trigger_layout = \"%s\"\nkeyboard_shortcut_profile = \"%s\"\nkeyboard_pause_binding = \"%s\"\nkeyboard_toggle_ui_binding = \"%s\"\nkeyboard_help_binding = \"%s\"\n\n[camera]\ndefault_sensitivity = %.2f\ncontroller_sensitivity = %.2f\ncontroller_invert_y = %v\n\n[gpu]\nmemory_ceiling_fraction = %.3f\n\n[presets]\ndirectory = \"%s\"\n\n[steam]\nenabled = %v\napp_id = %d\nrestart_if_necessary = %v\nlibrary_path = \"%s\"\n",
+		"[display]\nfps_limit_enabled = %v\nfps_limit = %d\nui_scale = %.2f\ntexture_filtering = \"%s\"\n\n[window]\nwidth = %d\nheight = %d\nmaximized = %v\n\n[ui]\nauto_hide_delay = %d\nmenu_position = \"%s\"\nremember_controller_focus = %v\n\n[input]\ncontroller_deadzone = %.2f\ncontroller_cursor_speed = %.2f\nnavigation_repeat_delay_ms = %d\nnavigation_repeat_interval_ms = %d\ncontroller_face_layout = \"%s\"\ncontroller_menu_layout = \"%s\"\ncontroller_shoulder_layout = \"%s\"\ncontroller_trigger_layout = \"%s\"\nkeyboard_shortcut_profile = \"%s\"\nkeyboard_pause_binding = \"%s\"\nkeyboard_toggle_ui_binding = \"%s\"\nkeyboard_help_binding = \"%s\"\n\n[camera]\ndefault_sensitivity = %.2f\ncontroller_sensitivity = %.2f\ncontroller_invert_y = %v\npreferred_device = \"%s\"\n\n[gpu]\nmemory_ceiling_fraction = %.3f\n\n[presets]\ndirectory = \"%s\"\n\n[steam]\nenabled = %v\napp_id = %d\nrestart_if_necessary = %v\nlibrary_path = \"%s\"\n",
 		settings.default_fps_limit_enabled,
 		settings.default_fps_limit,
 		settings.ui_scale,
@@ -516,6 +521,7 @@ settings_save_app :: proc(path: string, settings: App_Settings) -> bool {
 		settings.default_camera_sensitivity,
 		settings.controller_camera_sensitivity,
 		settings.controller_camera_invert_y,
+		settings.preferred_camera,
 		settings.gpu_memory_ceiling_fraction,
 		settings.preset_directory,
 		settings.steam_enabled,

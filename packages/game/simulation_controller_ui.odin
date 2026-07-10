@@ -174,8 +174,9 @@ simulation_controller_ui_deck_rect :: proc(gui: ^uifw.Gui_Context, width, height
 
 simulation_controller_ui_panel_rect :: proc(gui: ^uifw.Gui_Context, width, height: f32, deck: uifw.Rect) -> uifw.Rect {
 	margin := max(gui.style.spacing_3, f32(18))
-	panel_w := min(max(width * 0.58, f32(720)), max(width - margin * 2, 1))
-	panel_h := min(max(height * 0.42, gui.style.row_height * 7), max(deck.y - margin * 2, 1))
+	panel_w := app_ui_simulation_control_panel_width(gui, width, 720)
+	height_fraction := app_ui_simulation_control_panel_height_fraction(width, 0.42, 0.46)
+	panel_h := min(max(height * height_fraction, gui.style.row_height * 7), max(deck.y - margin * 2, 1))
 	return {max((width - panel_w) * 0.5, margin), max(deck.y - panel_h - margin, margin), panel_w, panel_h}
 }
 

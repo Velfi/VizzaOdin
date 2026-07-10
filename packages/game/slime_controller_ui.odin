@@ -8,9 +8,9 @@ import "core:math"
 
 SLIME_CONTROLLER_UI_DECK_MIN_TAB_WIDTH :: f32(132)
 SLIME_CONTROLLER_UI_DECK_MAX_TAB_WIDTH :: f32(260)
-SLIME_CONTROLLER_UI_DECK_LABEL_SCALE :: f32(0.76)
-SLIME_CONTROLLER_UI_KEY_SCALE :: f32(0.62)
-SLIME_CONTROLLER_UI_HINT_SCALE :: f32(0.58)
+SLIME_CONTROLLER_UI_DECK_LABEL_SCALE :: f32(0.86)
+SLIME_CONTROLLER_UI_KEY_SCALE :: f32(0.72)
+SLIME_CONTROLLER_UI_HINT_SCALE :: f32(0.68)
 SLIME_CONTROLLER_UI_ICON_INSET_RATIO :: f32(0.04)
 
 Slime_Controller_Ui_State :: struct {
@@ -223,9 +223,10 @@ slime_controller_ui_deck_rect :: proc(gui: ^uifw.Gui_Context, width, height: f32
 
 slime_controller_ui_panel_rect :: proc(gui: ^uifw.Gui_Context, width, height: f32, deck: uifw.Rect) -> uifw.Rect {
 	margin := max(gui.style.spacing_3, f32(18))
-	panel_w := min(max(width * 0.58, f32(720)), max(width - margin * 2, 1))
+	panel_w := app_ui_simulation_control_panel_width(gui, width, 720)
 	available_h := max(deck.y - margin * 2, 1)
-	panel_h := min(max(height * 0.36, gui.style.row_height * 6.5), available_h)
+	height_fraction := app_ui_simulation_control_panel_height_fraction(width, 0.36, 0.40)
+	panel_h := min(max(height * height_fraction, gui.style.row_height * 6.5), available_h)
 	return {max((width - panel_w) * 0.5, margin), max(deck.y - panel_h - margin, margin), panel_w, panel_h}
 }
 

@@ -2199,6 +2199,44 @@ test_app_ui_simulation_menu_panel_stays_inside_viewport_at_common_sizes :: proc(
 }
 
 @(test)
+test_simulation_control_panels_grow_without_taking_over_large_displays :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1280, 720, 1)
+	deck_720 := game.simulation_controller_ui_deck_rect(&ctx, 1280, 720, len(game.PARTICLE_LIFE_CONTROLLER_TABS))
+	panel_720 := game.simulation_controller_ui_panel_rect(&ctx, 1280, 720, deck_720)
+	testing.expect(t, panel_720.w >= 720)
+	testing.expect(t, panel_720.y + panel_720.h <= deck_720.y + 0.01)
+
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1920, 1080, 1)
+	deck_1080 := game.simulation_controller_ui_deck_rect(&ctx, 1920, 1080, len(game.PARTICLE_LIFE_CONTROLLER_TABS))
+	panel_1080 := game.simulation_controller_ui_panel_rect(&ctx, 1920, 1080, deck_1080)
+	testing.expect(t, panel_1080.w > panel_720.w)
+	testing.expect(t, panel_1080.w <= 1920 * 0.52 + 0.01)
+	testing.expect(t, panel_1080.h > 1080 * 0.42)
+	testing.expect(t, panel_1080.y + panel_1080.h <= deck_1080.y + 0.01)
+
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 3840, 2160, 1)
+	deck_4k := game.simulation_controller_ui_deck_rect(&ctx, 3840, 2160, len(game.PARTICLE_LIFE_CONTROLLER_TABS))
+	panel_4k := game.simulation_controller_ui_panel_rect(&ctx, 3840, 2160, deck_4k)
+	testing.expect(t, panel_4k.w > panel_1080.w)
+	testing.expect(t, panel_4k.w < 3840 * 0.5)
+	testing.expect(t, panel_4k.y + panel_4k.h <= deck_4k.y + 0.01)
+}
+
+@(test)
+test_simulation_deck_typography_remains_couch_readable_at_1080p :: proc(t: ^testing.T) {
+	style := uifw.gui_style_for_viewport(uifw.gui_default_style(), 1920, 1080, 1)
+	deck_label_height := style.body_text_height * game.SLIME_CONTROLLER_UI_DECK_LABEL_SCALE
+	hint_height := style.body_text_height * game.SLIME_CONTROLLER_UI_HINT_SCALE
+
+	testing.expect(t, deck_label_height >= 24)
+	testing.expect(t, hint_height >= 20)
+}
+
+@(test)
 test_remaining_sim_pellets_sidebar_scroll_extent_tracks_ui_scale :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
