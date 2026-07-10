@@ -50,11 +50,61 @@ function Invoke-Tool {
 		[string]$FilePath,
 		[string[]]$Arguments
 	)
-	Write-Host "$FilePath $($Arguments -join ' ')"
+	$displayArguments = $Arguments | ForEach-Object {
+		if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+	}
+	Write-Host "> $FilePath $($displayArguments -join ' ')"
 	& $FilePath @Arguments
 	if ($LASTEXITCODE -ne 0) {
 		throw "$FilePath failed with exit code $LASTEXITCODE"
 	}
+}
+
+function Write-BuildDiagnostics {
+	Write-Host "=== Windows build diagnostics ==="
+	Write-Host "PowerShell: $($PSVersionTable.PSVersion)"
+	Write-Host "Host architecture: $env:PROCESSOR_ARCHITECTURE"
+	Write-Host "Repository: $RootDir"
+	Write-Host "Build directory: $BuildDir"
+	Write-Host "vcpkg root: $VcpkgRoot"
+	Write-Host "vcpkg triplet: $VcpkgTriplet"
+	Write-Host "vcpkg installed directory: $VcpkgInstalledDir"
+	Write-Host "INCLUDE=$env:INCLUDE"
+	Write-Host "LIB=$env:LIB"
+	Write-Host "PATH=$env:PATH"
+
+	foreach ($tool in @("odin", "cl", "link", "lib", "dumpbin", "bash")) {
+		$command = Get-Command $tool -ErrorAction SilentlyContinue
+		if ($command) {
+			Write-Host "$tool => $($command.Source)"
+		} else {
+			Write-Host "$tool => NOT FOUND"
+		}
+	}
+
+	Invoke-Tool "odin" @("version")
+	Write-Host "MSVC compiler version:"
+	& cl /Bv 2>&1 | ForEach-Object { Write-Host "  $_" }
+	Write-Host "vcpkg libraries:"
+	Get-ChildItem -Path $VcpkgLibDir -Filter "*.lib" |
+		Sort-Object Name |
+		ForEach-Object { Write-Host "  $($_.Name) ($($_.Length) bytes)" }
+	Write-Host "=== End Windows build diagnostics ==="
+}
+
+function Write-LibraryDiagnostics {
+	param([string[]]$Libraries)
+	Write-Host "=== Project library diagnostics ==="
+	foreach ($library in $Libraries) {
+		if (-not (Test-Path $library)) {
+			Write-Host "MISSING: $library"
+			continue
+		}
+		$item = Get-Item $library
+		Write-Host "$($item.FullName) ($($item.Length) bytes)"
+		Invoke-Tool "lib" @("/nologo", "/LIST", $item.FullName)
+	}
+	Write-Host "=== End project library diagnostics ==="
 }
 
 function Read-MakeVariable {
@@ -171,8 +221,12 @@ function Build-App {
 	$linkerFlags = "/LIBPATH:`"$VcpkgLibDir`" harfbuzz.lib freetype.lib"
 	$args = @("build", "src")
 	$args += Split-Flags $OdinFlags
+	$args += "-show-system-calls"
+	$args += "-print-linker-flags"
 	$args += "-extra-linker-flags:$linkerFlags"
 	$args += "-out:$outExe"
+	Write-Host "Odin linker search directory: $VcpkgLibDir"
+	Write-Host "Odin extra linker flags: $linkerFlags"
 	Invoke-Tool "odin" $args
 	return $outExe
 }
@@ -471,9 +525,14 @@ foreach ($requiredPath in @(
 Push-Location $RootDir
 try {
 	Write-Host "Packaging $AppName $Version for Windows..."
+	Write-BuildDiagnostics
 	Ensure-Tomlc17
 	Build-Tomlc17
 	Build-Textshape
+	Write-LibraryDiagnostics @(
+		(Join-Path $RootDir "third_party/tomlc17/src/tomlc17.lib"),
+		(Join-Path $RootDir "third_party/textshape/textshape.lib")
+	)
 	Build-Shaders
 	$builtExe = Build-App
 	Package-App $builtExe
