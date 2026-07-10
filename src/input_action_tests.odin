@@ -1,6 +1,7 @@
 package main
 
 import game "../packages/game"
+import host "../packages/app"
 import uifw "../packages/ui"
 
 import "core:math"
@@ -108,31 +109,31 @@ test_input_action_other_source_fast_tap_cannot_retrigger_held_action :: proc(t: 
 
 @(test)
 test_input_action_held_back_only_presses_once :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
 	app.controller_back_down = true
 	app.input.back = true
 
-	first := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	first := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, first.back.pressed)
 	testing.expect(t, first.back.down)
 
 	app.input.back = false
-	second := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	second := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, !second.back.pressed)
 	testing.expect(t, second.back.down)
 
 	app.controller_back_down = false
-	third := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	third := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, third.back.released)
 }
 
 @(test)
 test_space_resolves_distinct_pause_and_control_deck_actions :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
-	game.app_apply_key_event(app, sdl.K_SPACE, .SPACE, true)
-	pressed := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_key_event(app, sdl.K_SPACE, .SPACE, true)
+	pressed := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, pressed.pause.pressed)
 	testing.expect(t, pressed.control_deck.pressed)
 	testing.expect_value(t, pressed.pause.owner, game.Input_Action_Source.Mouse_Keyboard)
@@ -141,82 +142,82 @@ test_space_resolves_distinct_pause_and_control_deck_actions :: proc(t: ^testing.
 	app.input.key_space = false
 	app.input.key_space_pressed = false
 	app.keyboard_action_released = {}
-	game.app_apply_key_event(app, sdl.K_SPACE, .SPACE, false)
-	released := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_key_event(app, sdl.K_SPACE, .SPACE, false)
+	released := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, released.pause.released)
 	testing.expect(t, released.control_deck.released)
 }
 
 @(test)
 test_letter_shortcut_profile_routes_pause_ui_and_help_semantically :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
 	app.settings = game.settings_default()
 	game.settings_apply_keyboard_profile(&app.settings, "Letter Shortcuts")
 
-	game.app_apply_key_event(app, sdl.K_P, .P, true)
-	pause := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_key_event(app, sdl.K_P, .P, true)
+	pause := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, pause.pause.pressed)
 	testing.expect(t, !pause.control_deck.pressed)
 	testing.expect_value(t, pause.pause.owner, game.Input_Action_Source.Mouse_Keyboard)
-	game.app_apply_key_event(app, sdl.K_P, .P, false)
+	host.app_apply_key_event(app, sdl.K_P, .P, false)
 
 	app.input.pause = false
 	app.keyboard_action_released = {}
-	game.app_apply_key_event(app, sdl.K_SPACE, .SPACE, true)
-	space := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_key_event(app, sdl.K_SPACE, .SPACE, true)
+	space := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, !space.pause.pressed)
 	testing.expect(t, space.control_deck.pressed)
-	game.app_apply_key_event(app, sdl.K_SPACE, .SPACE, false)
+	host.app_apply_key_event(app, sdl.K_SPACE, .SPACE, false)
 
 	app.input.toggle_ui = false
 	app.keyboard_action_released = {}
-	game.app_apply_key_event(app, sdl.K_U, .U, true)
-	toggle := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_key_event(app, sdl.K_U, .U, true)
+	toggle := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, toggle.toggle_ui.pressed)
 	testing.expect_value(t, toggle.toggle_ui.owner, game.Input_Action_Source.Mouse_Keyboard)
-	game.app_apply_key_event(app, sdl.K_U, .U, false)
+	host.app_apply_key_event(app, sdl.K_U, .U, false)
 
 	app.input.key_f1 = false
-	game.app_apply_key_event(app, sdl.K_H, .H, true)
+	host.app_apply_key_event(app, sdl.K_H, .H, true)
 	testing.expect(t, app.input.key_f1)
 	app.input.key_f1 = false
-	game.app_apply_key_event(app, sdl.K_F1, .F1, true)
+	host.app_apply_key_event(app, sdl.K_F1, .F1, true)
 	testing.expect(t, !app.input.key_f1)
 }
 
 @(test)
 test_custom_keyboard_bindings_route_effective_actions :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
 	app.settings = game.settings_default()
 	_, _ = game.settings_assign_keyboard_binding(&app.settings, .Pause, .H)
 	_, _ = game.settings_assign_keyboard_binding(&app.settings, .Toggle_Ui, .P)
 	_, _ = game.settings_assign_keyboard_binding(&app.settings, .Help, .U)
 
-	game.app_apply_key_event(app, sdl.K_H, .H, true)
-	actions := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_key_event(app, sdl.K_H, .H, true)
+	actions := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, actions.pause.pressed)
-	game.app_apply_key_event(app, sdl.K_H, .H, false)
+	host.app_apply_key_event(app, sdl.K_H, .H, false)
 	app.input.pause = false
 	app.keyboard_action_released = {}
-	game.app_apply_key_event(app, sdl.K_P, .P, true)
-	actions = game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_key_event(app, sdl.K_P, .P, true)
+	actions = host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, actions.toggle_ui.pressed)
-	game.app_apply_key_event(app, sdl.K_U, .U, true)
+	host.app_apply_key_event(app, sdl.K_U, .U, true)
 	testing.expect(t, app.input.key_f1)
-	actions = game.app_resolve_input_actions(app, 1.0 / 60.0)
+	actions = host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, actions.help.pressed)
 	testing.expect_value(t, actions.help.owner, game.Input_Action_Source.Mouse_Keyboard)
 }
 
 @(test)
 test_controller_guide_resolves_semantic_help_and_preserves_fast_tap :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
-	game.app_apply_gamepad_button(app, .GUIDE, true)
-	game.app_apply_gamepad_button(app, .GUIDE, false)
-	actions := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_gamepad_button(app, .GUIDE, true)
+	host.app_apply_gamepad_button(app, .GUIDE, false)
+	actions := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, actions.help.pressed)
 	testing.expect(t, actions.help.released)
 	testing.expect(t, !actions.help.down)
@@ -225,89 +226,89 @@ test_controller_guide_resolves_semantic_help_and_preserves_fast_tap :: proc(t: ^
 
 @(test)
 test_controller_menu_layout_maps_start_view_and_preserves_multiple_contributors :: proc(t: ^testing.T) {
-	standard := new(game.App_State)
+	standard := new(host.App_State)
 	defer free(standard)
 	standard.settings = game.settings_default()
-	game.app_apply_gamepad_button(standard, .START, true)
+	host.app_apply_gamepad_button(standard, .START, true)
 	testing.expect(t, standard.controller_pause_down)
 	testing.expect(t, !standard.controller_toggle_ui_down)
-	game.app_apply_gamepad_button(standard, .BACK, true)
+	host.app_apply_gamepad_button(standard, .BACK, true)
 	testing.expect(t, standard.controller_pause_down)
 	testing.expect(t, standard.controller_toggle_ui_down)
-	game.app_apply_gamepad_button(standard, .NORTH, true)
-	game.app_apply_gamepad_button(standard, .BACK, false)
+	host.app_apply_gamepad_button(standard, .NORTH, true)
+	host.app_apply_gamepad_button(standard, .BACK, false)
 	testing.expect(t, standard.controller_toggle_ui_down)
 	testing.expect(t, !standard.controller_action_released.toggle_ui)
 
-	alternate := new(game.App_State)
+	alternate := new(host.App_State)
 	defer free(alternate)
 	alternate.settings = game.settings_default()
 	alternate.settings.controller_menu_layout = "View Pauses"
-	game.app_apply_gamepad_button(alternate, .BACK, true)
-	game.app_apply_gamepad_button(alternate, .BACK, false)
-	actions := game.app_resolve_input_actions(alternate, 1.0 / 60.0)
+	host.app_apply_gamepad_button(alternate, .BACK, true)
+	host.app_apply_gamepad_button(alternate, .BACK, false)
+	actions := host.app_resolve_input_actions(alternate, 1.0 / 60.0)
 	testing.expect(t, actions.pause.pressed)
 	testing.expect(t, actions.pause.released)
 	testing.expect_value(t, actions.pause.owner, game.Input_Action_Source.Controller)
-	game.app_apply_gamepad_button(alternate, .START, true)
+	host.app_apply_gamepad_button(alternate, .START, true)
 	testing.expect(t, alternate.controller_toggle_ui_down)
 	testing.expect(t, !alternate.controller_pause_down)
 }
 
 @(test)
 test_controller_menu_layout_change_releases_held_semantic_actions :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
 	app.settings = game.settings_default()
-	game.app_apply_gamepad_button(app, .START, true)
-	_ = game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_gamepad_button(app, .START, true)
+	_ = host.app_resolve_input_actions(app, 1.0 / 60.0)
 	changed := app.settings
 	changed.controller_menu_layout = "View Pauses"
-	game.app_apply_settings(app, changed)
+	host.app_apply_settings(app, changed)
 	testing.expect(t, !app.controller_pause_down)
 	testing.expect(t, !app.controller_start_down)
-	released := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	released := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, released.pause.released)
 	testing.expect(t, !released.pause.down)
 }
 
 @(test)
 test_controller_shoulder_layout_swaps_semantic_focus_direction :: proc(t: ^testing.T) {
-	standard := new(game.App_State)
+	standard := new(host.App_State)
 	defer free(standard)
 	standard.settings = game.settings_default()
-	game.app_apply_gamepad_button(standard, .RIGHT_SHOULDER, true)
-	actions := game.app_resolve_input_actions(standard, 1.0 / 60.0)
+	host.app_apply_gamepad_button(standard, .RIGHT_SHOULDER, true)
+	actions := host.app_resolve_input_actions(standard, 1.0 / 60.0)
 	testing.expect(t, actions.focus_next.pressed)
 	testing.expect(t, !actions.focus_prev.pressed)
-	game.app_apply_gamepad_button(standard, .RIGHT_SHOULDER, false)
+	host.app_apply_gamepad_button(standard, .RIGHT_SHOULDER, false)
 
-	alternate := new(game.App_State)
+	alternate := new(host.App_State)
 	defer free(alternate)
 	alternate.settings = game.settings_default()
 	alternate.settings.controller_shoulder_layout = "Left Next"
-	game.app_apply_gamepad_button(alternate, .LEFT_SHOULDER, true)
-	actions = game.app_resolve_input_actions(alternate, 1.0 / 60.0)
+	host.app_apply_gamepad_button(alternate, .LEFT_SHOULDER, true)
+	actions = host.app_resolve_input_actions(alternate, 1.0 / 60.0)
 	testing.expect(t, actions.focus_next.pressed)
 	testing.expect(t, !actions.focus_prev.pressed)
-	game.app_apply_gamepad_button(alternate, .RIGHT_SHOULDER, true)
-	actions = game.app_resolve_input_actions(alternate, 1.0 / 60.0)
+	host.app_apply_gamepad_button(alternate, .RIGHT_SHOULDER, true)
+	actions = host.app_resolve_input_actions(alternate, 1.0 / 60.0)
 	testing.expect(t, actions.focus_prev.pressed)
 }
 
 @(test)
 test_controller_shoulder_layout_change_releases_held_focus :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
 	app.settings = game.settings_default()
-	game.app_apply_gamepad_button(app, .RIGHT_SHOULDER, true)
-	_ = game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_gamepad_button(app, .RIGHT_SHOULDER, true)
+	_ = host.app_resolve_input_actions(app, 1.0 / 60.0)
 	changed := app.settings
 	changed.controller_shoulder_layout = "Left Next"
-	game.app_apply_settings(app, changed)
+	host.app_apply_settings(app, changed)
 	testing.expect(t, !app.controller_focus_next_down)
 	testing.expect(t, !app.controller_right_shoulder_down)
-	released := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	released := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, released.focus_next.released)
 	testing.expect(t, !released.focus_next.down)
 }
@@ -363,37 +364,37 @@ test_keyboard_binding_conflicts_swap_or_reassign_without_duplicates :: proc(t: ^
 
 @(test)
 test_keyboard_profile_change_releases_held_semantic_shortcuts :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
 	app.settings = game.settings_default()
-	game.app_apply_key_event(app, sdl.K_SPACE, .SPACE, true)
-	pressed := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_key_event(app, sdl.K_SPACE, .SPACE, true)
+	pressed := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, pressed.pause.down)
 
 	changed := app.settings
 	game.settings_apply_keyboard_profile(&changed, "Letter Shortcuts")
-	game.app_apply_settings(app, changed)
+	host.app_apply_settings(app, changed)
 	testing.expect(t, !app.keyboard_pause_down)
-	released := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	released := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, released.pause.released)
 	testing.expect(t, !released.pause.down)
 }
 
 @(test)
 test_help_remap_releases_held_help_and_discards_old_press_pulse :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
 	app.settings = game.settings_default()
-	game.app_apply_key_event(app, sdl.K_F1, .F1, true)
-	pressed := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_key_event(app, sdl.K_F1, .F1, true)
+	pressed := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, pressed.help.down)
 
 	changed := app.settings
 	_, _ = game.settings_assign_keyboard_binding(&changed, .Help, .H)
-	game.app_apply_settings(app, changed)
+	host.app_apply_settings(app, changed)
 	testing.expect(t, !app.keyboard_help_down)
 	testing.expect(t, !app.input.key_f1)
-	released := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	released := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, released.help.released)
 	testing.expect(t, !released.help.pressed)
 	testing.expect(t, !released.help.down)
@@ -401,59 +402,59 @@ test_help_remap_releases_held_help_and_discards_old_press_pulse :: proc(t: ^test
 
 @(test)
 test_input_action_sources_are_not_gated_by_prompt_device :: proc(t: ^testing.T) {
-	controller_while_mouse_prompts := new(game.App_State)
+	controller_while_mouse_prompts := new(host.App_State)
 	defer free(controller_while_mouse_prompts)
 	controller_while_mouse_prompts.active_device = .Mouse_Keyboard
 	controller_while_mouse_prompts.controller_accept_down = true
 	controller_while_mouse_prompts.input.accept = true
-	controller_actions := game.app_resolve_input_actions(controller_while_mouse_prompts, 1.0 / 60.0)
+	controller_actions := host.app_resolve_input_actions(controller_while_mouse_prompts, 1.0 / 60.0)
 	testing.expect(t, controller_actions.accept.pressed)
 	testing.expect_value(t, controller_actions.accept.owner, game.Input_Action_Source.Controller)
 
-	keyboard_while_controller_prompts := new(game.App_State)
+	keyboard_while_controller_prompts := new(host.App_State)
 	defer free(keyboard_while_controller_prompts)
 	keyboard_while_controller_prompts.active_device = .Controller
 	keyboard_while_controller_prompts.keyboard_back_down = true
 	keyboard_while_controller_prompts.input.key_escape = true
-	keyboard_actions := game.app_resolve_input_actions(keyboard_while_controller_prompts, 1.0 / 60.0)
+	keyboard_actions := host.app_resolve_input_actions(keyboard_while_controller_prompts, 1.0 / 60.0)
 	testing.expect(t, keyboard_actions.back.pressed)
 	testing.expect_value(t, keyboard_actions.back.owner, game.Input_Action_Source.Mouse_Keyboard)
 }
 
 @(test)
 test_controller_face_layout_can_swap_accept_and_back :: proc(t: ^testing.T) {
-	standard := new(game.App_State)
+	standard := new(host.App_State)
 	defer free(standard)
 	standard.settings = game.settings_default()
-	game.app_apply_gamepad_button(standard, .SOUTH, true)
+	host.app_apply_gamepad_button(standard, .SOUTH, true)
 	testing.expect(t, standard.controller_accept_down)
 	testing.expect(t, !standard.controller_back_down)
 
-	east_accept := new(game.App_State)
+	east_accept := new(host.App_State)
 	defer free(east_accept)
 	east_accept.settings = game.settings_default()
 	east_accept.settings.controller_face_layout = "East Accept"
-	game.app_apply_gamepad_button(east_accept, .EAST, true)
+	host.app_apply_gamepad_button(east_accept, .EAST, true)
 	testing.expect(t, east_accept.controller_accept_down)
 	testing.expect(t, !east_accept.controller_back_down)
-	game.app_apply_gamepad_button(east_accept, .SOUTH, true)
+	host.app_apply_gamepad_button(east_accept, .SOUTH, true)
 	testing.expect(t, east_accept.controller_back_down)
 }
 
 @(test)
 test_controller_face_layout_change_releases_held_semantic_action :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
 	app.settings = game.settings_default()
-	game.app_apply_gamepad_button(app, .SOUTH, true)
-	first := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_gamepad_button(app, .SOUTH, true)
+	first := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, first.accept.down)
 
 	changed := app.settings
 	changed.controller_face_layout = "East Accept"
-	game.app_apply_settings(app, changed)
+	host.app_apply_settings(app, changed)
 	testing.expect(t, !app.controller_accept_down)
-	second := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	second := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, second.accept.released)
 	testing.expect(t, !second.back.pressed)
 }
@@ -499,19 +500,19 @@ test_input_action_radial_deadzone_is_circular_and_rescaled :: proc(t: ^testing.T
 
 @(test)
 test_keyboard_back_ignores_auto_repeat :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
 
-	game.app_apply_key_event(app, sdl.K_ESCAPE, .ESCAPE, true)
+	host.app_apply_key_event(app, sdl.K_ESCAPE, .ESCAPE, true)
 	testing.expect(t, app.input.key_escape)
 	testing.expect(t, app.keyboard_back_down)
 
-	game.app_poll_events(app)
-	game.app_apply_key_event(app, sdl.K_ESCAPE, .ESCAPE, true, true)
+	host.app_poll_events(app)
+	host.app_apply_key_event(app, sdl.K_ESCAPE, .ESCAPE, true, true)
 	testing.expect(t, !app.input.key_escape)
 	testing.expect(t, app.keyboard_back_down)
 
-	game.app_apply_key_event(app, sdl.K_ESCAPE, .ESCAPE, false)
+	host.app_apply_key_event(app, sdl.K_ESCAPE, .ESCAPE, false)
 	testing.expect(t, !app.keyboard_back_down)
 }
 
@@ -648,7 +649,7 @@ test_preset_modal_accepts_semantic_controller_back :: proc(t: ^testing.T) {
 	state: game.Preset_Fieldset_State
 	state.save_open = true
 	state.save_open_frame = 0
-	worker := new(game.Render_Worker_State)
+	worker := new(host.Render_Worker_State)
 	defer free(worker)
 
 	uifw.gui_begin_frame(&ctx, {
@@ -760,7 +761,7 @@ test_preset_modal_traps_focus_and_restores_invoker :: proc(t: ^testing.T) {
 	state.save_open = true
 	state.save_open_frame = 0
 	state.save_invoker_focus = invoker
-	worker := new(game.Render_Worker_State)
+	worker := new(host.Render_Worker_State)
 	defer free(worker)
 	ctx.focused = invoker
 
@@ -815,7 +816,7 @@ test_gui_controller_number_edit_back_restores_snapshot :: proc(t: ^testing.T) {
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ctx.focus_edit_id, id)
-	testing.expect_value(t, ctx.text_edit_id, id)
+	testing.expect_value(t, ctx.text_edit_id, uifw.GUI_ID_NONE)
 
 	uifw.gui_begin_frame(&ctx, {active_device = .Controller})
 	uifw.gui_layout_begin(&ctx, {0, 0, 240, 80}, .Column, 0, 44)
@@ -833,6 +834,40 @@ test_gui_controller_number_edit_back_restores_snapshot :: proc(t: ^testing.T) {
 	testing.expect_value(t, value, f32(5))
 	testing.expect_value(t, ctx.focus_edit_id, uifw.GUI_ID_NONE)
 	testing.expect_value(t, ctx.text_edit_id, uifw.GUI_ID_NONE)
+}
+
+@(test)
+test_gui_controller_number_edit_adjusts_with_navigation_and_commits :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	ctx.controller_explicit_activation = true
+
+	value := f32(5)
+	id := uifw.gui_make_id(&ctx, "amount")
+	ctx.focused = id
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, accept = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 240, 80}, .Column, 0, 44)
+	_ = uifw.gui_number_drag_f32(&ctx, "Amount", "amount", &value, 1, 0, 10)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, ctx.focus_edit_id, id)
+	testing.expect_value(t, ctx.text_edit_id, uifw.GUI_ID_NONE)
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, nav_pressed_x = 1})
+	uifw.gui_layout_begin(&ctx, {0, 0, 240, 80}, .Column, 0, 44)
+	testing.expect(t, uifw.gui_number_drag_f32(&ctx, "Amount", "amount", &value, 1, 0, 10))
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, value, f32(6))
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, accept = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 240, 80}, .Column, 0, 44)
+	_ = uifw.gui_number_drag_f32(&ctx, "Amount", "amount", &value, 1, 0, 10)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, value, f32(6))
+	testing.expect_value(t, ctx.focus_edit_id, uifw.GUI_ID_NONE)
 }
 
 @(test)
@@ -937,14 +972,14 @@ test_simulation_tab_component_supports_keyboard_entry_and_controller_browse :: p
 
 @(test)
 test_fast_dpad_and_camera_reset_taps_survive_final_up_state :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
 
-	game.app_apply_gamepad_button(app, .DPAD_RIGHT, true)
-	game.app_apply_gamepad_button(app, .DPAD_RIGHT, false)
-	game.app_apply_key_event(app, cast(sdl.Keycode)'C', .C, true)
-	game.app_apply_key_event(app, cast(sdl.Keycode)'C', .C, false)
-	actions := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_gamepad_button(app, .DPAD_RIGHT, true)
+	host.app_apply_gamepad_button(app, .DPAD_RIGHT, false)
+	host.app_apply_key_event(app, cast(sdl.Keycode)'C', .C, true)
+	host.app_apply_key_event(app, cast(sdl.Keycode)'C', .C, false)
+	actions := host.app_resolve_input_actions(app, 1.0 / 60.0)
 
 	testing.expect_value(t, app.controller_dpad_x, f32(0))
 	testing.expect(t, !app.input.key_c)
@@ -955,17 +990,17 @@ test_fast_dpad_and_camera_reset_taps_survive_final_up_state :: proc(t: ^testing.
 
 @(test)
 test_release_and_repress_between_frames_preserves_both_phases :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
-	game.app_apply_gamepad_button(app, .EAST, true)
-	first := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_gamepad_button(app, .EAST, true)
+	first := host.app_resolve_input_actions(app, 1.0 / 60.0)
 	testing.expect(t, first.back.pressed)
 
 	app.input.back = false
 	app.controller_action_released = {}
-	game.app_apply_gamepad_button(app, .EAST, false)
-	game.app_apply_gamepad_button(app, .EAST, true)
-	second := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	host.app_apply_gamepad_button(app, .EAST, false)
+	host.app_apply_gamepad_button(app, .EAST, true)
+	second := host.app_resolve_input_actions(app, 1.0 / 60.0)
 
 	testing.expect(t, second.back.down)
 	testing.expect(t, second.back.released)
@@ -974,10 +1009,10 @@ test_release_and_repress_between_frames_preserves_both_phases :: proc(t: ^testin
 
 @(test)
 test_trigger_axis_events_accumulate_fast_press_and_release :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
-	game.app_note_gamepad_axis_event(app, .RIGHT_TRIGGER, 32767)
-	game.app_note_gamepad_axis_event(app, .RIGHT_TRIGGER, 0)
+	host.app_note_gamepad_axis_event(app, .RIGHT_TRIGGER, 32767)
+	host.app_note_gamepad_axis_event(app, .RIGHT_TRIGGER, 0)
 
 	testing.expect(t, app.input.primary_pressed)
 	testing.expect(t, app.input.primary_released)
@@ -985,12 +1020,12 @@ test_trigger_axis_events_accumulate_fast_press_and_release :: proc(t: ^testing.T
 
 @(test)
 test_controller_triggers_interact_without_zooming_camera :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
 	app.controller_right_trigger = 0.85
 	app.controller_right_trigger_down = true
 	app.input.primary_pressed = true
-	actions := game.app_resolve_input_actions(app, 1.0 / 60.0)
+	actions := host.app_resolve_input_actions(app, 1.0 / 60.0)
 
 	testing.expect(t, actions.primary.down)
 	testing.expect(t, actions.primary.pressed)
@@ -999,17 +1034,17 @@ test_controller_triggers_interact_without_zooming_camera :: proc(t: ^testing.T) 
 
 @(test)
 test_controller_dpad_zoom_preserves_held_and_fast_tap_input :: proc(t: ^testing.T) {
-	held := new(game.App_State)
+	held := new(host.App_State)
 	defer free(held)
 	held.controller_dpad_y = -1
-	held_actions := game.app_resolve_input_actions(held, 1.0 / 60.0)
+	held_actions := host.app_resolve_input_actions(held, 1.0 / 60.0)
 	testing.expect_value(t, held_actions.camera_zoom, f32(1))
 
-	tapped := new(game.App_State)
+	tapped := new(host.App_State)
 	defer free(tapped)
-	game.app_apply_gamepad_button(tapped, .DPAD_DOWN, true)
-	game.app_apply_gamepad_button(tapped, .DPAD_DOWN, false)
-	tapped_actions := game.app_resolve_input_actions(tapped, 1.0 / 60.0)
+	host.app_apply_gamepad_button(tapped, .DPAD_DOWN, true)
+	host.app_apply_gamepad_button(tapped, .DPAD_DOWN, false)
+	tapped_actions := host.app_resolve_input_actions(tapped, 1.0 / 60.0)
 	testing.expect_value(t, tapped.controller_dpad_y, f32(0))
 	testing.expect_value(t, tapped_actions.camera_zoom, f32(-1))
 }
@@ -1051,6 +1086,52 @@ test_gui_explicit_selector_dpad_does_not_edit_before_accept :: proc(t: ^testing.
 	testing.expect(t, !changed)
 	testing.expect_value(t, current, 0)
 	testing.expect_value(t, ctx.focused, next)
+}
+
+@(test)
+test_preset_stepper_combobox_distinguishes_focused_from_active :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	ctx.controller_explicit_activation = true
+
+	presets := [?]string{"Default", "Calm", "Wild"}
+	state: game.Preset_Fieldset_State
+	id := uifw.gui_make_id(&ctx, "preset_select")
+	ctx.focused = id
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, nav_x = 1, nav_pressed_x = 1})
+	uifw.gui_layout_begin(&ctx, {0, 0, 260, 70}, .Column, 0, 44)
+	testing.expect(t, !game.preset_fieldset_draw_selector(&ctx, &state, presets[:]))
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, state.selected_index, 0)
+	testing.expect_value(t, ctx.focus_edit_id, uifw.GUI_ID_NONE)
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, accept = true, accept_pressed = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 260, 70}, .Column, 0, 44)
+	testing.expect(t, !game.preset_fieldset_draw_selector(&ctx, &state, presets[:]))
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, state.selected_index, 0)
+	testing.expect_value(t, ctx.focus_edit_id, id)
+	testing.expect_value(t, ctx.open_panel, uifw.GUI_ID_NONE)
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, nav_x = 1, nav_pressed_x = 1})
+	uifw.gui_layout_begin(&ctx, {0, 0, 260, 70}, .Column, 0, 44)
+	testing.expect(t, game.preset_fieldset_draw_selector(&ctx, &state, presets[:]))
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, state.selected_index, 1)
+	testing.expect_value(t, ctx.focus_edit_id, id)
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, back = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 260, 70}, .Column, 0, 44)
+	testing.expect(t, game.preset_fieldset_draw_selector(&ctx, &state, presets[:]))
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, state.selected_index, 0)
+	testing.expect_value(t, ctx.focus_edit_id, uifw.GUI_ID_NONE)
 }
 
 @(test)
@@ -1162,7 +1243,7 @@ test_pointer_gesture_owner_overrides_prompt_device :: proc(t: ^testing.T) {
 		pressed = true,
 		owner = .Mouse_Keyboard,
 	}
-	device := game.app_pointer_device_for_actions(actions, .Controller)
+	device := host.app_pointer_device_for_actions(actions, .Controller)
 	testing.expect_value(t, device, uifw.Input_Device_Kind.Mouse_Keyboard)
 }
 
@@ -1375,7 +1456,7 @@ test_slime_pointer_deck_selection_reconciles_controller_region :: proc(t: ^testi
 	ui.slime_controller.focus.phase = .Child_Region
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1280, 720, ui.settings.ui_scale)
 	deck := game.slime_controller_ui_deck_rect(&ctx, 1280, 720, ui.slime_controller.mode)
-	point := uifw.Vec2{deck.x + ctx.style.spacing + 5, deck.y + ctx.style.spacing + 5}
+	point := uifw.Vec2{deck.x + ctx.style.spacing_1 + 5, deck.y + game.app_ui_simulation_bar_height(&ctx) + ctx.style.spacing_1 + 5}
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, mouse_pos = point, mouse_pressed = true, mouse_released = true})
 	game.slime_controller_ui_draw_deck(&ui.slime_controller, &ctx, deck)

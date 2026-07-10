@@ -39,7 +39,7 @@ Preset_Fieldset_Builtin_Context :: struct {
 preset_fieldset_draw :: proc(
 	ctx: ^uifw.Gui_Context,
 	state: ^Preset_Fieldset_State,
-	worker: ^Render_Worker_State,
+	worker: ^Product_Context,
 	simulation_directory: string,
 	builtin_names: []string,
 	builtin_selected_index: int,
@@ -74,41 +74,23 @@ preset_fieldset_draw :: proc(
 }
 
 preset_fieldset_draw_selector :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fieldset_State, presets: []string) -> bool {
-	row := uifw.gui_next_rect(ctx)
-	arrow_w := min(max(row.h, f32(35)), row.w * 0.22)
-	left := uifw.Rect{row.x, row.y, arrow_w, row.h}
-	right := uifw.Rect{row.x + row.w - arrow_w, row.y, arrow_w, row.h}
-	center := uifw.Rect{row.x + arrow_w, row.y, max(row.w - arrow_w * 2, 0), row.h}
-	combo_id := uifw.gui_make_id(ctx, "preset_select")
-	changed := false
-
-	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "preset_previous"), left, -1, true, false) {
-		ctx.focused = combo_id
-		state.selected_index = (state.selected_index - 1 + len(presets)) % len(presets)
-		changed = true
-	}
-	uifw.gui_tooltip(ctx, left, "Previous preset")
-
-	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "preset_next"), right, 1, true, false) {
-		ctx.focused = combo_id
-		state.selected_index = (state.selected_index + 1) % len(presets)
-		changed = true
-	}
-	uifw.gui_tooltip(ctx, right, "Next preset")
-	changed = uifw.gui_combobox_cycle_focused(ctx, combo_id, &state.selected_index, len(presets)) || changed
-
-	uifw.gui_layout_begin(ctx, center, .Column, 0, center.h)
-	changed = uifw.gui_combobox(ctx, "Select preset...", "preset_select", &state.selected_index, presets, state.query_buffer[:]) || changed
-	uifw.gui_layout_end(ctx)
-
-	return changed
+	return uifw.gui_stepper_combobox(
+		ctx,
+		"Select preset...",
+		"preset_select",
+		&state.selected_index,
+		presets,
+		state.query_buffer[:],
+		"Previous preset",
+		"Next preset",
+	)
 }
 
 preset_fieldset_content_rows :: proc(state: ^Preset_Fieldset_State) -> int {
 	return 2
 }
 
-preset_names_for_simulation :: proc(worker: ^Render_Worker_State, simulation_directory: string) -> [dynamic]string {
+preset_names_for_simulation :: proc(worker: ^Product_Context, simulation_directory: string) -> [dynamic]string {
 	names := make([dynamic]string, 0, 16, context.temp_allocator)
 	if worker == nil {
 		return names
@@ -168,7 +150,7 @@ preset_fieldset_select_pending_saved :: proc(state: ^Preset_Fieldset_State, name
 
 preset_fieldset_apply_selection :: proc(
 	selected_index: int,
-	worker: ^Render_Worker_State,
+	worker: ^Product_Context,
 	simulation_directory: string,
 	builtin_names: []string,
 	preset_names: []string,
@@ -202,7 +184,7 @@ preset_fieldset_apply_builtin :: proc(builtin_context: Preset_Fieldset_Builtin_C
 	}
 }
 
-preset_save_dialog_draw :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fieldset_State, worker: ^Render_Worker_State, simulation_directory: string) {
+preset_save_dialog_draw :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fieldset_State, worker: ^Product_Context, simulation_directory: string) {
 	if !state.save_open {
 		return
 	}
@@ -309,7 +291,7 @@ preset_save_dialog_has_name :: proc(state: ^Preset_Fieldset_State) -> bool {
 	return len(strings.trim_space(string(state.save_name[:state.save_name_len]))) > 0
 }
 
-preset_save_dialog_commit :: proc(state: ^Preset_Fieldset_State, worker: ^Render_Worker_State, simulation_directory: string) {
+preset_save_dialog_commit :: proc(state: ^Preset_Fieldset_State, worker: ^Product_Context, simulation_directory: string) {
 	name := strings.trim_space(string(state.save_name[:state.save_name_len]))
 	preset_fieldset_enqueue(worker, .Save_Preset, simulation_directory, name)
 	state.select_saved_when_available = true
@@ -341,7 +323,7 @@ preset_name_accepts_char :: proc(ch: rune) -> bool {
 		ch == ' ' || ch == '_' || ch == '-' || ch == '.'
 }
 
-preset_fieldset_enqueue :: proc(worker: ^Render_Worker_State, kind: Ui_To_Render_Command_Kind, simulation_directory, preset_name: string) {
+preset_fieldset_enqueue :: proc(worker: ^Product_Context, kind: Ui_To_Render_Command_Kind, simulation_directory, preset_name: string) {
 	if worker == nil || worker.ui_to_render == nil {
 		return
 	}

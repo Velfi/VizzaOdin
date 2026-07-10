@@ -1,2 +1,2 @@
 - VizzaOdin: Odin/Slang port based on Rust/Tauri app Vizza (~/Documents/Vizza)
-- Regarding the simulations: Stick to the way the old project does thing wherever possible. Don't assume something is replaceable.
+  - VizzaOdin has a special Mouse + KB/Controller-friendly UI; The old app does not.

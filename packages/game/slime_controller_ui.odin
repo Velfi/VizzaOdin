@@ -122,42 +122,42 @@ slime_controller_ui_key_badge_size :: proc(gui: ^uifw.Gui_Context) -> f32 {
 	return max(gui.style.row_height * 1.35, gui.style.body_line_height * 1.65)
 }
 
-slime_controller_ui_icon_index :: proc(instrument: Control_Instrument) -> (int, bool) {
+slime_controller_ui_icon :: proc(instrument: Control_Instrument) -> (uifw.Ui_Controller_Icon, bool) {
 	#partial switch instrument {
 	case .Play:
-		return 0, true
+		return .Player_Play, true
 	case .Look:
-		return 1, true
+		return .Palette, true
 	case .Brush:
-		return 2, true
+		return .Brush, true
 	case .Motion:
-		return 3, true
+		return .Motion, true
 	case .Awareness:
-		return 4, true
+		return .Awareness, true
 	case .Field:
-		return 5, true
+		return .Trails, true
 	case .World:
-		return 6, true
+		return .World, true
 	case .Birth:
-		return 7, true
+		return .Birth, true
 	case .Capture:
-		return 8, true
+		return .Capture, true
 	case .Presets:
-		return 9, true
+		return .Presets, true
 	case:
 	}
-	return 0, false
+	return .Player_Play, false
 }
 
-slime_controller_ui_icon_uv :: proc(index: int) -> uifw.Rect {
-	count := f32(engine.UI_ICONOIR_ICON_COUNT)
-	u0 := f32(index) / count
+slime_controller_ui_icon_uv :: proc(icon: uifw.Ui_Controller_Icon) -> uifw.Rect {
+	count := f32(uifw.UI_CONTROLLER_ICON_COUNT)
+	u0 := f32(int(icon)) / count
 	return {u0, 0, 1 / count, 1}
 }
 
 slime_controller_ui_draw_icon_badge :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, instrument: Control_Instrument, fallback: string, selected: bool) {
-	if icon_index, ok := slime_controller_ui_icon_index(instrument); ok {
-		slime_controller_ui_draw_icon_badge_index(gui, rect, icon_index, selected)
+	if icon, ok := slime_controller_ui_icon(instrument); ok {
+		slime_controller_ui_draw_atlas_icon_badge(gui, rect, icon, selected)
 		return
 	}
 	fill := selected ? uifw.Color{0.48, 0.50, 0.90, 0.88} : uifw.Color{1, 1, 1, 0.12}
@@ -168,7 +168,7 @@ slime_controller_ui_draw_icon_badge :: proc(gui: ^uifw.Gui_Context, rect: uifw.R
 	uifw.gui_text_aligned_scaled(gui, rect, fallback, gui.style.text, .Center, key_scale)
 }
 
-slime_controller_ui_draw_icon_badge_index :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, icon_index: int, selected: bool) {
+slime_controller_ui_draw_atlas_icon_badge :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, icon: uifw.Ui_Controller_Icon, selected: bool) {
 	fill := selected ? uifw.Color{0.48, 0.50, 0.90, 0.88} : uifw.Color{1, 1, 1, 0.12}
 	stroke := selected ? gui.style.accent : uifw.Color{1, 1, 1, 0.16}
 	uifw.gui_round_rect(gui, rect, 5, fill)
@@ -176,7 +176,7 @@ slime_controller_ui_draw_icon_badge_index :: proc(gui: ^uifw.Gui_Context, rect: 
 	icon_margin := max(rect.w * SLIME_CONTROLLER_UI_ICON_INSET_RATIO, gui.style.border_width)
 	icon_rect := uifw.gui_inset(rect, icon_margin)
 	tint := selected ? uifw.Color{1, 1, 1, 0.98} : uifw.Color{1, 1, 1, 0.72}
-	uifw.gui_image_uv_filtered(gui, icon_rect, uifw.Gui_Image_Id(engine.UI_ICONOIR_ATLAS_TEXTURE_ID), tint, slime_controller_ui_icon_uv(icon_index), {brightness = 1, contrast = 1})
+	uifw.gui_image_uv_filtered(gui, icon_rect, uifw.Gui_Image_Id(uifw.UI_CONTROLLER_ICON_ATLAS_TEXTURE_ID), tint, slime_controller_ui_icon_uv(icon), {brightness = 1, contrast = 1})
 }
 
 slime_controller_ui_deck_focused :: proc(state: ^Slime_Controller_Ui_State, gui: ^uifw.Gui_Context) -> bool {
@@ -213,10 +213,9 @@ slime_controller_ui_deck_rect :: proc(gui: ^uifw.Gui_Context, width, height: f32
 	}
 	tab_min = min(tab_min, SLIME_CONTROLLER_UI_DECK_MAX_TAB_WIDTH)
 	hint_h := max(gui.style.small_line_height, gui.style.body_line_height * 0.72)
-	deck_h := max(
-		gui.style.row_height * 3.65,
-		key_w + gui.style.body_line_height + hint_h + gui.style.spacing_3 + gui.style.spacing_2,
-	)
+	header_h := app_ui_simulation_bar_height(gui)
+	tab_h := max(gui.style.row_height * 1.28, key_w * 0.72)
+	deck_h := header_h + tab_h + hint_h + gui.style.spacing_1 * 3
 	target_w := f32(count) * tab_min + f32(count + 1) * gui.style.spacing
 	deck_w := min(max(target_w, width * 0.58), max(width - margin * 2, 1))
 	return {max((width - deck_w) * 0.5, margin), max(height - deck_h - margin, margin), deck_w, deck_h}
@@ -363,7 +362,7 @@ slime_controller_ui_update_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Conte
 	return pause_consumed
 }
 
-slime_controller_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, width, height: f32, worker: ^Render_Worker_State) {
+slime_controller_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, width, height: f32, worker: ^Product_Context) {
 	if !slime_controller_ui_enabled(ui) {
 		return
 	}
@@ -405,7 +404,7 @@ slime_controller_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim:
 	}
 	if ui.simulation_shell.controls_visible {
 		deck := slime_controller_ui_deck_rect(gui, width, height, state.mode)
-		slime_controller_ui_draw_deck(state, gui, deck)
+		slime_controller_ui_draw_deck(state, gui, deck, &ui.settings)
 	}
 	if modal_open {
 		gui.input = modal_input
@@ -446,24 +445,14 @@ slime_controller_ui_context_hint :: proc(state: ^Slime_Controller_Ui_State, devi
 	return ""
 }
 
-slime_controller_ui_draw_deck :: proc(state: ^Slime_Controller_Ui_State, gui: ^uifw.Gui_Context, deck: uifw.Rect) {
+slime_controller_ui_draw_deck :: proc(state: ^Slime_Controller_Ui_State, gui: ^uifw.Gui_Context, deck: uifw.Rect, settings: ^App_Settings = nil) {
 	count := slime_controller_ui_visible_instrument_count(state.mode)
 	if count <= 0 {
 		return
 	}
 	uifw.gui_spatial_group_begin(gui, "slime_deck_region")
 	defer uifw.gui_spatial_group_end(gui)
-	uifw.gui_shadow(gui, deck, 8, {0, 6}, 18, {0, 0, 0, 0.36})
-	uifw.gui_round_rect(gui, deck, 8, {0.025, 0.035, 0.05, 0.52})
-	glass := uifw.gui_default_glass_style(gui, 8)
-	glass.tint = {0.06, 0.08, 0.10, 0.68}
-	glass.roughness = 0.58
-	glass.thickness = max(gui.style.rhythm * 0.20, f32(8))
-	glass.bevel = max(gui.style.border_width * 6, f32(6))
-	glass.border = 0.32
-	uifw.gui_refractive_glass_rect(gui, deck, glass)
-	uifw.gui_round_stroke(gui, deck, 8, {1, 1, 1, 0.16}, gui.style.border_width)
-	gap := gui.style.spacing
+	gap := gui.style.spacing_1
 	hint := slime_controller_ui_context_hint(state, gui.input.active_device)
 	hint_h := max(gui.style.small_line_height, gui.style.body_line_height * 0.72)
 	hint_rect := uifw.Rect{
@@ -472,14 +461,15 @@ slime_controller_ui_draw_deck :: proc(state: ^Slime_Controller_Ui_State, gui: ^u
 		max(deck.w - gap * 3, 1),
 		hint_h,
 	}
+	tabs_y := deck.y + app_ui_simulation_bar_height(gui) + gap
 	tab_w := max((deck.w - gap * f32(count + 1)) / f32(count), 1)
-	tab_h := max(hint_rect.y - deck.y - gap * 2, 1)
+	tab_h := max(hint_rect.y - tabs_y - gap, 1)
 	for i in 0 ..< count {
 		instrument, ok := slime_controller_ui_instrument_at(state.mode, i)
 		if !ok {
 			continue
 		}
-		tab := uifw.Rect{deck.x + gap + f32(i) * (tab_w + gap), deck.y + gap, tab_w, tab_h}
+		tab := uifw.Rect{deck.x + gap + f32(i) * (tab_w + gap), tabs_y, tab_w, tab_h}
 		id := uifw.gui_make_id(gui, fmt.tprintf("slime_deck_%d", i))
 		control := uifw.gui_control(gui, id, tab, true)
 		if control.focused {
@@ -507,21 +497,22 @@ slime_controller_ui_draw_deck :: proc(state: ^Slime_Controller_Ui_State, gui: ^u
 		}
 		content_pad := max(gui.style.spacing_1, gui.style.border_width * 2)
 		content := uifw.gui_inset(tab, content_pad)
-		label_h := min(gui.style.body_line_height, max(content.h * 0.34, gui.style.small_line_height))
-		badge_limit := max(content.h - label_h - gui.style.spacing_1, 1)
-		badge_size := min(min(slime_controller_ui_key_badge_size(gui), badge_limit), max(content.w, 1))
-		badge_x := content.x + max((content.w - badge_size) * 0.5, 0)
-		badge := uifw.Rect{badge_x, content.y, badge_size, badge_size}
-		label_y := badge.y + badge.h + gui.style.spacing_1
-		label_rect := uifw.Rect{content.x, label_y, content.w, max(content.y + content.h - label_y, 1)}
+		badge_size := min(min(gui.style.row_height * 0.94, content.h), max(content.w * 0.42, 1))
+		badge := uifw.Rect{content.x, content.y + max((content.h - badge_size) * 0.5, 0), badge_size, badge_size}
+		label_x := badge.x + badge.w + gui.style.spacing_1
+		label_rect := uifw.Rect{label_x, content.y, max(content.x + content.w - label_x, 1), content.h}
 		label_scale := slime_controller_ui_fit_text_scale(gui, instrument.label, SLIME_CONTROLLER_UI_DECK_LABEL_SCALE, label_rect.w)
 		uifw.gui_scissor_begin(gui, tab)
 		slime_controller_ui_draw_icon_badge(gui, badge, instrument.instrument, instrument.icon, selected || deck_focused)
-		uifw.gui_text_aligned_scaled(gui, label_rect, instrument.label, gui.style.text, .Center, label_scale)
+		uifw.gui_text_aligned_scaled(gui, label_rect, instrument.label, gui.style.text, .Left, label_scale)
 		uifw.gui_scissor_end(gui)
 	}
-	hint_scale := slime_controller_ui_fit_text_scale(gui, hint, SLIME_CONTROLLER_UI_HINT_SCALE, hint_rect.w)
-	uifw.gui_text_aligned_scaled(gui, hint_rect, hint, gui.style.text_muted, .Center, hint_scale)
+	if gui.input.active_device == .Controller {
+		controller_prompt_draw_context_hint(gui, hint_rect, state.focus.phase, settings)
+	} else {
+		hint_scale := slime_controller_ui_fit_text_scale(gui, hint, SLIME_CONTROLLER_UI_HINT_SCALE, hint_rect.w)
+		uifw.gui_text_aligned_scaled(gui, hint_rect, hint, gui.style.text_muted, .Center, hint_scale)
+	}
 }
 
 slime_controller_ui_panel_content_height :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, instrument: Control_Instrument, mode: Control_Ui_Mode) -> f32 {
@@ -569,7 +560,7 @@ slime_controller_ui_panel_content_height :: proc(gui: ^uifw.Gui_Context, sim: ^R
 	return row_count * row + slider_count * slider + max(items - 1, 0) * gap + extra
 }
 
-slime_controller_ui_draw_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, panel: uifw.Rect, worker: ^Render_Worker_State) {
+slime_controller_ui_draw_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, panel: uifw.Rect, worker: ^Product_Context) {
 	instrument, ok := slime_controller_ui_active_instrument(&ui.slime_controller)
 	if !ok {
 		return
@@ -691,7 +682,7 @@ slime_controller_ui_button :: proc(gui: ^uifw.Gui_Context, desc: Control_Descrip
 	return clicked
 }
 
-slime_controller_ui_draw_presets :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, worker: ^Render_Worker_State) {
+slime_controller_ui_draw_presets :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, worker: ^Product_Context) {
 	builtin_names := remaining_sim_builtin_preset_names(.Slime_Mold)
 	directory := remaining_sim_directory(.Slime_Mold)
 	preset_fieldset_draw(
@@ -881,7 +872,7 @@ slime_controller_ui_draw_field :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_S
 	}
 }
 
-slime_controller_ui_draw_birth :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, worker: ^Render_Worker_State) {
+slime_controller_ui_draw_birth :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, worker: ^Product_Context) {
 	settings := &sim.slime
 	if desc, ok := slime_control_descriptor_by_id(.Initialization_Position_Distribution); ok {
 		if uifw.gui_selector(gui, fmt.tprintf("%s: %s", desc.label, SLIME_POSITION_GENERATOR_NAMES[settings.position_generator_index]), desc.stable_id, &settings.position_generator_index, SLIME_POSITION_GENERATOR_NAMES[:]) {
@@ -935,7 +926,7 @@ slime_controller_ui_draw_birth :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_S
 	}
 }
 
-slime_controller_ui_draw_world :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, worker: ^Render_Worker_State) {
+slime_controller_ui_draw_world :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, worker: ^Product_Context) {
 	settings := &sim.slime
 	if desc, ok := slime_control_descriptor_by_id(.Mask_Source); ok {
 		if uifw.gui_selector(gui, fmt.tprintf("%s: %s", desc.label, SLIME_MASK_PATTERN_NAMES[settings.mask_pattern_index]), desc.stable_id, &settings.mask_pattern_index, SLIME_MASK_PATTERN_NAMES[:]) {
@@ -990,7 +981,7 @@ slime_controller_ui_draw_world :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_S
 	}
 }
 
-slime_controller_ui_draw_capture :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, worker: ^Render_Worker_State) {
+slime_controller_ui_draw_capture :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, worker: ^Product_Context) {
 	if desc, ok := slime_control_descriptor_by_id(.Capture_Record); ok {
 		if slime_controller_ui_button(gui, desc, app_ui_video_recording_button_label(ui)) {
 			app_ui_video_recording_toggle(ui, worker)

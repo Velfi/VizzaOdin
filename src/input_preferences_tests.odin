@@ -1,51 +1,63 @@
 package main
 
 import game "../packages/game"
+import host "../packages/app"
 import uifw "../packages/ui"
 
 import "core:testing"
+import sdl "vendor:sdl3"
+
+@(test)
+test_controller_prompt_style_detects_supported_families :: proc(t: ^testing.T) {
+	testing.expect_value(t, host.app_controller_prompt_style_for(.XBOXONE, "Xbox Wireless Controller"), uifw.Controller_Prompt_Style.Xbox)
+	testing.expect_value(t, host.app_controller_prompt_style_for(.PS4, "DUALSHOCK 4"), uifw.Controller_Prompt_Style.PlayStation)
+	testing.expect_value(t, host.app_controller_prompt_style_for(.PS5, "DualSense Wireless Controller"), uifw.Controller_Prompt_Style.PlayStation)
+	// Steam Deck can present an Xbox-shaped SDL mapping, so its name wins.
+	testing.expect_value(t, host.app_controller_prompt_style_for(.XBOX360, "Steam Deck"), uifw.Controller_Prompt_Style.Steam_Deck)
+	testing.expect_value(t, host.app_controller_prompt_style_for(sdl.GamepadType.STANDARD, "Unknown Pad"), uifw.Controller_Prompt_Style.Xbox)
+}
 
 @(test)
 test_app_input_preferences_override_defaults_and_clamp :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
-	testing.expect_value(t, game.app_controller_deadzone(app), game.INPUT_CONTROLLER_DEADZONE)
-	testing.expect_value(t, game.app_controller_cursor_speed(app), game.INPUT_CONTROLLER_CURSOR_SPEED)
-	testing.expect_value(t, game.app_navigation_repeat_delay(app), game.INPUT_ACTION_REPEAT_DELAY)
-	testing.expect_value(t, game.app_navigation_repeat_interval(app), game.INPUT_ACTION_REPEAT_INTERVAL)
+	testing.expect_value(t, host.app_controller_deadzone(app), host.INPUT_CONTROLLER_DEADZONE)
+	testing.expect_value(t, host.app_controller_cursor_speed(app), host.INPUT_CONTROLLER_CURSOR_SPEED)
+	testing.expect_value(t, host.app_navigation_repeat_delay(app), game.INPUT_ACTION_REPEAT_DELAY)
+	testing.expect_value(t, host.app_navigation_repeat_interval(app), game.INPUT_ACTION_REPEAT_INTERVAL)
 
 	app.settings.controller_deadzone = 0.18
 	app.settings.controller_cursor_speed = 1.25
 	app.settings.navigation_repeat_delay_ms = 425
 	app.settings.navigation_repeat_interval_ms = 120
-	testing.expect_value(t, game.app_controller_deadzone(app), f32(0.18))
-	testing.expect_value(t, game.app_controller_cursor_speed(app), f32(1.25))
-	testing.expect_value(t, game.app_navigation_repeat_delay(app), f32(0.425))
-	testing.expect_value(t, game.app_navigation_repeat_interval(app), f32(0.12))
+	testing.expect_value(t, host.app_controller_deadzone(app), f32(0.18))
+	testing.expect_value(t, host.app_controller_cursor_speed(app), f32(1.25))
+	testing.expect_value(t, host.app_navigation_repeat_delay(app), f32(0.425))
+	testing.expect_value(t, host.app_navigation_repeat_interval(app), f32(0.12))
 
 	app.settings.controller_deadzone = 0.99
 	app.settings.controller_cursor_speed = 99
 	app.settings.navigation_repeat_delay_ms = 5000
 	app.settings.navigation_repeat_interval_ms = 1
-	testing.expect_value(t, game.app_controller_deadzone(app), f32(0.60))
-	testing.expect_value(t, game.app_controller_cursor_speed(app), f32(2.0))
-	testing.expect_value(t, game.app_navigation_repeat_delay(app), f32(1.0))
-	testing.expect_value(t, game.app_navigation_repeat_interval(app), f32(0.03))
+	testing.expect_value(t, host.app_controller_deadzone(app), f32(0.60))
+	testing.expect_value(t, host.app_controller_cursor_speed(app), f32(2.0))
+	testing.expect_value(t, host.app_navigation_repeat_delay(app), f32(1.0))
+	testing.expect_value(t, host.app_navigation_repeat_interval(app), f32(0.03))
 }
 
 @(test)
 test_app_navigation_repeat_uses_configured_timing :: proc(t: ^testing.T) {
-	app := new(game.App_State)
+	app := new(host.App_State)
 	defer free(app)
 	app.settings.navigation_repeat_delay_ms = 200
 	app.settings.navigation_repeat_interval_ms = 75
 	app.controller_dpad_x = 1
 
-	initial := game.app_resolve_input_actions(app, 0)
+	initial := host.app_resolve_input_actions(app, 0)
 	testing.expect_value(t, initial.navigate.pressed.x, f32(1))
-	waiting := game.app_resolve_input_actions(app, 0.19)
+	waiting := host.app_resolve_input_actions(app, 0.19)
 	testing.expect_value(t, waiting.navigate.repeated.x, f32(0))
-	repeated := game.app_resolve_input_actions(app, 0.02)
+	repeated := host.app_resolve_input_actions(app, 0.02)
 	testing.expect_value(t, repeated.navigate.repeated.x, f32(1))
 }
 
@@ -56,7 +68,7 @@ test_options_input_section_exposes_all_input_preferences :: proc(t: ^testing.T) 
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
-	worker: game.Render_Worker_State
+	worker: host.Render_Worker_State
 
 	uifw.gui_begin_frame(&ctx, {})
 	uifw.gui_layout_begin(&ctx, {0, 0, 520, 320}, .Column, 8, 44)
@@ -95,7 +107,7 @@ test_options_camera_section_exposes_device_specific_tuning :: proc(t: ^testing.T
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
-	worker: game.Render_Worker_State
+	worker: host.Render_Worker_State
 	uifw.gui_begin_frame(&ctx, {})
 	uifw.gui_layout_begin(&ctx, {0, 0, 520, 240}, .Column, 8, 44)
 	game.app_ui_draw_options_camera(&ui, &ctx, &worker)

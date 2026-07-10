@@ -2,6 +2,7 @@ package main
 
 import engine "../packages/engine"
 import game "../packages/game"
+import host "../packages/app"
 import uifw "../packages/ui"
 
 import "core:testing"
@@ -62,7 +63,7 @@ test_main_menu_actions_fit_wide_and_compact_layouts_without_controls :: proc(t: 
 		ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), viewport.x, viewport.y, 1)
 		vk_ctx: engine.Vk_Context
 		vk_ctx.swapchain_extent = {width = u32(viewport.x), height = u32(viewport.y)}
-		worker: game.Render_Worker_State
+		worker: host.Render_Worker_State
 
 		uifw.gui_begin_frame(&ctx, {window_width = i32(viewport.x), window_height = i32(viewport.y), mouse_pos = {-1000, -1000}})
 		game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)

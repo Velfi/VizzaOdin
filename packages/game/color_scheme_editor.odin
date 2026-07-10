@@ -130,43 +130,21 @@ color_scheme_editor_draw_selector :: proc(ctx: ^uifw.Gui_Context, editor: ^Color
 
 color_scheme_editor_draw_scheme_picker :: proc(ctx: ^uifw.Gui_Context, color_name: ^Color_Scheme_Name, color_names: []string, query_buffer: []u8) -> bool {
 	color_index := color_scheme_index_of(color_names, color_scheme_name_get(color_name))
-	row := uifw.gui_next_rect(ctx)
-	arrow_w := min(max(row.h, f32(35)), row.w * 0.22)
-	left := uifw.Rect{row.x, row.y, arrow_w, row.h}
-	right := uifw.Rect{row.x + row.w - arrow_w, row.y, arrow_w, row.h}
-	center := uifw.Rect{row.x + arrow_w, row.y, max(row.w - arrow_w * 2, 0), row.h}
-	combo_id := uifw.gui_make_id(ctx, "color_scheme")
-	changed := false
-
-	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "color_scheme_previous"), left, -1, true, false) {
-		ctx.focused = combo_id
-		color_index = (color_index - 1 + len(color_names)) % len(color_names)
-		color_scheme_name_set(color_name, color_names[color_index])
-		changed = true
-	}
-	uifw.gui_tooltip(ctx, left, "Previous color scheme")
-
-	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "color_scheme_next"), right, 1, true, false) {
-		ctx.focused = combo_id
-		color_index = (color_index + 1) % len(color_names)
-		color_scheme_name_set(color_name, color_names[color_index])
-		changed = true
-	}
-	uifw.gui_tooltip(ctx, right, "Next color scheme")
-	if uifw.gui_combobox_cycle_focused(ctx, combo_id, &color_index, len(color_names)) {
-		color_scheme_name_set(color_name, color_names[color_index])
-		changed = true
-	}
-
-	uifw.gui_layout_begin(ctx, center, .Column, 0, center.h)
-	if uifw.gui_combobox(ctx, color_scheme_name_get(color_name), "color_scheme", &color_index, color_names, query_buffer) {
+	if uifw.gui_stepper_combobox(
+		ctx,
+		color_scheme_name_get(color_name),
+		"color_scheme",
+		&color_index,
+		color_names,
+		query_buffer,
+		"Previous color scheme",
+		"Next color scheme",
+	) {
 		color_index = max(min(color_index, len(color_names) - 1), 0)
 		color_scheme_name_set(color_name, color_names[color_index])
-		changed = true
+		return true
 	}
-	uifw.gui_layout_end(ctx)
-
-	return changed
+	return false
 }
 
 color_scheme_editor_draw :: proc(ctx: ^uifw.Gui_Context, editor: ^Color_Scheme_Editor_State, color_name: ^Color_Scheme_Name) -> bool {

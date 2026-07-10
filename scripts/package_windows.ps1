@@ -7,7 +7,7 @@ param(
 	[string]$DistDir = $env:DIST_DIR,
 	[string]$VcpkgRoot = $env:VCPKG_ROOT,
 	[string]$VcpkgTriplet = $(if ($env:VCPKG_DEFAULT_TRIPLET) { $env:VCPKG_DEFAULT_TRIPLET } else { "x64-windows" }),
-	[string]$OdinFlags = $(if ($env:ODIN_FLAGS) { $env:ODIN_FLAGS } else { "-o:none" }),
+	[string]$OdinFlags = $(if ($env:ODIN_FLAGS) { $env:ODIN_FLAGS } else { "-o:speed" }),
 	[switch]$Msix,
 	[string]$PackageIdentityName = $(if ($env:WINDOWS_PACKAGE_IDENTITY_NAME) { $env:WINDOWS_PACKAGE_IDENTITY_NAME } else { "Velfi.VizzaOdin" }),
 	[string]$PackagePublisher = $(if ($env:WINDOWS_PACKAGE_PUBLISHER) { $env:WINDOWS_PACKAGE_PUBLISHER } else { "CN=VizzaOdin" }),

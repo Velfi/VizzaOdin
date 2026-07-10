@@ -5,6 +5,10 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
+STEAM_DEFAULT_ENABLED :: #config(VIZZA_STEAM_DEFAULT_ENABLED, false)
+STEAM_DEFAULT_APP_ID :: u32(#config(VIZZA_STEAM_APP_ID, 0))
+STEAM_DEFAULT_RESTART_IF_NECESSARY :: #config(VIZZA_STEAM_RESTART_IF_NECESSARY, false)
+
 Toml_Type :: enum i32 {
 	UNKNOWN  = 0,
 	STRING   = 1,

@@ -1,7 +1,5 @@
 package engine
 
-import uifw "../ui"
-
 import "core:time"
 import vk "vendor:vulkan"
 import sdl "vendor:sdl3"
@@ -661,7 +659,7 @@ vk_elapsed_ms :: proc(start: time.Tick) -> f64 {
 	return time.duration_seconds(time.tick_diff(start, time.tick_now())) * 1000.0
 }
 
-vk_cmd_begin_swapchain_render_pass :: proc(ctx: ^Vk_Context, frame: Vk_Frame, clear_color: uifw.Color) {
+vk_cmd_begin_swapchain_render_pass :: proc(ctx: ^Vk_Context, frame: Vk_Frame, clear_color: $Color) {
 	clear := vk.ClearValue{color = {float32 = {clear_color.r, clear_color.g, clear_color.b, clear_color.a}}}
 	render_area := vk.Rect2D {
 		offset = {0, 0},

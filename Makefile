@@ -1,6 +1,6 @@
 APP := vizzaodin
 SRC := src
-ODIN_PACKAGES := $(SRC) packages/engine packages/game packages/ui
+ODIN_PACKAGES := $(SRC) packages/app packages/engine packages/game packages/render_vk packages/ui
 BUILD_DIR := build
 SHADER_SRC := assets/shaders
 SHADER_BUILD := $(BUILD_DIR)/shaders
@@ -62,7 +62,7 @@ endif
 STEAM_REDIST_SRC := $(STEAM_SDK_LOCATION)/redistributable_bin/$(STEAM_REDIST_SUBDIR)/$(STEAM_REDIST_FILE)
 ODIN_FLAGS ?= -o:none
 
-.PHONY: run run-macos-vulkan build build-steam run-steam copy-steam-redist check test fmt clean shaders deps install-slangc mcp mcp-macos-vulkan theme-preview theme-preview-mcp profile-ui-trace package-macos steam-upload-preview ui-font-atlas tomlc17 textshape
+.PHONY: run run-macos-vulkan build build-steam run-steam copy-steam-redist check check-boundaries test fmt clean shaders deps install-slangc mcp mcp-macos-vulkan theme-preview theme-preview-mcp profile-ui-trace package-macos steam-upload-preview ui-font-atlas tomlc17 textshape
 
 run: shaders build
 	$(MACOS_VULKAN_ENV) $(BUILD_DIR)/$(APP)
@@ -113,8 +113,11 @@ steam-upload-preview:
 	@test -n "$(VERSION)" || (printf 'Set VERSION, e.g. make steam-upload-preview VERSION=0.1.0\n' >&2; exit 1)
 	./scripts/steam-upload.sh --preview --local "$(VERSION)"
 
-check: $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
+check: check-boundaries $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
 	odin check $(SRC)
+
+check-boundaries:
+	./scripts/check_package_boundaries.sh
 
 test: $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
 	odin test $(SRC) -extra-linker-flags:"$(TEXTSHAPE_LIBS)"
@@ -123,7 +126,7 @@ deps: $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
 
 tomlc17: $(TOMLC17_LIB)
 
-$(TOMLC17_STAMP): Makefile
+$(TOMLC17_STAMP):
 	mkdir -p third_party
 	@if [ -e "$(TOMLC17_ROOT)" ] && [ ! -d "$(TOMLC17_ROOT)/.git" ]; then printf 'Remove %s or turn it into a git clone before running make deps.\n' "$(TOMLC17_ROOT)" >&2; exit 1; fi
 	@if [ ! -d "$(TOMLC17_ROOT)/.git" ]; then git clone "$(TOMLC17_REPO)" "$(TOMLC17_ROOT)"; fi

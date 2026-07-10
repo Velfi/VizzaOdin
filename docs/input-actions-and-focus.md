@@ -67,7 +67,8 @@ the simulation canvas has routing priority. Under focused UI the same D-pad
 input is navigation and the camera channel is suppressed.
 
 Controls remain discoverable without abandoning a running simulation. F1 or
-the focusable Help button in the simulation bar opens the shared controls text
+the focusable Help button in the Control Deck utility rail opens the shared
+controls text
 as a modal overlay. The overlay captures pointer and navigation input, preserves
 the simulation beneath it, and restores the invoking focus when Back or Close
 dismisses it. An engaged value editor keeps ownership, so F1 cannot interrupt a
@@ -95,10 +96,26 @@ sensitivity. Controller Y inversion is applied only at the camera-consumption
 boundary; its default is off, preserving the user-tested stick direction. These
 preferences update live and do not change controller navigation inside UI.
 
+Canvas pointer gestures are exclusive. Left and right drag provide primary and
+secondary simulation interaction; middle drag and Space+left drag pan the camera
+without also modifying the simulation. The Space chord provides a laptop-safe
+pan gesture while middle drag remains an optional mouse shortcut. Vertical wheel
+or two-finger scroll zooms toward the visible pointer, while horizontal scroll or
+Shift+vertical scroll pans. Fractional trackpad deltas are preserved and large
+coalesced bursts are clamped per frame. Scroll input over UI belongs to that UI.
+The controller virtual cursor remains visible whenever a trigger-owned canvas
+gesture is active, including while simulation chrome is hidden.
+
 `active_device` is presentation state for cursor and prompt selection. It does
 not decide whether keyboard or controller actions are eligible. Existing raw
 fields remain in `Ui_Frame_Input` as a migration bridge and are projected from
 the semantic action frame where practical.
+
+SDL controller type selects Xbox or PlayStation prompt art at connection time.
+Steam Deck is detected from its controller name because SDL has no distinct
+Steam Deck gamepad type. That prompt style travels with each frame, so the
+contextual Control Deck strip can switch icon families without changing action
+routing; unknown controllers use the Xbox-position fallback.
 
 Controller connection changes produce a short, non-modal notice. Disconnecting
 the actively used controller while a simulation is running reveals the UI and

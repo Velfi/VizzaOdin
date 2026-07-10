@@ -154,6 +154,18 @@ pwsh ./scripts/package_windows.ps1 -Msix
 scripts/release.sh 0.1.0
 ```
 
+### Test policy
+
+Tests protect durable behavior: simulation correctness, saved-data compatibility,
+input ownership, focus and modal safety, accessibility, and layout bounds. They
+should assert user-visible outcomes rather than preserve the Rust port's exact
+menu order, labels, colors, spacing, draw-command sequence, default aesthetic,
+or physical key assignments.
+
+Legacy preset migration remains supported behavior. Historical appearance and
+layout are not compatibility contracts; redesigns may replace them without
+adding tests that reproduce the former implementation.
+
 Steam commands default to app ID `4945920`; override with `STEAM_APP_ID=...`
 for test apps or alternate branches. SteamPipe uploads use app ID `4945920`
 and macOS depot `4945922` from `packaging/steam/targets.env`.
@@ -179,11 +191,14 @@ MCP, profiling, and UI preview workflows.
 
 ### Project layout
 
-- `src`: executable entrypoint and integration tests
-- `packages/game`: app flow, simulations, settings, render graph, render worker,
-  Steam integration, video recording, and MCP bridge
+- `src`: minimal executable entrypoint and integration tests
+- `packages/app`: executable composition and command-line policy
+- `packages/game`: Vizza simulations, product policy, and product command/event
+  payloads
 - `packages/engine`: queues, Vulkan context/resources, shader lookup,
-  screenshots, logging, profiling, and UI rendering
+  screenshots, logging, and profiling
+- `packages/render_vk`: Vulkan render graph, simulation render adapters, and
+  lowering for renderer-neutral UI commands
 - `packages/ui`: renderer-agnostic immediate-mode UI primitives and widgets
 - `assets`: Slang shaders, LUTs, fonts, and app media
 - `docs`: architecture, release, MCP, profiling, and dependency notes
@@ -200,4 +215,6 @@ MCP, profiling, and UI preview workflows.
   archives, and Windows MSIX packages
 
 See [docs/dependency-map.md](docs/dependency-map.md) for the dependency
-translation from the original Tauri/Svelte/Rust project.
+translation from the original Tauri/Svelte/Rust project, and
+[docs/package-architecture.md](docs/package-architecture.md) for current package
+ownership and dependency rules.

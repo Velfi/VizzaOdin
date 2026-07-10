@@ -1,12 +1,12 @@
 package game
 
 SLIME_CONTROL_INSTRUMENTS := [?]Control_Instrument_Descriptor {
-	{instrument = .Presets, label = "Presets", icon = "database-script", description = "Load presets, respawn agents, or establish a new behavior."},
-	{instrument = .Look, label = "Look", icon = "color-wheel", description = "Palette, background, and post-processing."},
-	{instrument = .Motion, label = "Agents", icon = "transition-right", description = "Agent motion, steering, and sensing."},
-	{instrument = .Field, label = "Trails", icon = "droplet", description = "Trail deposition, memory, and spread."},
-	{instrument = .Brush, label = "Brush", icon = "design-pencil", description = "Pointer interaction controls."},
-	{instrument = .World, label = "World", icon = "planet", description = "Initial placement and world masks."},
+	{instrument = .Presets, label = "Presets", icon = "bookmarks", description = "Load presets, respawn agents, or establish a new behavior."},
+	{instrument = .Look, label = "Look", icon = "palette", description = "Palette, background, and post-processing."},
+	{instrument = .Motion, label = "Agents", icon = "arrows-move", description = "Agent motion, steering, and sensing."},
+	{instrument = .Field, label = "Trails", icon = "route", description = "Trail deposition, memory, and spread."},
+	{instrument = .Brush, label = "Brush", icon = "brush", description = "Pointer interaction controls."},
+	{instrument = .World, label = "World", icon = "world", description = "Initial placement and world masks."},
 }
 
 SLIME_CONTROL_DESCRIPTORS := [?]Control_Descriptor {

@@ -6,6 +6,7 @@ import "core:math"
 
 CAMERA_DEFAULT_SMOOTHING :: f32(0.15)
 CAMERA_WHEEL_DELTA_SCALE :: f32(0.1)
+CAMERA_WHEEL_MAX_DELTA_PER_FRAME :: f32(4.0)
 CAMERA_KEY_PAN_AMOUNT :: f32(0.1)
 CAMERA_KEY_ZOOM_DELTA :: f32(0.05)
 CAMERA_MIN_ZOOM :: f32(0.005)
@@ -66,12 +67,12 @@ camera_controls_screen_to_world :: proc(camera: ^Camera_Control_State, mouse_pos
 	camera_controls_sync(camera)
 	w := f32(max(width, 1))
 	h := f32(max(height, 1))
-	zoom := max(camera.target_zoom, CAMERA_MIN_ZOOM)
+	zoom := max(camera.zoom, CAMERA_MIN_ZOOM)
 	ndc_x := (mouse_pos.x / w) * 2.0 - 1.0
 	ndc_y := -((mouse_pos.y / h) * 2.0 - 1.0)
 	return {
-		camera.target_position[0] + ndc_x / zoom,
-		camera.target_position[1] + ndc_y / zoom,
+		camera.position[0] + ndc_x / zoom,
+		camera.position[1] + ndc_y / zoom,
 	}
 }
 
@@ -92,7 +93,8 @@ camera_controls_zoom_center :: proc(camera: ^Camera_Control_State, delta, sensit
 
 camera_controls_zoom_to_cursor :: proc(camera: ^Camera_Control_State, delta, sensitivity: f32, mouse_pos: uifw.Vec2, width, height: i32) {
 	camera_controls_sync(camera)
-	old_zoom := camera.target_zoom
+	old_target_zoom := camera.target_zoom
+	old_visible_zoom := camera.zoom
 	camera_controls_zoom_center(camera, delta, sensitivity)
 	if width <= 0 || height <= 0 || camera.target_zoom <= 0 {
 		return
@@ -102,12 +104,30 @@ camera_controls_zoom_to_cursor :: proc(camera: ^Camera_Control_State, delta, sen
 	h := f32(max(height, 1))
 	mouse_x_norm := (mouse_pos.x / w) * 2.0 - 1.0
 	mouse_y_norm := -((mouse_pos.y / h) * 2.0 - 1.0)
-	world_x := mouse_x_norm / old_zoom + camera.target_position[0]
-	world_y := mouse_y_norm / old_zoom + camera.target_position[1]
+	world_x := mouse_x_norm / old_target_zoom + camera.target_position[0]
+	world_y := mouse_y_norm / old_target_zoom + camera.target_position[1]
 	new_ndc_x := (world_x - camera.target_position[0]) * camera.target_zoom
 	new_ndc_y := (world_y - camera.target_position[1]) * camera.target_zoom
 	camera.target_position[0] += (mouse_x_norm - new_ndc_x) / camera.target_zoom
 	camera.target_position[1] += (mouse_y_norm - new_ndc_y) / camera.target_zoom
+
+	// Wheel and trackpad zoom must remain anchored to the camera the user can
+	// currently see. Apply the same zoom ratio to the visible state immediately;
+	// target-state smoothing can continue for any pre-existing keyboard/controller
+	// motion without moving the interaction point away from the pointer.
+	zoom_ratio := camera.target_zoom / max(old_target_zoom, CAMERA_MIN_ZOOM)
+	camera.zoom = max(min(old_visible_zoom * zoom_ratio, CAMERA_MAX_ZOOM), CAMERA_MIN_ZOOM)
+	visible_world_x := mouse_x_norm / old_visible_zoom + camera.position[0]
+	visible_world_y := mouse_y_norm / old_visible_zoom + camera.position[1]
+	camera.position[0] = visible_world_x - mouse_x_norm / camera.zoom
+	camera.position[1] = visible_world_y - mouse_y_norm / camera.zoom
+}
+
+camera_controls_normalize_wheel_delta :: proc(delta: f32) -> f32 {
+	// SDL reports fractional deltas for trackpads and larger integral bursts for
+	// wheels. Preserve fine motion while preventing one coalesced/inertial frame
+	// from producing a runaway zoom.
+	return max(min(delta, CAMERA_WHEEL_MAX_DELTA_PER_FRAME), -CAMERA_WHEEL_MAX_DELTA_PER_FRAME)
 }
 
 camera_controls_pan :: proc(camera: ^Camera_Control_State, delta_x, delta_y, sensitivity: f32) {
@@ -145,13 +165,19 @@ camera_controls_apply_input :: proc(camera: ^Camera_Control_State, input: Ui_Fra
 		// Compatibility for callers created before controller tuning was split.
 		controller_sensitivity = sensitivity
 	}
-	if input.wheel_delta != 0 {
-		camera_controls_zoom_to_cursor(camera, input.wheel_delta * CAMERA_WHEEL_DELTA_SCALE, sensitivity, input.mouse_pos, input.window_width, input.window_height)
+	wheel_y := camera_controls_normalize_wheel_delta(input.wheel_delta)
+	wheel_x := camera_controls_normalize_wheel_delta(input.wheel_delta_x)
+	if input.key_shift && (wheel_x != 0 || wheel_y != 0) {
+		camera_controls_pan(camera, (wheel_x + wheel_y) * CAMERA_KEY_PAN_AMOUNT, 0, sensitivity)
+	} else if wheel_y != 0 {
+		camera_controls_zoom_to_cursor(camera, wheel_y * CAMERA_WHEEL_DELTA_SCALE, sensitivity, input.mouse_pos, input.window_width, input.window_height)
+	} else if wheel_x != 0 {
+		camera_controls_pan(camera, wheel_x * CAMERA_KEY_PAN_AMOUNT, 0, sensitivity)
 	}
 	if input.controller_zoom != 0 {
 		camera_controls_zoom_center(camera, input.controller_zoom * CAMERA_KEY_ZOOM_DELTA, controller_sensitivity)
 	}
-	if input.mouse_down && input.mouse_button == 2 {
+	if input.camera_pan_down {
 		camera_controls_pan_screen_delta(camera, input.mouse_delta, input.window_width, input.window_height)
 	}
 

@@ -1,6 +1,7 @@
 package main
 
 import game "../packages/game"
+import host "../packages/app"
 import uifw "../packages/ui"
 
 import "core:testing"
@@ -51,7 +52,7 @@ test_device_notice_reports_connection_and_expires :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_device_notice_renders_below_visible_simulation_bar :: proc(t: ^testing.T) {
+test_device_notice_stays_at_top_with_bottom_simulation_bar :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
 	defer uifw.gui_destroy(&ctx)
@@ -68,7 +69,8 @@ test_device_notice_renders_below_visible_simulation_bar :: proc(t: ^testing.T) {
 	for command in ctx.commands {
 		if command.kind == .Text && command.text == "Controller connected" {
 			found = true
-			testing.expect(t, command.rect.y >= game.app_ui_simulation_bar_height(&ctx))
+			testing.expect(t, command.rect.y >= max(ctx.style.spacing_3, f32(18)))
+			testing.expect(t, command.rect.y < game.app_ui_simulation_bar_height(&ctx))
 			testing.expect(t, command.rect.x >= 0)
 			testing.expect(t, command.rect.x + command.rect.w <= 1280)
 		}

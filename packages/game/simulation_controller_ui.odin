@@ -102,17 +102,24 @@ simulation_controller_ui_section :: proc(mode: App_Mode, tab_index: int) -> int 
 	return sections[tab_index]
 }
 
-simulation_controller_ui_tab_icon_index :: proc(label: string) -> int {
-	if label == "Presets" {return 9} // database-script
-	if label == "Look" {return 1} // color-wheel
-	if label == "Pattern" || label == "Field" {return 5} // droplet
-	if label == "Trails" {return 7} // sparks
-	if label == "Physics" || label == "Forces" || label == "Motion" || label == "Population" || label == "Particles" {return 3} // transition-right
-	if label == "Camera" || label == "Advanced" {return 4} // compass
-	if label == "Brush" {return 2} // design-pencil
-	if label == "Mask" || label == "Sites" {return 6} // planet
-	if label == "Flow" {return 0} // play
-	return 6
+simulation_controller_ui_tab_icon :: proc(label: string) -> uifw.Ui_Controller_Icon {
+	if label == "Presets" {return .Presets}
+	if label == "Look" {return .Palette}
+	if label == "Pattern" {return .Pattern}
+	if label == "Mask" {return .Mask}
+	if label == "Brush" {return .Brush}
+	if label == "Camera" {return .Camera}
+	if label == "Forces" {return .Forces}
+	if label == "Physics" {return .Physics}
+	if label == "Population" {return .Population}
+	if label == "Advanced" {return .Advanced}
+	if label == "Field" {return .Field}
+	if label == "Particles" {return .Particles}
+	if label == "Trails" {return .Trails}
+	if label == "Sites" {return .Sites}
+	if label == "Flow" {return .Flow}
+	if label == "Motion" {return .Motion}
+	return .World
 }
 
 simulation_controller_ui_enabled :: proc(ui: ^App_Ui_State) -> bool {
@@ -155,7 +162,9 @@ simulation_controller_ui_deck_rect :: proc(gui: ^uifw.Gui_Context, width, height
 	margin := max(gui.style.spacing_3, f32(18))
 	key_w := slime_controller_ui_key_badge_size(gui)
 	hint_h := max(gui.style.small_line_height, gui.style.body_line_height * 0.72)
-	deck_h := max(gui.style.row_height * 3.65, key_w + gui.style.body_line_height + hint_h + gui.style.spacing_3 + gui.style.spacing_2)
+	header_h := app_ui_simulation_bar_height(gui)
+	tab_h := max(gui.style.row_height * 1.28, key_w * 0.72)
+	deck_h := header_h + tab_h + hint_h + gui.style.spacing_1 * 3
 	tab_min := max(SLIME_CONTROLLER_UI_DECK_MIN_TAB_WIDTH, key_w + gui.style.spacing_2 + gui.style.body_char_width * 5.8)
 	tab_min = min(tab_min, SLIME_CONTROLLER_UI_DECK_MAX_TAB_WIDTH)
 	target_w := f32(max(count, 1)) * tab_min + f32(max(count, 1) + 1) * gui.style.spacing
@@ -245,23 +254,14 @@ simulation_controller_ui_draw_deck :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Con
 	tabs := simulation_controller_ui_tabs(ui.mode)
 	uifw.gui_spatial_group_begin(gui, "simulation_controller_deck")
 	defer uifw.gui_spatial_group_end(gui)
-	uifw.gui_shadow(gui, rect, 8, {0, 6}, 18, {0, 0, 0, 0.36})
-	uifw.gui_round_rect(gui, rect, 8, {0.025, 0.035, 0.05, 0.52})
-	glass := uifw.gui_default_glass_style(gui, 8)
-	glass.tint = {0.06, 0.08, 0.10, 0.68}
-	glass.roughness = 0.58
-	glass.thickness = max(gui.style.rhythm * 0.20, f32(8))
-	glass.bevel = max(gui.style.border_width * 6, f32(6))
-	glass.border = 0.32
-	uifw.gui_refractive_glass_rect(gui, rect, glass)
-	uifw.gui_round_stroke(gui, rect, 8, {1, 1, 1, 0.16}, gui.style.border_width)
-	gap := gui.style.spacing
+	gap := gui.style.spacing_1
 	hint_h := max(gui.style.small_line_height, gui.style.body_line_height * 0.72)
 	hint_rect := uifw.Rect{rect.x + gap * 1.5, rect.y + rect.h - gap - hint_h, max(rect.w - gap * 3, 1), hint_h}
+	tabs_y := rect.y + app_ui_simulation_bar_height(gui) + gap
 	tab_w := max((rect.w - gap * f32(len(tabs) + 1)) / f32(len(tabs)), 1)
-	tab_h := max(hint_rect.y - rect.y - gap * 2, 1)
+	tab_h := max(hint_rect.y - tabs_y - gap, 1)
 	for label, i in tabs {
-		tab := uifw.Rect{rect.x + gap + f32(i) * (tab_w + gap), rect.y + gap, tab_w, tab_h}
+		tab := uifw.Rect{rect.x + gap + f32(i) * (tab_w + gap), tabs_y, tab_w, tab_h}
 		id := uifw.gui_make_id(gui, fmt.tprintf("simulation_deck_%d", i))
 		control := uifw.gui_control(gui, id, tab, true)
 		if control.focused {state.focused_index = i}
@@ -280,21 +280,23 @@ simulation_controller_ui_draw_deck :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Con
 		uifw.gui_round_stroke(gui, tab, 6, selected ? uifw.gui_apply_opacity(gui.style.accent, 0.62) : uifw.Color{1, 1, 1, 0.12}, selected ? max(gui.style.border_width * 1.5, 1.5) : gui.style.border_width)
 		if deck_focused {uifw.gui_focus_ring(gui, tab)}
 		content := uifw.gui_inset(tab, max(gui.style.spacing_1, gui.style.border_width * 2))
-		label_h := min(gui.style.body_line_height, max(content.h * 0.34, gui.style.small_line_height))
-		badge_limit := max(content.h - label_h - gui.style.spacing_1, 1)
-		badge_size := min(min(slime_controller_ui_key_badge_size(gui), badge_limit), max(content.w, 1))
-		badge := uifw.Rect{content.x + max((content.w - badge_size) * 0.5, 0), content.y, badge_size, badge_size}
-		label_y := badge.y + badge.h + gui.style.spacing_1
-		label_rect := uifw.Rect{content.x, label_y, content.w, max(content.y + content.h - label_y, 1)}
+		badge_size := min(min(gui.style.row_height * 0.94, content.h), max(content.w * 0.42, 1))
+		badge := uifw.Rect{content.x, content.y + max((content.h - badge_size) * 0.5, 0), badge_size, badge_size}
+		label_x := badge.x + badge.w + gui.style.spacing_1
+		label_rect := uifw.Rect{label_x, content.y, max(content.x + content.w - label_x, 1), content.h}
 		scale := slime_controller_ui_fit_text_scale(gui, label, SLIME_CONTROLLER_UI_DECK_LABEL_SCALE, label_rect.w)
 		uifw.gui_scissor_begin(gui, tab)
-		slime_controller_ui_draw_icon_badge_index(gui, badge, simulation_controller_ui_tab_icon_index(label), selected || deck_focused)
-		uifw.gui_text_aligned_scaled(gui, label_rect, label, gui.style.text, .Center, scale)
+		slime_controller_ui_draw_atlas_icon_badge(gui, badge, simulation_controller_ui_tab_icon(label), selected || deck_focused)
+		uifw.gui_text_aligned_scaled(gui, label_rect, label, gui.style.text, .Left, scale)
 		uifw.gui_scissor_end(gui)
 	}
 	hint := simulation_controller_ui_context_hint(state, gui.input.active_device)
-	hint_scale := slime_controller_ui_fit_text_scale(gui, hint, SLIME_CONTROLLER_UI_HINT_SCALE, hint_rect.w)
-	uifw.gui_text_aligned_scaled(gui, hint_rect, hint, gui.style.text_muted, .Center, hint_scale)
+	if gui.input.active_device == .Controller {
+		controller_prompt_draw_context_hint(gui, hint_rect, state.focus.phase, &ui.settings)
+	} else {
+		hint_scale := slime_controller_ui_fit_text_scale(gui, hint, SLIME_CONTROLLER_UI_HINT_SCALE, hint_rect.w)
+		uifw.gui_text_aligned_scaled(gui, hint_rect, hint, gui.style.text_muted, .Center, hint_scale)
+	}
 }
 
 simulation_controller_ui_context_hint :: proc(state: ^Simulation_Controller_Ui_State, device: uifw.Input_Device_Kind) -> string {
@@ -312,7 +314,7 @@ simulation_controller_ui_context_hint :: proc(state: ^Simulation_Controller_Ui_S
 	return ""
 }
 
-simulation_controller_ui_draw_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, gray: ^Gray_Scott_Simulation, particle: ^Particle_Life_Simulation, remaining: ^Remaining_Sim_State, rect: uifw.Rect, worker: ^Render_Worker_State) {
+simulation_controller_ui_draw_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, gray: ^Gray_Scott_Simulation, particle: ^Particle_Life_Simulation, remaining: ^Remaining_Sim_State, rect: uifw.Rect, worker: ^Product_Context) {
 	state := simulation_controller_ui_state(ui)
 	section := simulation_controller_ui_section(ui.mode, state.active_index)
 	uifw.gui_push_id(gui, fmt.tprintf("simulation_controller_section_%d", section))
@@ -356,7 +358,7 @@ simulation_controller_ui_draw_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Co
 	}
 }
 
-simulation_controller_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, gray: ^Gray_Scott_Simulation = nil, particle: ^Particle_Life_Simulation = nil, remaining: ^Remaining_Sim_State = nil, width, height: f32, worker: ^Render_Worker_State) {
+simulation_controller_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, gray: ^Gray_Scott_Simulation = nil, particle: ^Particle_Life_Simulation = nil, remaining: ^Remaining_Sim_State = nil, width, height: f32, worker: ^Product_Context) {
 	if !simulation_controller_ui_enabled(ui) {return}
 	state := simulation_controller_ui_state(ui)
 	tabs := simulation_controller_ui_tabs(ui.mode)

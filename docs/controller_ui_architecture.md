@@ -48,7 +48,7 @@ Normal couch UI only shows controls that are fully wired, not Developer or Debug
 - Brush: a two-axis radius/strength instrument
 - World: initial placement and mask source/target/response/image transforms
 
-Pause and Record remain universal header actions. Clear Trails stays next to the trail controls where its consequence is visible.
+Pause and Record remain universal utility-rail actions in the Control Deck. Clear Trails stays next to the trail controls where its consequence is visible.
 
 Legacy Slime fields that are currently ineffective remain loadable through settings, but descriptors mark them as deprecated or exposed-ineffective. This includes heading range, decay frequency, diffusion frequency, and `mask_reversed`.
 
@@ -56,7 +56,7 @@ Legacy Slime fields that are currently ineffective remain loadable through setti
 
 `packages/game/slime_controller_ui.odin` generates the bottom Control Deck from `SLIME_CONTROL_INSTRUMENTS` and descriptor visibility. `Tab` or the controller shoulders enter and browse the deck. Left/right navigation moves focus across instruments, and Enter/Accept opens the focused instrument. Space is the compatibility keyboard binding for the semantic `Control Deck` action, which focuses the deck without opening a separate shortcut menu. Routing consumes that action before the Pause fallback only while this UI is available.
 
-The deck reserves a contextual command strip that follows the last presentation device and current focus phase. It explains browse/open/close at deck level, navigate/edit/back inside a panel, and adjust/commit/cancel while a value is engaged. Controller prompts use semantic Accept and Back names rather than assuming one platform's face-button lettering.
+The deck reserves a contextual command strip that follows the last presentation device and current focus phase. It explains browse/open/close at deck level, navigate/edit/back inside a panel, and adjust/commit/cancel while a value is engaged. Keyboard mode uses text shortcuts. Controller mode draws Kenney glyphs for the connected Xbox, PlayStation, or Steam Deck family; the south/east glyph order follows the persisted Accept/Back layout.
 
 The controller-friendly deck is the settings UI for every simulation. Gradient Editor retains its specialized editor layout.
 
@@ -66,16 +66,18 @@ Paired fields use a single spatial control when the relationship is meaningful. 
 
 Each semantic view owns its focus-memory and scroll-animation namespace. Returning to a view can restore a valid control without leaking focus or an in-flight scroll animation from another tab; if a conditional control has disappeared, focus falls back to the first available control. A stable dark scrim beneath the refractive glass keeps labels, handles, and focus rings readable over bright or high-frequency simulations.
 
-The simulation header and the Control Deck tabs form one chrome layer. They
-reveal and auto-hide together; opening a tab adds its panel above that layer.
+The Control Deck is one dense chrome card: its top utility rail contains Menu,
+Help, Pause/Resume, Record, simulation state, and FPS, with the section tabs
+directly below. The card reveals and auto-hides as one surface; opening a tab
+adds its panel above it.
 Visibility does not itself imply focus: pointer activity may reveal the chrome
 while focus remains on the canvas. Focus has one owner and moves between the
-header, deck, panel, active control, and modal layers. In particular, a header
-shortcut relinquishes deck/panel focus before focusing its header action.
+utility rail, deck, panel, active control, and modal layers. In particular, a
+utility shortcut relinquishes deck/panel focus before focusing its rail action.
 
 ## Controller Focus Shortcuts
 
-Controller Start focuses the simulation header bar's Pause/Resume action. Controller Select/North focuses its Back-to-menu action. The shoulder actions enter or browse the Control Deck. While these shortcuts are handled by the controller UI, the context router prevents them from also reaching the simulation or global fallback.
+Controller Start focuses the Control Deck utility rail's Pause/Resume action. Controller Select/North focuses its Menu action. The shoulder actions enter or browse the section tabs. While these shortcuts are handled by the controller UI, the context router prevents them from also reaching the simulation or global fallback.
 
 On the simulation canvas, D-pad Up/Down controls camera zoom, the left stick pans, the right stick moves the virtual cursor, and the triggers perform primary/secondary interaction. The triggers do not also zoom: physical controls resolve to one canvas operation at a time. When UI owns focus, the D-pad returns to navigation and its camera channel is suppressed.
 

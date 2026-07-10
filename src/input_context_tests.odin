@@ -1,6 +1,9 @@
 package main
 
 import game "../packages/game"
+import host "../packages/app"
+import engine "../packages/engine"
+import rendervk "../packages/render_vk"
 import uifw "../packages/ui"
 
 import "core:testing"
@@ -263,19 +266,109 @@ test_control_deck_reserves_a_non_overlapping_command_strip :: proc(t: ^testing.T
 	uifw.gui_begin_frame(&ctx, {active_device = .Controller})
 	game.slime_controller_ui_draw_deck(&state, &ctx, {0, 0, 1200, 180})
 
-	hint := "D-pad / shoulders: browse  |  Accept: open  |  Back: close"
 	hint_y := f32(-1)
+	prompt_icon_count := 0
 	for command in ctx.commands {
-		if command.kind == .Text && command.text == hint {
-			hint_y = command.rect.y
-			break
+		if command.kind == .Image && command.image_id == uifw.Gui_Image_Id(rendervk.UI_KENNEY_INPUT_ATLAS_TEXTURE_ID) {
+			if hint_y < 0 {
+				hint_y = command.rect.y
+			}
+			prompt_icon_count += 1
 		}
 	}
 	testing.expect(t, hint_y > 0)
+	testing.expect_value(t, prompt_icon_count, 5)
 	for i in 0 ..< ctx.spatial_item_count {
 		item := ctx.spatial_items[i]
 		testing.expect(t, item.bounds.y + item.bounds.h <= hint_y)
 	}
+}
+
+@(test)
+test_control_deck_hints_switch_from_keyboard_copy_to_controller_glyphs :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	state: game.Slime_Controller_Ui_State
+	game.slime_controller_ui_init(&state)
+	state.deck_visible = true
+	state.focus.phase = .Region
+	deck := uifw.Rect{0, 0, 1200, 180}
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Mouse_Keyboard})
+	game.slime_controller_ui_draw_deck(&state, &ctx, deck)
+	keyboard_hint_found := false
+	controller_icon_found := false
+	for command in ctx.commands {
+		keyboard_hint_found = keyboard_hint_found || (command.kind == .Text && command.text == "Arrows / Tab: browse  |  Enter: open  |  Esc: close")
+		controller_icon_found = controller_icon_found || (command.kind == .Image && command.image_id == uifw.Gui_Image_Id(rendervk.UI_KENNEY_INPUT_ATLAS_TEXTURE_ID))
+	}
+	testing.expect(t, keyboard_hint_found)
+	testing.expect(t, !controller_icon_found)
+	uifw.gui_end_frame(&ctx)
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, controller_prompt_style = .PlayStation})
+	game.slime_controller_ui_draw_deck(&state, &ctx, deck)
+	keyboard_hint_found = false
+	controller_icon_found = false
+	for command in ctx.commands {
+		keyboard_hint_found = keyboard_hint_found || (command.kind == .Text && command.text == "Arrows / Tab: browse  |  Enter: open  |  Esc: close")
+		controller_icon_found = controller_icon_found || (command.kind == .Image && command.image_id == uifw.Gui_Image_Id(rendervk.UI_KENNEY_INPUT_ATLAS_TEXTURE_ID))
+	}
+	testing.expect(t, !keyboard_hint_found)
+	testing.expect(t, controller_icon_found)
+	uifw.gui_end_frame(&ctx)
+}
+
+@(test)
+test_controller_hint_glyph_family_and_accept_layout_follow_input_state :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	settings := game.settings_default()
+	styles := [?]uifw.Controller_Prompt_Style{.Xbox, .PlayStation, .Steam_Deck}
+	rect := uifw.Rect{0, 0, 900, 40}
+
+	for style in styles {
+		uifw.gui_begin_frame(&ctx, {active_device = .Controller, controller_prompt_style = style})
+		game.controller_prompt_draw_context_hint(&ctx, rect, .Child_Region, &settings)
+		indices: [3]int
+		index_count := 0
+		for command in ctx.commands {
+			if command.kind == .Image && command.image_id == uifw.Gui_Image_Id(rendervk.UI_KENNEY_INPUT_ATLAS_TEXTURE_ID) {
+				indices[index_count] = int(command.rect_2.x * f32(rendervk.UI_KENNEY_INPUT_ICON_COUNT) + 0.5)
+				index_count += 1
+			}
+		}
+		base := int(style) * rendervk.UI_KENNEY_INPUT_ICONS_PER_STYLE
+		testing.expect_value(t, index_count, 3)
+		testing.expect_value(t, indices[0], base + int(game.Controller_Prompt_Icon.Dpad))
+		testing.expect_value(t, indices[1], base + int(game.Controller_Prompt_Icon.South))
+		testing.expect_value(t, indices[2], base + int(game.Controller_Prompt_Icon.East))
+		uifw.gui_end_frame(&ctx)
+	}
+
+	settings.controller_face_layout = "East Accept"
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, controller_prompt_style = .Steam_Deck})
+	game.controller_prompt_draw_context_hint(&ctx, rect, .Child_Region, &settings)
+	face_indices: [2]int
+	face_count := 0
+	for command in ctx.commands {
+		if command.kind != .Image || command.image_id != uifw.Gui_Image_Id(rendervk.UI_KENNEY_INPUT_ATLAS_TEXTURE_ID) {
+			continue
+		}
+		index := int(command.rect_2.x * f32(rendervk.UI_KENNEY_INPUT_ICON_COUNT) + 0.5)
+		base := int(uifw.Controller_Prompt_Style.Steam_Deck) * rendervk.UI_KENNEY_INPUT_ICONS_PER_STYLE
+		if index == base + int(game.Controller_Prompt_Icon.South) || index == base + int(game.Controller_Prompt_Icon.East) {
+			face_indices[face_count] = index
+			face_count += 1
+		}
+	}
+	steam_base := int(uifw.Controller_Prompt_Style.Steam_Deck) * rendervk.UI_KENNEY_INPUT_ICONS_PER_STYLE
+	testing.expect_value(t, face_count, 2)
+	testing.expect_value(t, face_indices[0], steam_base + int(game.Controller_Prompt_Icon.East))
+	testing.expect_value(t, face_indices[1], steam_base + int(game.Controller_Prompt_Icon.South))
+	uifw.gui_end_frame(&ctx)
 }
 
 @(test)
@@ -322,7 +415,7 @@ test_mouse_canvas_click_releases_controller_ui_focus :: proc(t: ^testing.T) {
 	testing.expect_value(t, ctx.focused, uifw.GUI_ID_NONE)
 	testing.expect_value(t, state.focus.phase, uifw.Controller_Focus_Phase.Unfocused)
 	// The canvas click relinquishes UI focus and closes the panel. The same
-	// pointer activity reveals the unified header/tab chrome for its grace
+	// pointer activity reveals the unified utility-rail/tab chrome for its grace
 	// period, so visibility is intentionally independent from focus ownership.
 	testing.expect(t, ui.simulation_shell.controls_visible)
 	testing.expect(t, state.deck_visible)

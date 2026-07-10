@@ -1,6 +1,7 @@
 package main
 
 import game "../packages/game"
+import host "../packages/app"
 import uifw "../packages/ui"
 
 import "core:testing"

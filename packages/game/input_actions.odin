@@ -4,6 +4,29 @@ import uifw "../ui"
 
 import "core:math"
 
+app_input_axis :: proc(positive, negative: bool) -> f32 {
+	value := f32(0)
+	if positive {value += 1}
+	if negative {value -= 1}
+	return value
+}
+
+app_controller_south_is_accept :: proc(settings: App_Settings) -> bool {
+	return settings.controller_face_layout != "East Accept"
+}
+
+app_controller_start_is_pause :: proc(settings: App_Settings) -> bool {
+	return settings.controller_menu_layout != "View Pauses"
+}
+
+app_controller_right_shoulder_is_next :: proc(settings: App_Settings) -> bool {
+	return settings.controller_shoulder_layout != "Left Next"
+}
+
+app_controller_right_trigger_is_primary :: proc(settings: App_Settings) -> bool {
+	return settings.controller_trigger_layout != "Left Primary"
+}
+
 // The event loop resolves physical inputs into these stable, semantic actions.
 // Render/UI code can migrate one consumer at a time while Ui_Frame_Input keeps
 // its legacy fields as a compatibility projection.
