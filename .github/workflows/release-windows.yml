@@ -21,6 +21,7 @@ jobs:
       VIZZA_VCPKG_ROOT: C:\vcpkg
       VCPKG_ROOT: C:\vcpkg
       VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_BINARY_CACHE: ${{ github.workspace }}\.cache\vcpkg\archives
 
     steps:
       - uses: actions/checkout@v6
@@ -47,14 +48,15 @@ jobs:
           token: ${{ github.token }}
 
       - name: Cache vcpkg packages
+        id: vcpkg-cache
         uses: actions/cache@v4
         with:
           path: |
             ${{ env.VIZZA_VCPKG_ROOT }}\installed
-            ~\AppData\Local\vcpkg\archives
-          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v2-${{ hashFiles('vcpkg.json') }}
+            ${{ env.VCPKG_BINARY_CACHE }}
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v3-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-vcpkg-v2-
+            ${{ runner.os }}-${{ runner.arch }}-vcpkg-v3-
 
       - name: Install Windows build dependencies
         shell: pwsh
@@ -64,6 +66,17 @@ jobs:
           $installRoot = Join-Path $vcpkgRoot "installed"
           $installedTripletDir = Join-Path $installRoot $env:VCPKG_DEFAULT_TRIPLET
           $env:VCPKG_ROOT = $vcpkgRoot
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$env:VCPKG_BINARY_CACHE,readwrite"
+
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_BINARY_CACHE | Out-Null
+          Write-Host "vcpkg cache hit: ${{ steps.vcpkg-cache.outputs.cache-hit }}"
+          Write-Host "vcpkg binary cache: $env:VCPKG_BINARY_CACHE"
+          if (Test-Path $installedTripletDir) {
+            $installedFileCount = (Get-ChildItem $installedTripletDir -Recurse -File).Count
+            Write-Host "Restored installed tree: $installedTripletDir ($installedFileCount files)"
+          } else {
+            Write-Host "No restored installed tree at $installedTripletDir"
+          }
 
           if (-not (Test-Path "$vcpkgRoot\vcpkg.exe")) {
             & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
