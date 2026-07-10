@@ -18,6 +18,7 @@ jobs:
 
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
+      VIZZA_VCPKG_ROOT: C:\vcpkg
       VCPKG_ROOT: C:\vcpkg
       VCPKG_DEFAULT_TRIPLET: x64-windows
 
@@ -49,7 +50,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            C:\vcpkg\installed
+            ${{ env.VIZZA_VCPKG_ROOT }}\installed
             ~\AppData\Local\vcpkg\archives
           key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v2-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
@@ -59,12 +60,20 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          if (-not (Test-Path "$env:VCPKG_ROOT\vcpkg.exe")) {
-            & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          $vcpkgRoot = $env:VIZZA_VCPKG_ROOT
+          $installRoot = Join-Path $vcpkgRoot "installed"
+          $installedTripletDir = Join-Path $installRoot $env:VCPKG_DEFAULT_TRIPLET
+          $env:VCPKG_ROOT = $vcpkgRoot
+
+          if (-not (Test-Path "$vcpkgRoot\vcpkg.exe")) {
+            & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
           }
-          & "$env:VCPKG_ROOT\vcpkg.exe" install `
+          & "$vcpkgRoot\vcpkg.exe" install `
             --triplet "$env:VCPKG_DEFAULT_TRIPLET" `
-            --x-install-root "$env:VCPKG_ROOT\installed"
+            --x-install-root "$installRoot"
+
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKG_INSTALLED_DIR=$installedTripletDir" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Cache Slang compiler
         id: slang-cache
@@ -103,13 +112,17 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          $vcpkgRoot = $env:VIZZA_VCPKG_ROOT
+          $env:VCPKG_ROOT = $vcpkgRoot
+          $env:VCPKG_INSTALLED_DIR = Join-Path (Join-Path $vcpkgRoot "installed") $env:VCPKG_DEFAULT_TRIPLET
+
           if ($env:WINDOWS_CERTIFICATE) {
             $pfxPath = Join-Path $env:RUNNER_TEMP "vizza-windows-signing.pfx"
             [System.IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
             "WINDOWS_PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append
             $env:WINDOWS_PFX_PATH = $pfxPath
           }
-          ./scripts/package_windows.ps1 -Version $env:VERSION -Msix
+          ./scripts/package_windows.ps1 -Version $env:VERSION -Msix -VcpkgRoot $vcpkgRoot
 
       - name: Set artifact name
         id: artifact

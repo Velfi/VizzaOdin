@@ -5,7 +5,7 @@ param(
 	[string]$Version = $env:VERSION,
 	[string]$BuildDir = $env:BUILD_DIR,
 	[string]$DistDir = $env:DIST_DIR,
-	[string]$VcpkgRoot = $env:VCPKG_ROOT,
+	[string]$VcpkgRoot = $(if ($env:VIZZA_VCPKG_ROOT) { $env:VIZZA_VCPKG_ROOT } else { $env:VCPKG_ROOT }),
 	[string]$VcpkgTriplet = $(if ($env:VCPKG_DEFAULT_TRIPLET) { $env:VCPKG_DEFAULT_TRIPLET } else { "x64-windows" }),
 	[string]$OdinFlags = $(if ($env:ODIN_FLAGS) { $env:ODIN_FLAGS } else { "-o:speed" }),
 	[switch]$Msix,
