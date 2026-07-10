@@ -1444,11 +1444,11 @@ remaining_sim_draw_vectors :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Con
 		uifw.gui_gradient_rect(gui, {0, 0, width, height}, {0.06, 0.12, 0.10, 0.82}, {0.11, 0.08, 0.18, 0.82})
 	case:
 	}
-	spacing := max(settings.density, 0.001)
+	spacing := max(settings.density, VECTORS_MIN_DENSITY)
 	cols := int(2.0 / spacing)
 	rows := int(1.12 / spacing)
-	cols = min(max(cols, 8), 90)
-	rows = min(max(rows, 5), 54)
+	cols = min(max(cols, 8), 480)
+	rows = min(max(rows, 5), 360)
 	for y in 0 ..< rows {
 		for x in 0 ..< cols {
 			px := (f32(x) + 0.5) / f32(cols) * width

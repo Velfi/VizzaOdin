@@ -747,7 +747,7 @@ remaining_sim_draw_vectors_field :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 	} else if settings.vector_field_type == .Noise {
 		_ = draw_noise_settings_controls(gui, &settings.noise, "vectors_noise")
 	}
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Density: %.3f", settings.density), "vector_density", &settings.density, 0.001, 0.001, 0.1)
+	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Density: %.3f", settings.density), "vector_density", &settings.density, 0.001, VECTORS_MIN_DENSITY, 0.1)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Line Length: %.3f", settings.line_length), "line_length", &settings.line_length, 0.001, 0.005, 1)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Line Width: %.3f", settings.line_width), "line_width", &settings.line_width, 0.001, 0.001, 1)
 	if uifw.gui_button(gui, "Reset", "vectors_reset") {

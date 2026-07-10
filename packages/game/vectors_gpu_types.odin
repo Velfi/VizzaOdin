@@ -12,7 +12,9 @@ VECTORS_VERTEX_FALLBACK_SPV :: "build/shaders/simulations/vectors/shaders/line_v
 VECTORS_FRAGMENT_FALLBACK_SPV :: "build/shaders/simulations/vectors/shaders/line_fragment"
 VECTORS_SOURCE_ENTRY :: "main"
 VECTORS_ENTRY :: cstring("main")
-VECTORS_MAX_SEGMENTS :: 8192
+// The densest supported 2.4 x 1.8 field is 480 x 360 vectors.
+VECTORS_MIN_DENSITY :: f32(0.005)
+VECTORS_MAX_SEGMENTS :: 480 * 360
 VECTORS_MAX_VERTICES :: VECTORS_MAX_SEGMENTS * 4
 VECTORS_MAX_INDICES :: VECTORS_MAX_SEGMENTS * 6
 VECTORS_IMAGE_RESOLUTION :: 512
@@ -135,5 +137,3 @@ vectors_clear_color :: proc(settings: ^Vectors_Settings) -> uifw.Color {
 		return {0.0, 0.0, 0.0, 1}
 	}
 }
-
-

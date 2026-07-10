@@ -278,9 +278,9 @@ vectors_gpu_update_geometry :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_
 	indices := (cast([^]u32)index_buffer.mapped)[:VECTORS_MAX_INDICES]
 	vertex_count := 0
 	index_count := 0
-	spacing := max(settings.density, 0.001)
-	cols := min(max(int(2.4 / spacing), 8), 96)
-	rows := min(max(int(1.8 / spacing), 6), 72)
+	spacing := max(settings.density, VECTORS_MIN_DENSITY)
+	cols := min(max(int(2.4 / spacing), 8), 480)
+	rows := min(max(int(1.8 / spacing), 6), 360)
 	for y in 0 ..< rows {
 		for x in 0 ..< cols {
 			if index_count + 6 > VECTORS_MAX_INDICES || vertex_count + 4 > VECTORS_MAX_VERTICES {

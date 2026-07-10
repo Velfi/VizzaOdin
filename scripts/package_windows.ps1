@@ -54,7 +54,10 @@ function Invoke-Tool {
 		if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
 	}
 	Write-Host "> $FilePath $($displayArguments -join ' ')"
-	& $FilePath @Arguments
+	# Write child output to the job log without returning it through the
+	# PowerShell success pipeline. Callers such as Build-App return data of
+	# their own, and captured tool diagnostics must not become part of it.
+	& $FilePath @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
 	if ($LASTEXITCODE -ne 0) {
 		throw "$FilePath failed with exit code $LASTEXITCODE"
 	}
