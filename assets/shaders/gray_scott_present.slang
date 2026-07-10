@@ -20,7 +20,7 @@ struct PresentParams {
 	float camera_x;
 	float camera_y;
 	float camera_zoom;
-	float _pad0;
+	uint view_mode;
 };
 
 struct CameraUniform {
@@ -98,15 +98,15 @@ float4 sample_state(float2 uv) {
 	return state_texture.SampleLevel(state_sampler, uv, 0.0);
 }
 
-float sample_u_blurred(float2 uv) {
+float2 sample_fields_blurred(float2 uv) {
 	if (present.blur_enabled == 0u || present.blur_radius <= 0.01) {
-		return saturate(sample_state(uv).x);
+		return saturate(sample_state(uv).xy);
 	}
 
 	float2 texel = 1.0 / float2(max(present.width, 1u), max(present.height, 1u));
 	int radius = int(clamp(present.blur_radius, 1.0, 50.0));
 	float sigma = clamp(present.blur_sigma, 0.1, 10.0);
-	float sum = 0.0;
+	float2 sum = float2(0.0, 0.0);
 	float weight_sum = 0.0;
 	for (int i = -50; i <= 50; i++) {
 		if (abs(i) > radius) {
@@ -116,11 +116,11 @@ float sample_u_blurred(float2 uv) {
 		float d2 = float(i * i);
 		float w = exp(-d2 / (2.0 * sigma * sigma));
 		if (i == 0) {
-			sum += sample_state(uv).x * w;
+			sum += sample_state(uv).xy * w;
 			weight_sum += w;
 		} else {
-			sum += sample_state(uv + float2(float(i), 0.0) * texel).x * w;
-			sum += sample_state(uv + float2(0.0, float(i)) * texel).x * w;
+			sum += sample_state(uv + float2(float(i), 0.0) * texel).xy * w;
+			sum += sample_state(uv + float2(0.0, float(i)) * texel).xy * w;
 			weight_sum += w * 2.0;
 		}
 	}
@@ -145,7 +145,17 @@ float3 lut_color(float t) {
 [shader("fragment")]
 Fragment_Output fragment_main(Vertex_Output input) {
 	Fragment_Output output;
-	float u = sample_u_blurred(input.uv);
-	output.color = float4(lut_color(saturate(u)), 1.0);
+	float2 fields = sample_fields_blurred(input.uv);
+	float value = fields.x;
+	if (present.view_mode == 1u) {
+		value = fields.y;
+	} else if (present.view_mode == 2u) {
+		value = 0.5 + 0.5 * (fields.x - fields.y);
+	} else if (present.view_mode == 3u) {
+		// Square-root exposure reveals low reaction activity without an arbitrary
+		// multiplier that clips high activity.
+		value = sqrt(saturate(fields.x * fields.y * fields.y));
+	}
+	output.color = float4(lut_color(saturate(value)), 1.0);
 	return output;
 }

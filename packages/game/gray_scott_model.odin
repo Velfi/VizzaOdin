@@ -22,7 +22,7 @@ Gray_Scott_Mask_Target :: enum u32 {
 	Kill_Rate = 2,
 	Diffusion_U = 3,
 	Diffusion_V = 4,
-	UV_Concentration = 5,
+	Reaction_Rate = 5,
 }
 
 Gray_Scott_Image_Fit_Mode :: enum u32 {
@@ -30,6 +30,20 @@ Gray_Scott_Image_Fit_Mode :: enum u32 {
 	Center = 1,
 	Fit_H = 2,
 	Fit_V = 3,
+}
+
+Gray_Scott_View_Mode :: enum u32 {
+	U = 0,
+	V = 1,
+	Difference = 2,
+	Reaction = 3,
+}
+
+GRAY_SCOTT_VIEW_MODE_NAMES := [?]string {
+	"U (Nutrient)",
+	"V (Activator)",
+	"U - V (Contrast)",
+	"U x V x V (Reaction)",
 }
 
 GRAY_SCOTT_MASK_PATTERN_NAMES := [?]string {
@@ -49,7 +63,7 @@ GRAY_SCOTT_MASK_TARGET_NAMES := [?]string {
 	"Kill Rate",
 	"Diffusion U",
 	"Diffusion V",
-	"UV Concentration",
+	"Reaction Rate",
 }
 
 GRAY_SCOTT_IMAGE_FIT_MODE_NAMES := [?]string {
@@ -164,6 +178,7 @@ Gray_Scott_Settings :: struct {
 	cursor_strength: f32,
 	color_scheme: Color_Scheme_Name,
 	color_scheme_reversed: bool,
+	view_mode: Gray_Scott_View_Mode,
 	blur_enabled: bool,
 	blur_radius: f32,
 	blur_sigma: f32,
@@ -228,7 +243,7 @@ gray_scott_default_settings :: proc() -> Gray_Scott_Settings {
 			stability_factor = 0.9,
 			enable_adaptive_timestep = false,
 			mask_pattern = .Disabled,
-			mask_target = .UV_Concentration,
+			mask_target = .Reaction_Rate,
 			mask_strength = 0.5,
 			mask_mirror_horizontal = false,
 			mask_mirror_vertical = false,
@@ -237,6 +252,7 @@ gray_scott_default_settings :: proc() -> Gray_Scott_Settings {
 			cursor_size = 0.20,
 			cursor_strength = 1.0,
 			color_scheme_reversed = false,
+			view_mode = .U,
 			blur_enabled = false,
 			blur_radius = 5.0,
 			blur_sigma = 2.0,

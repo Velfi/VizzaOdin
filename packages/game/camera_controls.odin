@@ -189,10 +189,10 @@ camera_controls_apply_input :: proc(camera: ^Camera_Control_State, input: Ui_Fra
 		camera_controls_pan(camera, pan_units, 0, sensitivity)
 	}
 	if input.key_up || input.key_w {
-		camera_controls_pan(camera, 0, pan_units, sensitivity)
+		camera_controls_pan(camera, 0, -pan_units, sensitivity)
 	}
 	if input.key_down || input.key_s {
-		camera_controls_pan(camera, 0, -pan_units, sensitivity)
+		camera_controls_pan(camera, 0, pan_units, sensitivity)
 	}
 	if input.controller_left.x != 0 || input.controller_left.y != 0 {
 		controller_y := input.controller_left.y

@@ -960,6 +960,50 @@ test_app_ui_auto_hide_hides_unfocused_ui_after_grace_period :: proc(t: ^testing.
 }
 
 @(test)
+test_holding_escape_or_start_exits_a_simulation :: proc(t: ^testing.T) {
+	inputs := [2]bool{false, true}
+	for use_start in inputs {
+		ui: game.App_Ui_State
+		game.app_ui_init(&ui, game.settings_default())
+		ui.mode = .Gray_Scott
+
+		for _ in 0 ..< 2 {
+			game.app_ui_simulation_shell_update(&ui, {
+				delta_time = 0.3,
+				key_escape_down = !use_start,
+				controller_start_down = use_start,
+			})
+		}
+		testing.expect_value(t, ui.mode, game.App_Mode.Gray_Scott)
+
+		game.app_ui_simulation_shell_update(&ui, {
+			delta_time = 0.2,
+			key_escape_down = !use_start,
+			controller_start_down = use_start,
+		})
+		testing.expect_value(t, ui.mode_transition_target, game.App_Mode.Main_Menu)
+	}
+}
+
+@(test)
+test_holding_escape_or_start_highlights_main_menu_quit :: proc(t: ^testing.T) {
+	inputs := [2]game.Ui_Frame_Input{
+		{key_escape_down = true},
+		{controller_start_down = true},
+	}
+	for input in inputs {
+		ui: game.App_Ui_State
+		game.app_ui_init(&ui, game.settings_default())
+		ctx: uifw.Gui_Context
+		uifw.gui_init(&ctx)
+
+		_ = game.app_ui_simulation_filter_input(&ui, &ctx, input)
+		testing.expect(t, ui.main_menu_quit_hold_highlight)
+		uifw.gui_destroy(&ctx)
+	}
+}
+
+@(test)
 test_app_ui_auto_hide_keeps_engaged_ui_visible :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	settings := game.settings_default()
@@ -1430,7 +1474,8 @@ test_app_ui_main_menu_keyboard_scrolls_all_sims_into_view :: proc(t: ^testing.T)
 	list_y := max(title_y + title_h + theme.inner_gap, height * 0.39)
 	list_bottom := height - max(height * 0.050, ctx.style.spacing_4)
 	list_h := max(list_bottom - list_y, theme.row_height * 2.25)
-	viewport := game.app_ui_main_menu_list_viewport(&ctx, {margin_x, list_y, list_w, list_h})
+	catalog := game.app_ui_main_menu_catalog_list_bounds(&ctx, {margin_x, list_y, list_w, list_h})
+	viewport := game.app_ui_main_menu_list_viewport(&ctx, catalog)
 	selected_top := f32(ui.main_menu_selected) * (theme.row_height + ctx.style.spacing)
 	selected_bottom := selected_top + theme.row_height
 
@@ -1558,13 +1603,13 @@ test_app_ui_main_menu_hover_selection_draws_same_frame :: proc(t: ^testing.T) {
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
 	worker: host.Render_Worker_State
-	mouse := uifw.Vec2{200, 930}
+	mouse := uifw.Vec2{200, 760}
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = mouse})
 	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
 	uifw.gui_end_frame(&ctx)
 
-	testing.expect_value(t, ui.main_menu_selected, 2)
+	testing.expect_value(t, ui.main_menu_selected, 1)
 	found_hover_focus_ring := false
 	for command in ctx.commands {
 		if command.kind == uifw.Draw_Command_Kind.Stroked_Rounded_Rect &&
@@ -1792,7 +1837,7 @@ test_app_ui_main_menu_simulation_list_draws_scroll_edge_fades :: proc(t: ^testin
 	list_y := max(title_y + title_h + theme.inner_gap, height * 0.39)
 	list_bottom := height - max(height * 0.050, ctx.style.spacing_4)
 	list_h := max(list_bottom - list_y, theme.row_height * 2.25)
-	list_bounds := uifw.Rect{margin_x, list_y, list_w, list_h}
+	list_bounds := game.app_ui_main_menu_catalog_list_bounds(&ctx, {margin_x, list_y, list_w, list_h})
 	viewport := game.app_ui_main_menu_list_viewport(&ctx, list_bounds)
 
 	ui: game.App_Ui_State
@@ -1821,14 +1866,13 @@ test_app_ui_main_menu_simulation_list_draws_scroll_edge_fades :: proc(t: ^testin
 }
 
 @(test)
-test_app_ui_main_menu_discovery_chrome_is_visible_and_tracks_selection :: proc(t: ^testing.T) {
+test_app_ui_main_menu_discovery_chrome_is_visible :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
 	defer uifw.gui_destroy(&ctx)
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
-	ui.main_menu_selected = 4
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
 	worker: host.Render_Worker_State
@@ -1838,13 +1882,13 @@ test_app_ui_main_menu_discovery_chrome_is_visible_and_tracks_selection :: proc(t
 	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
 	uifw.gui_end_frame(&ctx)
 
-	testing.expect_value(t, game.app_ui_main_menu_position_label(&ui), "5 / 10")
-	saw_position := false
+	testing.expect_value(t, game.app_ui_main_menu_catalog_eyebrow_label(), "10 SIMULATIONS")
+	saw_eyebrow := false
 	saw_keyboard_hint := false
 	saw_wide_scrollbar := false
 	for command in ctx.commands {
-		if command.kind == .Text && command.text == "5 / 10" {
-			saw_position = true
+		if command.kind == .Text && command.text == "10 SIMULATIONS" {
+			saw_eyebrow = true
 		}
 		if command.kind == .Text && command.text == "Scroll / \u2191\u2193  Browse   \u2022   Enter / Click  Start" {
 			saw_keyboard_hint = true
@@ -1853,7 +1897,7 @@ test_app_ui_main_menu_discovery_chrome_is_visible_and_tracks_selection :: proc(t
 			saw_wide_scrollbar = true
 		}
 	}
-	testing.expect(t, saw_position)
+	testing.expect(t, saw_eyebrow)
 	testing.expect(t, saw_keyboard_hint)
 	testing.expect(t, saw_wide_scrollbar)
 }
@@ -2418,6 +2462,72 @@ test_gui_scroll_area_clamps_and_offsets_content :: proc(t: ^testing.T) {
 	testing.expect(t, saw_scissor_begin)
 	testing.expect(t, saw_scissor_end)
 	testing.expect(t, scrollbar_rects >= 2)
+}
+
+@(test)
+test_gui_draggable_scroll_tracks_pointer_and_consumes_release :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	viewport := uifw.Rect{0, 0, 120, 100}
+	scroll := f32(0)
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {40, 70}, mouse_pressed = true, mouse_down = true})
+	uifw.gui_scroll_begin_draggable(&ctx, viewport, 220, &scroll)
+	row := uifw.gui_next_rect(&ctx, height = 80)
+	id := uifw.gui_make_id(&ctx, "row")
+	_ = uifw.gui_control(&ctx, id, row)
+	uifw.gui_scroll_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, scroll, f32(0))
+	testing.expect_value(t, ctx.active, id)
+
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {40, 30}, mouse_down = true})
+	uifw.gui_scroll_begin_draggable(&ctx, viewport, 220, &scroll)
+	row = uifw.gui_next_rect(&ctx, height = 80)
+	_ = uifw.gui_control(&ctx, id, row)
+	uifw.gui_scroll_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, scroll, f32(40))
+	testing.expect_value(t, ctx.active, uifw.GUI_ID_NONE)
+
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {40, 30}, mouse_released = true})
+	testing.expect(t, !ctx.input.mouse_released)
+	uifw.gui_scroll_begin_draggable(&ctx, viewport, 220, &scroll)
+	uifw.gui_scroll_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, scroll, f32(40))
+}
+
+@(test)
+test_gui_draggable_scroll_accepts_controller_virtual_cursor_stream :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	viewport := uifw.Rect{0, 0, 120, 100}
+	scroll := f32(20)
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, pointer_enabled = true, mouse_pos = {60, 70}, mouse_pressed = true, mouse_down = true})
+	uifw.gui_scroll_begin_draggable(&ctx, viewport, 220, &scroll)
+	uifw.gui_scroll_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, pointer_enabled = true, mouse_pos = {60, 20}, mouse_down = true})
+	uifw.gui_scroll_begin_draggable(&ctx, viewport, 220, &scroll)
+	uifw.gui_scroll_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, scroll, f32(70))
+}
+
+@(test)
+test_touch_coordinates_convert_to_logical_window_space :: proc(t: ^testing.T) {
+	position := host.app_touch_logical_position(0.25, 0.75, 1600, 900)
+	testing.expect_value(t, position.x, f32(399.75))
+	testing.expect_value(t, position.y, f32(674.25))
+
+	clamped := host.app_touch_logical_position(-0.5, 1.5, 1600, 900)
+	testing.expect_value(t, clamped.x, f32(0))
+	testing.expect_value(t, clamped.y, f32(899))
 }
 
 @(test)

@@ -620,6 +620,11 @@ Gui_Context :: struct {
 	focus_scope_active: bool,
 	frame_index: u64,
 	open_panel: Gui_Id,
+	scroll_drag_id: Gui_Id,
+	scroll_drag_start_pos: Vec2,
+	scroll_drag_start_scroll: f32,
+	scroll_drag_consumed: bool,
+	scroll_drag_release_pending: bool,
 	combo_highlight: int,
 	combo_scroll: f32,
 	combo_popup_visible: bool,
@@ -879,6 +884,18 @@ gui_begin_frame :: proc(ctx: ^Gui_Context, input: Input_State) {
 	gui_profile_reset()
 	clear(&ctx.commands)
 	frame_input := input
+	raw_mouse_released := frame_input.mouse_released
+	ctx.scroll_drag_release_pending = ctx.scroll_drag_id != GUI_ID_NONE && raw_mouse_released
+	if ctx.scroll_drag_release_pending && ctx.scroll_drag_consumed {
+		// A completed scroll gesture must not also activate the control that
+		// received the initial press.
+		frame_input.mouse_released = false
+	}
+	if ctx.scroll_drag_id != GUI_ID_NONE && !frame_input.mouse_down && !raw_mouse_released {
+		ctx.scroll_drag_id = GUI_ID_NONE
+		ctx.scroll_drag_consumed = false
+		ctx.scroll_drag_release_pending = false
+	}
 	gui_input_apply_keyboard_fallbacks(&frame_input, ctx.input)
 	if frame_input.mouse_button == 2 || frame_input.mouse_button == 3 {
 		// Regular widgets only capture the primary pointer. Secondary input stays
@@ -1386,19 +1403,55 @@ gui_apply_wheel_scroll :: proc(ctx: ^Gui_Context, viewport: Rect, scroll: ^f32, 
 }
 
 gui_scroll_begin :: proc(ctx: ^Gui_Context, viewport: Rect, content_height: f32, scroll: ^f32) {
+	gui_scroll_begin_internal(ctx, viewport, content_height, scroll, false)
+}
+
+gui_scroll_begin_draggable :: proc(ctx: ^Gui_Context, viewport: Rect, content_height: f32, scroll: ^f32) {
+	gui_scroll_begin_internal(ctx, viewport, content_height, scroll, true)
+}
+
+gui_scroll_begin_internal :: proc(ctx: ^Gui_Context, viewport: Rect, content_height: f32, scroll: ^f32, draggable: bool) {
 	max_scroll := max(content_height - viewport.h, 0)
 	previous_scroll, consumed_wheel := gui_apply_wheel_scroll(ctx, viewport, scroll, max_scroll, 32, ctx.scroll_depth)
 	scroll^ = min(max(scroll^, 0), max_scroll)
 	gui_record_scroll_hit(ctx, viewport, scroll^, max_scroll, 32, ctx.scroll_depth)
-	visible_scroll := scroll^
 	scroll_id := gui_id_child_int(gui_make_id(ctx, "scroll"), ctx.scroll_depth)
+	direct_scroll := false
+	if draggable && max_scroll > 0 && gui_pointer_enabled(ctx) {
+		if ctx.input.mouse_pressed && gui_contains(viewport, ctx.input.mouse_pos) {
+			ctx.scroll_drag_id = scroll_id
+			ctx.scroll_drag_start_pos = ctx.input.mouse_pos
+			ctx.scroll_drag_start_scroll = scroll^
+			ctx.scroll_drag_consumed = false
+		}
+		if ctx.scroll_drag_id == scroll_id && (ctx.input.mouse_down || ctx.scroll_drag_release_pending) {
+			delta_y := ctx.input.mouse_pos.y - ctx.scroll_drag_start_pos.y
+			threshold := max(ctx.style.spacing_1 * 1.5, f32(6))
+			if ctx.scroll_drag_consumed || abs(delta_y) >= threshold {
+				ctx.scroll_drag_consumed = true
+				scroll^ = min(max(ctx.scroll_drag_start_scroll - delta_y, 0), max_scroll)
+				direct_scroll = true
+				ctx.active = GUI_ID_NONE
+			}
+			if ctx.scroll_drag_release_pending {
+				ctx.scroll_drag_id = GUI_ID_NONE
+				ctx.scroll_drag_consumed = false
+				ctx.scroll_drag_release_pending = false
+			}
+		}
+	}
+	visible_scroll := scroll^
 	if ctx.input.delta_time > 0 {
 		slot := gui_animation_slot(ctx, scroll_id)
 		if slot != nil {
-			if slot.last_frame == 0 {
+			if direct_scroll {
+				slot.value = scroll^
+			} else if slot.last_frame == 0 {
 				slot.value = min(max(previous_scroll, 0), max_scroll)
 			}
-			slot.value = gui_animate_towards(slot.value, scroll^, 18, ctx.input.delta_time)
+			if !direct_scroll {
+				slot.value = gui_animate_towards(slot.value, scroll^, 18, ctx.input.delta_time)
+			}
 			slot.value = min(max(slot.value, 0), max_scroll)
 			slot.last_frame = ctx.frame_index
 			visible_scroll = slot.value

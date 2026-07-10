@@ -29,6 +29,8 @@ App_State :: struct {
 	last_frame_tick: time.Tick,
 	input: uifw.Input_State,
 	held_mouse_button: u32,
+	touch_active: bool,
+	touch_finger_id: sdl.FingerID,
 	space_pan_consumed: bool,
 	input_sequence: u64,
 	last_mouse_keyboard_input_sequence: u64,
@@ -364,6 +366,9 @@ app_poll_events :: proc(app: ^App_State) {
 				app_video_recording_process_fullscreen_preservation(app)
 				app_video_recording_process_pending_start(app)
 		case .MOUSE_MOTION:
+			if event.motion.which == sdl.TOUCH_MOUSEID {
+				continue
+			}
 			dx := event.motion.x - app.input.mouse_pos.x
 			dy := event.motion.y - app.input.mouse_pos.y
 			app.input.mouse_pos = {event.motion.x, event.motion.y}
@@ -375,9 +380,17 @@ app_poll_events :: proc(app: ^App_State) {
 			}
 			app_reveal_hidden_system_cursor_from_mouse_input(app)
 		case .MOUSE_BUTTON_DOWN:
+			if event.button.which == sdl.TOUCH_MOUSEID {
+				continue
+			}
 			app_apply_mouse_button_event(app, u32(event.button.button), event.button.x, event.button.y, true)
 		case .MOUSE_BUTTON_UP:
+			if event.button.which == sdl.TOUCH_MOUSEID {
+				continue
+			}
 			app_apply_mouse_button_event(app, u32(event.button.button), event.button.x, event.button.y, false)
+		case .FINGER_DOWN, .FINGER_MOTION, .FINGER_UP, .FINGER_CANCELED:
+			app_apply_touch_finger_event(app, event.tfinger)
 		case .MOUSE_WHEEL:
 			app.input.wheel_delta_x += event.wheel.x
 			app.input.wheel_delta += event.wheel.y
@@ -437,6 +450,48 @@ app_apply_mouse_button_event :: proc(app: ^App_State, button: u32, x, y: f32, do
 	}
 	app_mark_mouse_keyboard_input(app)
 	app_reveal_hidden_system_cursor_from_mouse_input(app)
+}
+
+app_touch_logical_position :: proc(x, y: f32, width, height: i32) -> uifw.Vec2 {
+	return {
+		min(max(x, 0), 1) * f32(max(width - 1, 0)),
+		min(max(y, 0), 1) * f32(max(height - 1, 0)),
+	}
+}
+
+app_apply_touch_finger_event :: proc(app: ^App_State, event: sdl.TouchFingerEvent) {
+	if app == nil || app.window == nil {
+		return
+	}
+	width, height: c.int
+	_ = sdl.GetWindowSize(app.window, &width, &height)
+	position := app_touch_logical_position(event.x, event.y, i32(width), i32(height))
+
+	#partial switch event.type {
+	case .FINGER_DOWN:
+		if app.touch_active {
+			return
+		}
+		app.touch_active = true
+		app.touch_finger_id = event.fingerID
+		app_apply_mouse_button_event(app, 1, position.x, position.y, true)
+	case .FINGER_MOTION:
+		if !app.touch_active || event.fingerID != app.touch_finger_id {
+			return
+		}
+		delta := uifw.Vec2{position.x - app.input.mouse_pos.x, position.y - app.input.mouse_pos.y}
+		app.input.mouse_pos = position
+		app.input.mouse_delta.x += delta.x
+		app.input.mouse_delta.y += delta.y
+		app.input.mouse_moved = true
+		app_mark_mouse_keyboard_input(app)
+	case .FINGER_UP, .FINGER_CANCELED:
+		if !app.touch_active || event.fingerID != app.touch_finger_id {
+			return
+		}
+		app_apply_mouse_button_event(app, 1, position.x, position.y, false)
+		app.touch_active = false
+	}
 }
 
 app_mark_mouse_keyboard_input :: proc(app: ^App_State) {
@@ -1371,6 +1426,8 @@ app_send_frame :: proc(app: ^App_State) {
 		key_super = app.input.key_super,
 		key_enter = app.input.key_enter || (actions.accept.pressed && actions.accept.owner == .Mouse_Keyboard),
 		key_escape = app.input.key_escape,
+		key_escape_down = app.keyboard_back_down,
+		controller_start_down = app.controller_start_down,
 		key_backspace = app.input.key_backspace,
 		key_delete = app.input.key_delete,
 		key_home = app.input.key_home,

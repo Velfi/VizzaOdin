@@ -63,6 +63,8 @@ Ui_Frame_Input :: struct {
 	key_super: bool,
 	key_enter: bool,
 	key_escape: bool,
+	key_escape_down: bool,
+	controller_start_down: bool,
 	key_backspace: bool,
 	key_delete: bool,
 	key_home: bool,

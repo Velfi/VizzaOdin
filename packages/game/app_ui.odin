@@ -106,6 +106,8 @@ App_Ui_State :: struct {
 	keyboard_binding_notice: [128]u8,
 	settings_dirty: bool,
 	simulation_shell: Simulation_Shell_State,
+	simulation_exit_hold_seconds: f32,
+	simulation_exit_hold_triggered: bool,
 	frame_actions: Input_Action_Frame,
 	input_route: App_Input_Context_Route,
 	device_notice: [128]u8,
@@ -124,7 +126,9 @@ App_Ui_State :: struct {
 	main_menu_preview_slots: [MAIN_MENU_PREVIEW_SLOT_CAP]Main_Menu_Preview_Slot,
 	main_menu_preview_slot_count: int,
 	main_menu_palette_randomize_requested: bool,
+	main_menu_palette: Color_Scheme_Name,
 	main_menu_focus_navigation_active: bool,
+	main_menu_quit_hold_highlight: bool,
 	options_section_index: int,
 	options_scroll: f32,
 	how_to_play_scroll: f32,
@@ -1025,6 +1029,18 @@ app_ui_release_controller_focus :: proc(ui: ^App_Ui_State) {
 
 app_ui_simulation_shell_update :: proc(ui: ^App_Ui_State, input: Ui_Frame_Input, ui_engaged := false) {
 	ui.frame_actions = input.actions
+	exit_held := input.key_escape_down || input.controller_start_down
+	if app_ui_mode_is_simulation(ui.mode) && exit_held {
+		ui.simulation_exit_hold_seconds += max(input.delta_time, 0)
+		if ui.simulation_exit_hold_seconds >= 0.75 && !ui.simulation_exit_hold_triggered {
+			ui.simulation_exit_hold_triggered = true
+			app_ui_navigate(ui, .Main_Menu)
+			return
+		}
+	} else {
+		ui.simulation_exit_hold_seconds = 0
+		ui.simulation_exit_hold_triggered = false
+	}
 	if (input.key_f1 || input.help || input.actions.help.pressed) && !ui.controls_help_open && app_ui_mode_is_simulation(ui.mode) {
 		// Keyboard help is a shell-level command so it remains available when
 		// the simulation UI has auto-hidden, but never steals an active editor.
@@ -1276,6 +1292,7 @@ app_ui_clear_controller_camera_input :: proc(input: ^Ui_Frame_Input) {
 }
 
 app_ui_simulation_filter_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, input: Ui_Frame_Input) -> Ui_Frame_Input {
+	ui.main_menu_quit_hold_highlight = ui.mode == .Main_Menu && (input.key_escape_down || input.controller_start_down)
 	dismiss_help := ui.controls_help_open && (input.key_f1 || input.help || input.actions.help.pressed)
 	if dismiss_help {app_ui_close_controls_help(ui, gui)}
 	pan_chord_candidate := input.mouse_pressed &&

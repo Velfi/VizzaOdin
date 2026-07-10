@@ -90,7 +90,8 @@ app_ui_draw_main_menu :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx:
 	list_bottom := height - bottom_margin
 	list_h := max(list_bottom - list_y, theme.row_height * 2.25)
 	list := uifw.Rect{margin_x, list_y, list_w, list_h}
-	app_ui_draw_main_menu_list(ui, gui, list, theme)
+	app_ui_draw_main_menu_catalog_eyebrow(gui, list, theme)
+	app_ui_draw_main_menu_list(ui, gui, app_ui_main_menu_catalog_list_bounds(gui, list), theme)
 
 	if width >= 920 {
 		actions := uifw.Rect{actions_x, actions_y, button_w, actions_h}
@@ -117,7 +118,7 @@ app_ui_draw_main_menu :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx:
 				gui.focused = uifw.GUI_ID_NONE
 			}
 		}
-		if app_ui_draw_main_menu_text_button(gui, {actions.x, actions.y + button_h + action_gap, button_w, button_h}, "quit", "QUIT", theme, true) {
+		if app_ui_draw_main_menu_text_button(gui, {actions.x, actions.y + button_h + action_gap, button_w, button_h}, "quit", "QUIT", theme, true, ui.main_menu_quit_hold_highlight) {
 			ui.main_menu_focus_slot = app_ui_main_menu_quit_slot()
 			app_ui_main_menu_activate_slot(ui, ui.main_menu_focus_slot, worker)
 		}
@@ -152,7 +153,7 @@ app_ui_draw_main_menu :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx:
 				gui.focused = uifw.GUI_ID_NONE
 			}
 		}
-		if app_ui_draw_main_menu_text_button(gui, {button_x, actions.y + theme.footer_height + action_gap, button_w, theme.footer_height}, "quit", "QUIT", theme, true) {
+		if app_ui_draw_main_menu_text_button(gui, {button_x, actions.y + theme.footer_height + action_gap, button_w, theme.footer_height}, "quit", "QUIT", theme, true, ui.main_menu_quit_hold_highlight) {
 			ui.main_menu_focus_slot = app_ui_main_menu_quit_slot()
 			app_ui_main_menu_activate_slot(ui, ui.main_menu_focus_slot, worker)
 		}
@@ -426,7 +427,7 @@ app_ui_draw_main_menu_button :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, ke
 	return control.activated || (control.hovered && gui.active == id && gui.input.mouse_released)
 }
 
-app_ui_draw_main_menu_text_button :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, key, label: string, theme: Menu_Theme, muted_at_rest := false) -> bool {
+app_ui_draw_main_menu_text_button :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, key, label: string, theme: Menu_Theme, muted_at_rest := false, force_highlight := false) -> bool {
 	text_scale := gui.style.heading_text_scale * MAIN_MENU_TEXT_BUTTON_SCALE_MULTIPLIER
 	bytes := transmute([]u8)label
 	fallback_advance := gui.style.char_width * text_scale / max(gui.style.text_scale, 0.001)
@@ -451,7 +452,7 @@ app_ui_draw_main_menu_text_button :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rec
 
 	id := uifw.gui_make_id(gui, key)
 	control := uifw.gui_control(gui, id, button, true)
-	hot_t := uifw.gui_animate_value(gui, uifw.gui_id_child(id, "text_hot"), (control.hovered || control.focused || gui.active == id) ? f32(1) : f32(0), 16)
+	hot_t := uifw.gui_animate_value(gui, uifw.gui_id_child(id, "text_hot"), (force_highlight || control.hovered || control.focused || gui.active == id) ? f32(1) : f32(0), 16)
 	if hot_t > 0.01 || control.focused {
 		glass := app_ui_menu_glass_style(gui, theme, theme.card_radius, hot_t)
 		glass.tint.a = 0.12 + hot_t * 0.08
@@ -535,7 +536,7 @@ app_ui_draw_main_menu_list :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bo
 	gui.style.scrollbar_gutter = max(saved_scrollbar_gutter, gui.style.spacing_1)
 	gui.style.control = uifw.gui_apply_opacity(theme.text, 0.24)
 	gui.style.text_muted = theme.text
-	uifw.gui_scroll_begin(gui, viewport, content_h, &ui.main_menu_scroll)
+	uifw.gui_scroll_begin_draggable(gui, viewport, content_h, &ui.main_menu_scroll)
 	uifw.gui_push_id(gui, "main_menu_simulations")
 	if ui.main_menu_focus_navigation_active {
 		if index, ok := app_ui_main_menu_simulation_index_for_slot(ui.main_menu_focus_slot); ok {
@@ -594,7 +595,6 @@ app_ui_draw_main_menu_list :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bo
 		fade_h := min(max(gui.style.rhythm * 0.78, f32(14)), viewport.h * 0.18)
 		uifw.gui_gradient_rect(gui, {viewport.x, viewport.y + viewport.h - fade_h, viewport.w, fade_h}, {0, 0, 0, 0}, {0, 0, 0, 0.58})
 	}
-	app_ui_draw_main_menu_position_indicator(ui, gui, viewport, theme)
 	app_ui_draw_main_menu_instruction_strip(ui, gui, app_ui_main_menu_list_hint_rect(gui, bounds), theme)
 }
 
@@ -619,21 +619,25 @@ app_ui_main_menu_list_hint_rect :: proc(gui: ^uifw.Gui_Context, bounds: uifw.Rec
 	return {bounds.x, bounds.y + bounds.h - hint_h, bounds.w, hint_h}
 }
 
-app_ui_main_menu_position_label :: proc(ui: ^App_Ui_State) -> string {
-	selected := max(min(ui.main_menu_selected, len(APP_SIMULATION_NAMES) - 1), 0)
-	return fmt.tprintf("%d / %d", selected + 1, len(APP_SIMULATION_NAMES))
+app_ui_main_menu_catalog_eyebrow_label :: proc() -> string {
+	return fmt.tprintf("%d SIMULATIONS", len(APP_SIMULATION_NAMES))
 }
 
-app_ui_draw_main_menu_position_indicator :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, viewport: uifw.Rect, theme: Menu_Theme) {
-	label := app_ui_main_menu_position_label(ui)
-	padding_x := max(gui.style.spacing_1, f32(7))
-	indicator_h := max(gui.style.small_line_height * 1.35, f32(24))
-	indicator_w := uifw.gui_text_width(gui, label) + padding_x * 2
-	right_inset := max(gui.style.scrollbar_width + gui.style.scrollbar_gutter + gui.style.spacing_1, f32(18))
-	rect := uifw.Rect{viewport.x + viewport.w - right_inset - indicator_w, viewport.y + gui.style.spacing_1, indicator_w, indicator_h}
-	uifw.gui_round_rect(gui, rect, rect.h * 0.5, {0, 0, 0, 0.62})
-	uifw.gui_round_stroke(gui, rect, rect.h * 0.5, uifw.gui_apply_opacity(theme.text, 0.30), theme.border_width)
-	app_ui_draw_menu_centered_text(gui, rect, label, theme.text_muted)
+app_ui_main_menu_catalog_eyebrow_height :: proc(gui: ^uifw.Gui_Context) -> f32 {
+	return max(gui.style.small_line_height, f32(18))
+}
+
+app_ui_main_menu_catalog_list_bounds :: proc(gui: ^uifw.Gui_Context, bounds: uifw.Rect) -> uifw.Rect {
+	eyebrow_h := app_ui_main_menu_catalog_eyebrow_height(gui)
+	gap := max(gui.style.spacing_1, f32(5))
+	return {bounds.x, bounds.y + eyebrow_h + gap, bounds.w, max(bounds.h - eyebrow_h - gap, gui.style.row_height)}
+}
+
+app_ui_draw_main_menu_catalog_eyebrow :: proc(gui: ^uifw.Gui_Context, list: uifw.Rect, theme: Menu_Theme) {
+	label := app_ui_main_menu_catalog_eyebrow_label()
+	height := app_ui_main_menu_catalog_eyebrow_height(gui)
+	rect := uifw.Rect{list.x + theme.border_width, list.y, max(list.w - theme.border_width * 2, 1), height}
+	uifw.gui_text_aligned_font(gui, rect, label, theme.text_dim, .Left, .Body, gui.style.small_text_scale)
 }
 
 app_ui_draw_main_menu_instruction_strip :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, rect: uifw.Rect, theme: Menu_Theme) {
@@ -708,7 +712,7 @@ app_ui_draw_simulation_row :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bo
 		uifw.gui_round_rect(gui, card, theme.card_radius, uifw.gui_lerp_color({1, 1, 1, 0.0}, {1, 1, 1, 0.13}, hover_t))
 	}
 	label_inset := max(theme.inner_gap, 22)
-	utility_reserve := max(gui.style.scrollbar_width + gui.style.scrollbar_gutter + gui.style.body_char_width * 9, f32(88))
+	utility_reserve := max(gui.style.scrollbar_width + gui.style.scrollbar_gutter + gui.style.spacing_2, f32(28))
 	label_max_w := max(card.w - label_inset * 2 - utility_reserve, 1)
 	label_scale := app_ui_fit_sim_start_text_scale(gui, APP_SIMULATION_NAMES[index], gui.style.heading_text_scale * (card.h >= 96 ? f32(1.95) : f32(1.35)), label_max_w)
 	label_h := uifw.GUI_FONT_LOGICAL_HEIGHT * label_scale
@@ -755,10 +759,27 @@ app_ui_draw_live_simulation_preview :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Co
 		uifw.gui_round_stroke(gui, clip_rect, gui.style.radius_control, gui.style.panel_border, gui.style.border_width)
 		return
 	}
-	app_ui_draw_simulation_preview(gui, clip_rect, mode, seed)
+	app_ui_draw_simulation_preview(ui, gui, clip_rect, mode, seed)
 }
 
-app_ui_draw_simulation_preview :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, mode: App_Mode, seed: f32) {
+app_ui_draw_lut_gradient_preview :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, rect: uifw.Rect) {
+	scheme := color_scheme_effective(&ui.main_menu_palette, true)
+	segment_count :: COLOR_SCHEME_SIZE
+	for i in 0 ..< segment_count {
+		x0 := rect.x + rect.w * f32(i) / f32(segment_count)
+		x1 := rect.x + rect.w * f32(i + 1) / f32(segment_count)
+		left := color_scheme_color_at(scheme, i * (COLOR_SCHEME_SIZE - 1) / segment_count)
+		right := color_scheme_color_at(scheme, (i + 1) * (COLOR_SCHEME_SIZE - 1) / segment_count)
+		uifw.gui_horizontal_gradient_rect(
+			gui,
+			{x0, rect.y, x1 - x0, rect.h},
+			{left[0], left[1], left[2], left[3]},
+			{right[0], right[1], right[2], right[3]},
+		)
+	}
+}
+
+app_ui_draw_simulation_preview :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, rect: uifw.Rect, mode: App_Mode, seed: f32) {
 	if rect.w <= 0 || rect.h <= 0 {
 		return
 	}
@@ -812,7 +833,7 @@ app_ui_draw_simulation_preview :: proc(gui: ^uifw.Gui_Context, rect: uifw.Rect, 
 			uifw.gui_ellipse(gui, {x - s, y - s, s * 2, s * 2}, {0.95, 0.63, 0.24, 0.85})
 		}
 	case .Gradient_Editor:
-		uifw.gui_gradient_rect(gui, rect, {0.20, 0.20, 0.85, 1}, {1.0, 0.42, 0.16, 1})
+		app_ui_draw_lut_gradient_preview(ui, gui, rect)
 	case .Voronoi_CA:
 		uifw.gui_rect(gui, rect, {0.025, 0.025, 0.035, 1})
 		cell := max(min_d * 0.18, 4)

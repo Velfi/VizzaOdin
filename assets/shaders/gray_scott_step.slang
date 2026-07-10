@@ -165,13 +165,6 @@ float mask_factor(int2 p) {
 	return result;
 }
 
-float adaptive_timestep() {
-	float diffusion_limit = 0.25 / max(params.diffusion_a + params.diffusion_b, 0.0001);
-	float reaction_limit = 1.0 / max(1.0 + params.feed + params.kill, 0.0001);
-	float stable = min(params.max_timestep, min(diffusion_limit, reaction_limit) * params.stability_factor);
-	return min(params.timestep, stable);
-}
-
 float4 clear_state() {
 	return float4(1.0, 0.0, 0.0, 0.0);
 }
@@ -185,14 +178,13 @@ float4 initial_seed(uint2 tid) {
 	return float4(lerp(1.0, 0.5, factor), 0.99 * factor, 0.0, 0.0);
 }
 
-// Matches Vizza's standalone Gray-Scott noise seeding shader at full strength.
 float4 noise_seed(uint2 tid) {
-	float noise_strength = 1.0;
 	float n = fbm_noise(tid, params.seed);
-	if (n < (0.1 * noise_strength)) {
-		return float4(0.2 + n * 0.3, 0.8 + n * 0.2, 0.0, 0.0);
-	}
-	return clear_state();
+	// Perturb the homogeneous equilibrium instead of replacing rare pixels with
+	// near-saturated V. The centered envelope still gives noise enough contrast
+	// to nucleate patterns without starting outside the usual Gray-Scott regime.
+	float v = saturate((n - 0.35) * 0.35);
+	return float4(1.0 - v * 0.5, v, 0.0, 0.0);
 }
 
 float4 paint_state(uint2 tid) {
@@ -213,8 +205,9 @@ float4 paint_state(uint2 tid) {
 		next.x = lerp(current.x, 1.0, strength);
 		next.y = lerp(current.y, 0.0, strength);
 	} else if (params.mouse_button == 0u) {
-		next.x = lerp(current.x, params.cursor_strength, strength);
-		next.y = lerp(current.y, 0.8 + 0.2 * factor, strength);
+		// A conventional seed consumes U while introducing V.
+		next.x = lerp(current.x, 0.5, strength);
+		next.y = lerp(current.y, 0.25, strength);
 	}
 	return float4(next, 0.0, 0.0);
 }
@@ -249,33 +242,37 @@ void main(uint3 tid: SV_DispatchThreadID) {
 	float2 uv = load_wrapped(p);
 	float2 lap = laplacian_5(p);
 	float reaction = uv.x * uv.y * uv.y;
-	float mask = mask_factor(p) * params.mask_strength;
+	float mask = mask_factor(p);
+	float modulation = lerp(1.0, mask, saturate(params.mask_strength));
 
 	float feed = params.feed;
 	float kill = params.kill;
 	float diffusion_a = params.diffusion_a;
 	float diffusion_b = params.diffusion_b;
+	if (params.mask_pattern != 0u) {
 	switch (params.mask_target) {
 	case 1u:
-		feed = params.feed * (0.5 + mask * 0.5);
+		feed = params.feed * modulation;
 		break;
 	case 2u:
-		kill = params.kill * (0.5 + mask * 0.5);
+		kill = params.kill * modulation;
 		break;
 	case 3u:
-		diffusion_a = params.diffusion_a * (0.5 + mask);
+		diffusion_a = params.diffusion_a * modulation;
 		break;
 	case 4u:
-		diffusion_b = params.diffusion_b * (0.5 + mask);
+		diffusion_b = params.diffusion_b * modulation;
 		break;
 	case 5u:
-		feed = params.feed * (0.5 + mask * 0.5);
+		reaction *= modulation;
 		break;
 	default:
 		break;
 	}
+	}
 
-	float dt = params.enable_adaptive_timestep != 0u ? adaptive_timestep() : params.timestep;
+	// Subdivision and stability are handled once, on the CPU.
+	float dt = params.timestep;
 	float du = diffusion_a * lap.x - reaction + feed * (1.0 - uv.x);
 	float dv = diffusion_b * lap.y + reaction - (kill + feed) * uv.y;
 	uv += float2(du, dv) * dt;

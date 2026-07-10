@@ -108,7 +108,7 @@ gray_scott_controls_content_height :: proc(sim: ^Gray_Scott_Simulation, ctx: ^ui
 		case 3:
 			return heading + row * 4
 		case CONTROLLER_SECTION_LOOK:
-			return heading * 2 + row * 9 + spacer
+			return heading * 2 + row * 10 + spacer
 		case 4:
 			return heading + shared_two_axis_pad_height(ctx) + row * 2 + spacer
 		case 5:
@@ -138,10 +138,10 @@ gray_scott_controls_content_height :: proc(sim: ^Gray_Scott_Simulation, ctx: ^ui
 
 	add_section(&rows, &sections, 5) // About
 	add_section(&rows, &sections, preset_fieldset_content_rows(&sim.runtime.preset_fieldset)) // Presets
-	add_section(&rows, &sections, 34) // Display
+	add_section(&rows, &sections, 35) // Display
 	add_section(&rows, &sections, 5) // Post Processing
 	add_section(&rows, &sections, 5) // Controls
-	add_section(&rows, &sections, sim.runtime.randomize_undo_available ? 5 : 4) // Settings
+	add_section(&rows, &sections, sim.runtime.randomize_undo_available ? 3 : 2) // Settings
 	add_section(&rows, &sections, 26) // Reaction-Diffusion
 	if sim.settings.mask_pattern != .Disabled {
 		rows += 6
@@ -157,14 +157,21 @@ gray_scott_controls_content_height :: proc(sim: ^Gray_Scott_Simulation, ctx: ^ui
 
 gray_scott_draw_actions :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Context) -> bool {
 	changed := false
-	if uifw.gui_button(ctx, "Reset Simulation", "reset") {
+	actions_bounds := uifw.gui_next_rect(ctx)
+	actions := uifw.gui_grid_begin(ctx, actions_bounds, 3, ctx.style.spacing)
+	if uifw.gui_button_at(ctx, uifw.gui_make_id(ctx, "reset"), uifw.gui_grid_next(&actions, actions_bounds.h), "Reset Simulation", true) {
 		gray_scott_reset_runtime(sim)
 		uifw.gui_notice(ctx, "Fresh pattern started. Your settings stayed exactly as they were.")
 		changed = true
 	}
-	if uifw.gui_button(ctx, "Randomize Settings", "randomize") {
+	if uifw.gui_button_at(ctx, uifw.gui_make_id(ctx, "randomize"), uifw.gui_grid_next(&actions, actions_bounds.h), "Randomize Settings", true) {
 		gray_scott_randomize_settings(sim)
 		uifw.gui_notice(ctx, "Settings randomized. Restore Before Randomize is available here.")
+		changed = true
+	}
+	if uifw.gui_button_at(ctx, uifw.gui_make_id(ctx, "seed_noise"), uifw.gui_grid_next(&actions, actions_bounds.h), "Seed Noise", true) {
+		gray_scott_seed_noise(sim)
+		uifw.gui_notice(ctx, "New noise seed added. Settings stayed unchanged.")
 		changed = true
 	}
 	if sim.runtime.randomize_undo_available && uifw.gui_button(ctx, "Restore Before Randomize", "undo_randomize") {
@@ -172,11 +179,6 @@ gray_scott_draw_actions :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Cont
 			uifw.gui_notice(ctx, "Previous Gray-Scott settings restored.")
 			changed = true
 		}
-	}
-	if uifw.gui_button(ctx, "Seed Noise", "seed_noise") {
-		gray_scott_seed_noise(sim)
-		uifw.gui_notice(ctx, "New noise seed added. Settings stayed unchanged.")
-		changed = true
 	}
 	return changed
 }
@@ -340,6 +342,11 @@ gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Con
 
 	if section < 0 || section == 2 || section == CONTROLLER_SECTION_LOOK {
 	uifw.gui_heading(ctx, "Display Settings")
+	view_mode_index := int(sim.settings.view_mode)
+	if uifw.gui_selector(ctx, fmt.tprintf("Field View: %s", GRAY_SCOTT_VIEW_MODE_NAMES[view_mode_index]), "gray_scott_view_mode", &view_mode_index, GRAY_SCOTT_VIEW_MODE_NAMES[:]) {
+		sim.settings.view_mode = Gray_Scott_View_Mode(u32(view_mode_index))
+		changed = true
+	}
 	if color_scheme_editor_draw_selector(ctx, color_editor, "gray_scott_color_scheme", &sim.settings.color_scheme, &sim.settings.color_scheme_reversed) {
 		changed = true
 	}
@@ -415,18 +422,14 @@ gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Con
 	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Simulation Speed: %.2fx", sim.settings.simulation_speed), "simulation_speed", &sim.settings.simulation_speed, 0.25, 0.0, 32.0) {
 		changed = true
 	}
-	if uifw.gui_toggle(ctx, fmt.tprintf("Adaptive Timestep: %v", sim.settings.enable_adaptive_timestep), "adaptive_timestep", &sim.settings.enable_adaptive_timestep) {
-		changed = true
-	}
-	shared_control_explanation(ctx, "adaptive_timestep", "Adaptive Timestep automatically takes smaller steps when the pattern needs more care.")
 	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Max Timestep: %.2f", sim.settings.max_timestep), "max_timestep", &sim.settings.max_timestep, 0.05, 0.1, 8.0) {
 		changed = true
 	}
-	shared_control_explanation(ctx, "max_timestep", "Max Timestep is the speed limit used by Adaptive Timestep.")
+	shared_control_explanation(ctx, "max_timestep", "Max Timestep caps each stable integration step. Larger requested advances are subdivided automatically.")
 	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Stability: %.2f", sim.settings.stability_factor), "stability", &sim.settings.stability_factor, 0.05, 0.1, 1.0) {
 		changed = true
 	}
-	shared_control_explanation(ctx, "stability", "Stability controls how cautious Adaptive Timestep is. Lower is safer; higher is bolder.")
+	shared_control_explanation(ctx, "stability", "Stability controls the safety margin for automatic step subdivision. Lower is safer; higher is faster.")
 	}
 
 	if section < 0 || section == 6 || section == GRAY_SCOTT_SECTION_MASK {

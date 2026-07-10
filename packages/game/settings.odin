@@ -531,7 +531,7 @@ settings_write_gray_scott_toml :: proc(settings: Gray_Scott_Settings, out: []u8)
 	nutrient_image_path := settings.nutrient_image_path
 	return fmt.bprintf(
 		out,
-		"[gray_scott]\nfeed = %.6f\nkill = %.6f\ndiffusion_a = %.6f\ndiffusion_b = %.6f\ntimestep = %.6f\nsimulation_speed = %.6f\nmax_timestep = %.6f\nstability_factor = %.6f\nenable_adaptive_timestep = %v\nmask_pattern = \"%s\"\nmask_target = %d\nmask_strength = %.6f\nmask_mirror_horizontal = %v\nmask_mirror_vertical = %v\nmask_invert_tone = %v\nnutrient_image_fit_mode = \"%s\"\nnutrient_image_path = \"%s\"\ncursor_size = %.6f\ncursor_strength = %.6f\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\npaused = %v\n",
+		"[gray_scott]\nfeed = %.6f\nkill = %.6f\ndiffusion_a = %.6f\ndiffusion_b = %.6f\ntimestep = %.6f\nsimulation_speed = %.6f\nmax_timestep = %.6f\nstability_factor = %.6f\nenable_adaptive_timestep = %v\nmask_pattern = \"%s\"\nmask_target = %d\nmask_strength = %.6f\nmask_mirror_horizontal = %v\nmask_mirror_vertical = %v\nmask_invert_tone = %v\nnutrient_image_fit_mode = \"%s\"\nnutrient_image_path = \"%s\"\ncursor_size = %.6f\ncursor_strength = %.6f\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nview_mode = %d\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\npaused = %v\n",
 		settings.feed,
 		settings.kill,
 		settings.diffusion_a,
@@ -553,6 +553,7 @@ settings_write_gray_scott_toml :: proc(settings: Gray_Scott_Settings, out: []u8)
 		settings.cursor_strength,
 		color_scheme_name_get(&color_scheme_name),
 		settings.color_scheme_reversed,
+		u32(settings.view_mode),
 		settings.blur_enabled,
 		settings.blur_radius,
 		settings.blur_sigma,
@@ -652,6 +653,9 @@ settings_load_gray_scott :: proc(path: string, defaults: Gray_Scott_Settings) ->
 	}
 	if v, ok := toml_bool(result.toptab, "gray_scott.color_scheme_reversed"); ok {
 		settings.color_scheme_reversed = v
+	}
+	if v, ok := toml_i64(result.toptab, "gray_scott.view_mode"); ok {
+		settings.view_mode = Gray_Scott_View_Mode(u32(max(min(v, i64(len(GRAY_SCOTT_VIEW_MODE_NAMES) - 1)), 0)))
 	}
 	if v, ok := toml_bool(result.toptab, "gray_scott.blur_enabled"); ok {
 		settings.blur_enabled = v

@@ -222,6 +222,7 @@ gray_scott_upload_present_params :: proc(sim: ^Gray_Scott_Simulation, frame_slot
 		camera_x = sim.runtime.camera_x,
 		camera_y = sim.runtime.camera_y,
 		camera_zoom = max(sim.runtime.camera_zoom, 0.05),
+		view_mode = u32(sim.settings.view_mode),
 	}
 }
 
@@ -987,8 +988,11 @@ gray_scott_dispatch_compute :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^engine
 }
 
 gray_scott_estimate_stable_timestep :: proc(sim: ^Gray_Scott_Simulation) -> f32 {
-	diffusion_sum := max(sim.settings.diffusion_a + sim.settings.diffusion_b, 0.0001)
-	diffusion_limit := 0.25 / diffusion_sum
+	// Forward Euler with the five-point 2D Laplacian requires dt * D <= 1/4.
+	// Mask modulation is a [0, 1] multiplier, so the configured diffusion is
+	// the maximum diffusion present anywhere in the field.
+	max_diffusion := max(max(sim.settings.diffusion_a, sim.settings.diffusion_b), 0.0001)
+	diffusion_limit := 0.25 / max_diffusion
 	reaction_limit := 1.0 / max(1.0 + sim.settings.feed + sim.settings.kill, 0.0001)
 	stable := min(diffusion_limit, reaction_limit) * max(sim.settings.stability_factor, 0.01)
 	return min(max(stable, 0.0001), max(sim.settings.max_timestep, 0.0001))
@@ -1062,21 +1066,17 @@ gray_scott_step_compute_resources :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^
 
 	base_timestep := sim.settings.timestep
 	speed := max(sim.settings.simulation_speed, 0.0)
-	total_step_dt := base_timestep * speed
+	// Preserve the legacy apparent rate at 60 Hz while making evolution depend
+	// on elapsed time rather than the number of rendered frames.
+	total_step_dt := base_timestep * speed * dt * 60.0
 	if total_step_dt <= 0 || dt <= 0 {
 		return true
 	}
-	substeps := int(GRAY_SCOTT_DEFAULT_ITERATIONS)
-	per_iteration_dt := total_step_dt / f32(max(substeps, 1))
-	if speed > 1.0 {
-		stable_dt := gray_scott_estimate_stable_timestep(sim)
-		substeps = int(math.ceil(total_step_dt / stable_dt))
-		substeps = max(min(substeps, GRAY_SCOTT_MAX_STABLE_SUBSTEPS), 1)
-		per_iteration_dt = total_step_dt / f32(substeps)
-	}
-	if sim.settings.enable_adaptive_timestep {
-		per_iteration_dt = min(per_iteration_dt, gray_scott_estimate_stable_timestep(sim))
-	}
+	stable_dt := gray_scott_estimate_stable_timestep(sim)
+	// Bound catch-up work after a long stall rather than taking an unstable step.
+	total_step_dt = min(total_step_dt, stable_dt * f32(GRAY_SCOTT_MAX_STABLE_SUBSTEPS))
+	substeps := max(int(math.ceil(total_step_dt / stable_dt)), 1)
+	per_iteration_dt := total_step_dt / f32(substeps)
 
 	read_index := int(sim.gpu.state_index)
 	write_index := 1 - read_index

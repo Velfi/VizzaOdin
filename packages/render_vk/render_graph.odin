@@ -174,6 +174,13 @@ render_backend_handle_main_menu_palette_requests :: proc(backend: ^Render_Backen
 		main_menu_backdrop_select_next_palette(&backend.main_menu_backdrop)
 		app_ui.main_menu_palette_randomize_requested = false
 	}
+	if app_ui != nil {
+		palette_name := main_menu_backdrop_current_palette_name(&backend.main_menu_backdrop)
+		if len(palette_name) == 0 {
+			palette_name = COLOR_SCHEME_DEFAULT_NAME
+		}
+		color_scheme_name_set(&app_ui.main_menu_palette, palette_name)
+	}
 }
 
 render_backend_draw_frame :: proc(backend: ^Render_Backend, vk_ctx: ^engine.Vk_Context, sim: ^Gray_Scott_Simulation, preview_gray_scott: ^Gray_Scott_Simulation, particle_life: ^Particle_Life_Simulation, preview_particle_life: ^Particle_Life_Simulation, vectors_gpu: ^Vectors_Gpu_State, preview_vectors_gpu: ^Vectors_Gpu_State, moire_gpu: ^Moire_Gpu_State, preview_moire_gpu: ^Moire_Gpu_State, primordial_gpu: ^Primordial_Gpu_State, preview_primordial_gpu: ^Primordial_Gpu_State, pellets_gpu: ^Pellets_Gpu_State, preview_pellets_gpu: ^Pellets_Gpu_State, flow_gpu: ^Flow_Gpu_State, preview_flow_gpu: ^Flow_Gpu_State, slime_gpu: ^Slime_Gpu_State, voronoi_gpu: ^Voronoi_Gpu_State, preview_slime_gpu: ^Slime_Gpu_State, preview_voronoi_gpu: ^Voronoi_Gpu_State, app_ui: ^App_Ui_State, gui: ^uifw.Gui_Context, dt: f32, app_mode: App_Mode, frame_index: u64, screenshot: ^engine.Screenshot_State, video_capture: ^Video_Capture_Sink = nil) -> bool {

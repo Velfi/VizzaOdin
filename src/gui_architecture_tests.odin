@@ -86,6 +86,29 @@ test_gui_scroll_area_smooths_visible_offset :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_gui_draggable_scroll_stops_at_content_bottom :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	viewport := uifw.Rect{0, 0, 120, 100}
+	scroll := f32(0)
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {40, 80}, mouse_pressed = true, mouse_down = true})
+	uifw.gui_scroll_begin_draggable(&ctx, viewport, 190, &scroll)
+	uifw.gui_scroll_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {40, -1000}, mouse_down = true})
+	uifw.gui_scroll_begin_draggable(&ctx, viewport, 190, &scroll)
+	uifw.gui_scroll_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+
+	// The last content pixel aligns with the viewport bottom; no blank space
+	// below the content can be dragged into view.
+	testing.expect_value(t, scroll, f32(90))
+}
+
+@(test)
 test_gui_scroll_area_clips_child_interaction :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
@@ -1453,6 +1476,35 @@ test_gui_combobox_long_popup_aligns_selected_row_to_control :: proc(t: ^testing.
 	}
 	testing.expect(t, selected_row_count >= 2)
 	testing.expect(t, ctx.combo_scroll > 0)
+}
+
+@(test)
+test_gui_combobox_long_popup_does_not_move_when_hover_changes :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	options := [?]string{"One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve"}
+	current := 5
+	query: [32]u8
+	control := uifw.Rect{0, 140, 220, 44}
+
+	uifw.gui_begin_frame(&ctx, {window_width = 300, window_height = 360, mouse_pos = {10, 162}, mouse_pressed = true, mouse_released = true})
+	uifw.gui_layout_begin(&ctx, control, .Column, 0, 44)
+	_ = uifw.gui_combobox(&ctx, "Pick", "pick", &current, options[:], query[:])
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	first_popup := ctx.combo_popup_rect
+
+	hover := uifw.Vec2{first_popup.x + 10, first_popup.y + ctx.style.row_height * 0.5}
+	uifw.gui_begin_frame(&ctx, {window_width = 300, window_height = 360, mouse_pos = hover, mouse_moved = true})
+	uifw.gui_layout_begin(&ctx, control, .Column, 0, 44)
+	_ = uifw.gui_combobox(&ctx, "Pick", "pick", &current, options[:], query[:])
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect(t, ctx.combo_highlight != current)
+	testing.expect_value(t, ctx.combo_popup_rect, first_popup)
 }
 
 @(test)

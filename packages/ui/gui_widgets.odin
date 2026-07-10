@@ -1507,7 +1507,7 @@ gui_combobox_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int,
 	if open && clicked {
 		query := gui_query_string(query_buffer)
 		matches_count := gui_combo_match_count(options, query)
-		popup := gui_combo_popup_rect(ctx, bounds, options, query, matches_count, ctx.combo_highlight)
+		popup := gui_combo_popup_rect(ctx, bounds, options, query, matches_count, current^)
 		if gui_contains(popup, ctx.input.mouse_pos) {
 			clicked = false
 		}
@@ -1531,7 +1531,7 @@ gui_combobox_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int,
 	if open && ctx.input.mouse_pressed && !gui_contains(bounds, ctx.input.mouse_pos) {
 		query := gui_query_string(query_buffer)
 		matches_count := gui_combo_match_count(options, query)
-		popup := gui_combo_popup_rect(ctx, bounds, options, query, matches_count, ctx.combo_highlight)
+		popup := gui_combo_popup_rect(ctx, bounds, options, query, matches_count, current^)
 		if !gui_contains(popup, ctx.input.mouse_pos) {
 			ctx.open_panel = GUI_ID_NONE
 			open = false
@@ -1593,7 +1593,10 @@ gui_combobox_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int,
 		}
 	}
 
-	popup := gui_combo_popup_rect(ctx, bounds, options, query, len(matches), ctx.combo_highlight)
+	// Anchor long popups to the committed selection. Pointer hover and keyboard
+	// navigation update combo_highlight; using that moving value for geometry
+	// makes the entire popup jump beneath a stationary pointer every frame.
+	popup := gui_combo_popup_rect(ctx, bounds, options, query, len(matches), current^)
 	query_height := len(query) > 0 ? ctx.style.row_height : f32(0)
 	list_viewport := Rect{popup.x, popup.y + query_height, popup.w, max(popup.h - query_height, 0)}
 	content_height := f32(len(matches)) * ctx.style.row_height
@@ -1862,4 +1865,3 @@ gui_next_row :: proc(ctx: ^Gui_Context, width := f32(-1), height := f32(-1)) -> 
 	ctx.next_cursor.y += h + ctx.style.spacing
 	return bounds
 }
-

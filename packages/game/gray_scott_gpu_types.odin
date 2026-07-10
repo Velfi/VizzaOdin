@@ -72,7 +72,7 @@ Gray_Scott_Present_Params :: struct #align(16) {
 	camera_x: f32,
 	camera_y: f32,
 	camera_zoom: f32,
-	_pad0: f32,
+	view_mode: u32,
 }
 
 Gray_Scott_Camera :: struct #align(16) {
@@ -130,5 +130,4 @@ Gray_Scott_Fullscreen_Vertex :: struct {
 	effect: uifw.Color,
 	material: uifw.Color,
 }
-
 
