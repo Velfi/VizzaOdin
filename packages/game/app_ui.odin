@@ -718,7 +718,13 @@ app_ui_draw_remaining_sim :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, kin
 		remaining_sim_draw(sim, gui, kind, width, height)
 	}
 	if ui.simulation_shell.controls_visible {
-		app_ui_draw_simulation_bar(ui, gui, app_mode_from_remaining_sim_kind(kind), nil, nil, sim, sim.paused, false, remaining_sim_name(kind), vk_ctx, width, worker)
+		tool_set := canvas_tool_set_for_kind(kind)
+		tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
+		display_name := remaining_sim_name(kind)
+		if tool.valid {
+			display_name = fmt.tprintf("%s · %s — Primary: %s · Secondary: %s", display_name, tool.name, tool.primary_label, tool.secondary_label)
+		}
+		app_ui_draw_simulation_bar(ui, gui, app_mode_from_remaining_sim_kind(kind), nil, nil, sim, sim.paused, false, display_name, vk_ctx, width, worker)
 	}
 	if kind == .Slime_Mold {
 		slime_controller_ui_draw(ui, gui, sim, width, height, worker)
@@ -943,7 +949,10 @@ app_ui_draw_gray_scott :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^
 	}
 
 	if ui.simulation_shell.controls_visible {
-		app_ui_draw_simulation_bar(ui, gui, .Gray_Scott, sim, nil, nil, sim.settings.paused, !sim.gpu.ready, "Gray-Scott", vk_ctx, width, worker)
+		tool_set := canvas_tool_set_for_mode(.Gray_Scott)
+		tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
+		name := fmt.tprintf("Gray-Scott · %s — Primary: %s · Secondary: %s", tool.name, tool.primary_label, tool.secondary_label)
+		app_ui_draw_simulation_bar(ui, gui, .Gray_Scott, sim, nil, nil, sim.settings.paused, !sim.gpu.ready, name, vk_ctx, width, worker)
 	}
 	simulation_controller_ui_draw(ui, gui, gray = sim, width = width, height = height, worker = worker)
 	if sim.runtime.nutrient_image_dialog_requested {

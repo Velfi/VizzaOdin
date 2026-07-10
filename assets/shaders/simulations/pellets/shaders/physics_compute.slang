@@ -316,6 +316,18 @@ float2 compute_mouse_force(Particle particle) {
     if (params.mouse_mode == 1) {
         return force_direction * force_strength;
     }
+
+    if (params.mouse_mode == 2) {
+        // Black-hole interaction: pull inward while adding the same 80%
+        // tangential swirl used by the other particle simulations. Build the
+        // tangent in aspect-corrected space so it appears circular on screen.
+        let screen_direction = normalize(aspect_corrected_delta);
+        let tangential_direction = normalize(float2(
+            -screen_direction.y / max(params.aspect_ratio, 1e-6),
+            screen_direction.x
+        ));
+        return (force_direction + tangential_direction * 0.8) * force_strength;
+    }
     
     return float2(0.0, 0.0);
 }

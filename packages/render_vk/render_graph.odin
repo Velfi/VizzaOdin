@@ -522,7 +522,7 @@ render_pass_gray_scott_compute :: proc(ctx: ^Render_Context, pass: ^Render_Pass_
 		} else if ctx.app_mode == .Slime_Mold && ctx.app_ui != nil && ctx.slime_gpu != nil {
 			slime_gpu_step(ctx.slime_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.slime_mold)
 		} else if ctx.app_mode == .Voronoi_CA && ctx.app_ui != nil && ctx.voronoi_gpu != nil {
-			voronoi_gpu_step(ctx.voronoi_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.voronoi_ca.voronoi, ctx.dt, ctx.app_ui.voronoi_ca.paused)
+			voronoi_gpu_step(ctx.voronoi_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.voronoi_ca, ctx.dt)
 		}
 		return true
 	}

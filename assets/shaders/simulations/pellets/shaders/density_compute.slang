@@ -29,11 +29,44 @@ struct DensityParams {
     uint _padding;
 };
 
+struct GridParams {
+    uint particle_count;
+    uint grid_width;
+    uint grid_height;
+    float cell_size;
+    float world_width;
+    float world_height;
+    uint _pad1;
+    uint _pad2;
+};
+
+struct GridCell {
+    uint particle_count;
+    uint[64] particle_indices;
+};
+
 [[vk::binding(0, 0)]]
 RWStructuredBuffer<Particle> particles;
 [[vk::binding(1, 0)]]
 ConstantBuffer<DensityParams> params;
-// Optional: if grid is available, we could switch to neighbor-based density later
+[[vk::binding(2, 0)]]
+StructuredBuffer<GridCell> grid;
+[[vk::binding(3, 0)]]
+ConstantBuffer<GridParams> grid_params;
+[[vk::binding(4, 0)]]
+StructuredBuffer<uint> grid_counts;
+
+uint2 world_to_grid(float2 pos) {
+    let normalized_pos = (pos + float2(1.0, 1.0)) * 0.5;
+    return uint2(
+        min(uint(normalized_pos.x * float(grid_params.grid_width)), grid_params.grid_width - 1),
+        min(uint(normalized_pos.y * float(grid_params.grid_height)), grid_params.grid_height - 1)
+    );
+}
+
+uint grid_coord_to_index(uint2 coord) {
+    return coord.y * grid_params.grid_width + coord.x;
+}
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
@@ -63,29 +96,33 @@ void main(uint3 global_id : SV_DispatchThreadID) {
 float compute_density(Particle particle, uint particle_index) {
     var density = 0.0;
     let density_radius_sq = params.density_radius * params.density_radius;
-    
-    for (var i = 0; i < params.particle_count; i++) {
-        if (i == particle_index) {
-            continue;
-        }
-        
-        let other = particles[i];
-        var delta = particle.position - other.position;
-        
-        // Toroidal wrapping
-        if (abs(delta.x) > 1.0) {
-            delta.x = delta.x - sign(delta.x) * 2.0;
-        }
-        if (abs(delta.y) > 1.0) {
-            delta.y = delta.y - sign(delta.y) * 2.0;
-        }
-        
-        let distance_sq = dot(delta, delta);
-        
-        if (distance_sq < density_radius_sq) {
-            density += 1.0 / (1.0 + distance_sq);
+
+    // Density is normally smaller than a cell, but settings allow a larger
+    // radius. Expand the cell window when needed so the optimized path remains
+    // equivalent to the former all-pairs calculation.
+    let center_cell = world_to_grid(particle.position);
+    let cell_radius = max(int(ceil(params.density_radius / grid_params.cell_size)), 1);
+    for (var dy = -cell_radius; dy <= cell_radius; dy++) {
+        for (var dx = -cell_radius; dx <= cell_radius; dx++) {
+            let cx = (int(center_cell.x) + dx + int(grid_params.grid_width)) % int(grid_params.grid_width);
+            let cy = (int(center_cell.y) + dy + int(grid_params.grid_height)) % int(grid_params.grid_height);
+            let cell_index = grid_coord_to_index(uint2(uint(cx), uint(cy)));
+            let count = min(grid_counts[cell_index], 64);
+            for (var k = 0; k < count; k++) {
+                let i = grid[cell_index].particle_indices[k];
+                if (i == particle_index) { continue; }
+
+                let other = particles[i];
+                var delta = particle.position - other.position;
+                if (abs(delta.x) > 1.0) { delta.x -= sign(delta.x) * 2.0; }
+                if (abs(delta.y) > 1.0) { delta.y -= sign(delta.y) * 2.0; }
+                let distance_sq = dot(delta, delta);
+                if (distance_sq < density_radius_sq) {
+                    density += 1.0 / (1.0 + distance_sq);
+                }
+            }
         }
     }
-    
+
     return density;
 } 

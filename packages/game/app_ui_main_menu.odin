@@ -484,7 +484,10 @@ app_ui_draw_particle_life :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim
 	}
 	particle_life_draw_blob_overlay(sim, gui, width, height)
 	if ui.simulation_shell.controls_visible {
-		app_ui_draw_simulation_bar(ui, gui, .Particle_Life, nil, sim, nil, sim.settings.paused, !sim.gpu.ready, "Particle Life", vk_ctx, width, worker)
+		tool_set := canvas_tool_set_for_mode(.Particle_Life)
+		tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
+		name := fmt.tprintf("Particle Life · %s — Primary: %s · Secondary: %s", tool.name, tool.primary_label, tool.secondary_label)
+		app_ui_draw_simulation_bar(ui, gui, .Particle_Life, nil, sim, nil, sim.settings.paused, !sim.gpu.ready, name, vk_ctx, width, worker)
 	}
 	simulation_controller_ui_draw(ui, gui, particle = sim, width = width, height = height, worker = worker)
 	app_ui_draw_loading_overlay(gui, width, height, !sim.gpu.ready)

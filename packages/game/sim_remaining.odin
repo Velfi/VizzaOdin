@@ -31,6 +31,12 @@ Remaining_Sim_State :: struct {
 	cursor_pixel: [2]f32,
 	cursor_active: u32,
 	cursor_mode: u32,
+	canvas_tool: Canvas_Tool_State,
+	voronoi_interaction_mode: u32,
+	voronoi_pressed: bool,
+	voronoi_released: bool,
+	voronoi_grabbed: bool,
+	voronoi_grabbed_index: u32,
 	camera: Camera_Control_State,
 	cursor_size: f32,
 	cursor_strength: f32,
@@ -664,8 +670,8 @@ pellets_settings_default :: proc() -> Pellets_Settings {
 	settings: Pellets_Settings
 	settings = {
 		post_processing = post_processing_default_settings(),
-		particle_count = 5000,
-		particle_size = 0.015,
+		particle_count = 20000,
+		particle_size = 0.0075,
 		collision_damping = 1.0,
 		initial_velocity_max = 0.1,
 		initial_velocity_min = 0.1,
@@ -674,7 +680,7 @@ pellets_settings_default :: proc() -> Pellets_Settings {
 		gravitational_constant = 0.0000001,
 		energy_damping = 1.0,
 		gravity_softening = 0.003,
-		density_radius = 0.038,
+		density_radius = 0.019,
 		foreground_color_mode = .Density,
 		trails_enabled = false,
 		trail_fade = 0.5,
@@ -1162,6 +1168,28 @@ remaining_sim_apply_frame_input_for_kind :: proc(sim: ^Remaining_Sim_State, kind
 	if input.mouse_down {
 		sim.cursor_active = 1
 		sim.cursor_mode = input.mouse_button == 3 ? u32(2) : u32(1)
+	}
+	tool_set := canvas_tool_set_for_kind(kind)
+	canvas_tool_update_selection(&tool_set, &sim.canvas_tool, input)
+	if kind == .Voronoi_CA {
+		tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
+		sim.voronoi_pressed = input.mouse_pressed || input.primary_pressed || input.secondary_pressed
+		sim.voronoi_released = input.mouse_released || input.primary_released || input.secondary_released
+		// 1 magnet, 2 repel, 3 pluck, 4 paint, 5 erase.
+		sim.voronoi_interaction_mode = 0
+		if input.mouse_down || input.primary_down || input.secondary_down {
+			secondary := input.mouse_button == 3 || input.secondary_down
+			action := canvas_tool_action_for_input(tool, secondary)
+			#partial switch action {
+			case .Attract: sim.voronoi_interaction_mode = 1
+			case .Repel: sim.voronoi_interaction_mode = 2
+			case .Pluck: sim.voronoi_interaction_mode = 3
+			case .Paint_Sites: sim.voronoi_interaction_mode = 4
+			case .Erase_Sites: sim.voronoi_interaction_mode = 5
+			case .Shockwave: sim.voronoi_interaction_mode = 6
+			case:
+			}
+		}
 	}
 }
 

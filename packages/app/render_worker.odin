@@ -467,6 +467,8 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 			remaining_sim_apply_frame_input_for_kind(&runtime.app_ui.pellets, .Pellets, simulation_input)
 		} else if runtime.app_ui.mode == .Primordial {
 			remaining_sim_apply_frame_input_for_kind(&runtime.app_ui.primordial, .Primordial, simulation_input)
+		} else if runtime.app_ui.mode == .Voronoi_CA {
+			remaining_sim_apply_frame_input_for_kind(&runtime.app_ui.voronoi_ca, .Voronoi_CA, simulation_input)
 		}
 		mode_before_ui := runtime.app_ui.mode
 		app_ui_draw(&runtime.app_ui, &runtime.gui, &runtime.sim, &runtime.particle_life, &runtime.vk_ctx, &state.product)

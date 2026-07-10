@@ -288,9 +288,70 @@ voronoi_transition_image :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuff
 	image.layout = new_layout
 }
 
-voronoi_gpu_step :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, settings: ^Voronoi_Settings, delta_time: f32, paused: bool) {
-	if !voronoi_gpu_ensure(gpu, vk_ctx, settings) {return}
-	voronoi_gpu_step_ready(gpu, vk_ctx, cmd, settings, delta_time, paused)
+voronoi_gpu_step :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim: ^Remaining_Sim_State, delta_time: f32) {
+	if !voronoi_gpu_ensure(gpu, vk_ctx, &sim.voronoi) {return}
+	voronoi_apply_interaction(gpu, sim, delta_time)
+	voronoi_gpu_step_ready(gpu, vk_ctx, cmd, &sim.voronoi, delta_time, sim.paused)
+}
+
+voronoi_apply_interaction :: proc(gpu: ^Voronoi_Gpu_State, sim: ^Remaining_Sim_State, dt: f32) {
+	if gpu.vertex_buffer.mapped == nil || gpu.point_count == 0 {return}
+	points := (cast([^]Voronoi_Vertex)gpu.vertex_buffer.mapped)[:gpu.point_count]
+	// cursor_world is normalized; convert it directly to the simulation texture.
+	cx := (sim.cursor_world[0] + 1) * 0.5 * f32(gpu.width)
+	cy := (1 - sim.cursor_world[1]) * 0.5 * f32(gpu.height)
+	radius := max(min(f32(gpu.width), f32(gpu.height)) * 0.18, 48)
+	changed := false
+	if sim.voronoi_interaction_mode == 3 {
+		if !sim.voronoi_grabbed {
+			best := 0
+			best_d2 := f32(3.4e38)
+			for i in 0 ..< int(gpu.point_count) {
+				dx := points[i].position[0] - cx; dy := points[i].position[1] - cy
+				d2 := dx*dx + dy*dy
+				if d2 < best_d2 {best_d2 = d2; best = i}
+			}
+			sim.voronoi_grabbed = true
+			sim.voronoi_grabbed_index = u32(best)
+		}
+		points[sim.voronoi_grabbed_index].position = {cx, cy}
+		changed = true
+	} else if sim.voronoi_interaction_mode == 4 || sim.voronoi_interaction_mode == 5 {
+		// Painting/erasing recycles nearby sites, preserving the fixed GPU buffer.
+		stride := sim.voronoi_interaction_mode == 4 ? max(int(gpu.point_count / 12), 1) : 1
+		for i := 0; i < int(gpu.point_count); i += stride {
+			if sim.voronoi_interaction_mode == 4 {
+				a := f32(i) * 2.399963
+				points[i].position = {cx + math.cos(a)*12, cy + math.sin(a)*12}
+			} else {
+				dx := points[i].position[0]-cx; dy := points[i].position[1]-cy
+				if dx*dx+dy*dy < radius*radius {points[i].position = {f32((i*977)%int(gpu.width)), f32((i*619)%int(gpu.height))}}
+			}
+			changed = true
+		}
+	} else if sim.voronoi_interaction_mode == 1 || sim.voronoi_interaction_mode == 2 {
+		sign := sim.voronoi_interaction_mode == 1 ? f32(-1) : f32(1)
+		for i in 0 ..< int(gpu.point_count) {
+			dx := points[i].position[0]-cx; dy := points[i].position[1]-cy; d2 := dx*dx+dy*dy
+			if d2 > 1 && d2 < radius*radius {s := sign*900*dt*(1-math.sqrt(d2)/radius)/math.sqrt(d2); points[i].position[0] += dx*s; points[i].position[1] += dy*s; changed = true}
+		}
+	}
+	if sim.voronoi_interaction_mode == 6 && sim.voronoi_pressed {
+		for i in 0 ..< int(gpu.point_count) {
+			dx := points[i].position[0]-cx; dy := points[i].position[1]-cy; d := max(math.sqrt(dx*dx+dy*dy), 1)
+			if d < radius*1.5 {s := 36*(1-d/(radius*1.5)); points[i].position[0] += dx/d*s; points[i].position[1] += dy/d*s; changed = true}
+		}
+	}
+	if sim.voronoi_released && sim.voronoi_grabbed {
+		i := sim.voronoi_grabbed_index
+		// A short ballistic kick makes release read as a fling; Brownian drift
+		// naturally takes over again after the impulse.
+		points[i].position[0] += sim.cursor_world_velocity[0] * f32(gpu.width) * 0.06
+		points[i].position[1] -= sim.cursor_world_velocity[1] * f32(gpu.height) * 0.06
+		sim.voronoi_grabbed = false
+		changed = true
+	}
+	if changed {gpu.needs_rebuild = true}
 }
 
 voronoi_gpu_step_size :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, settings: ^Voronoi_Settings, delta_time: f32, paused: bool, width, height: u32) {

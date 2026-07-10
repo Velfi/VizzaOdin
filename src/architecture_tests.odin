@@ -2076,3 +2076,28 @@ test_custom_keyboard_binding_config_recovers_from_duplicates_and_reserved_space 
 	testing.expect_value(t, loaded.keyboard_toggle_ui_binding, game.Keyboard_Shortcut_Key.Slash)
 	testing.expect_value(t, loaded.keyboard_help_binding, game.Keyboard_Shortcut_Key.F1)
 }
+
+@(test)
+test_voronoi_canvas_tools_have_stable_cardinal_slots_and_pairs :: proc(t: ^testing.T) {
+	set := game.canvas_tool_set_for_kind(.Voronoi_CA)
+	testing.expect_value(t, set.tools[0].name, "Magnet")
+	testing.expect_value(t, set.tools[0].primary_action, game.Canvas_Tool_Action.Attract)
+	testing.expect_value(t, set.tools[0].secondary_action, game.Canvas_Tool_Action.Repel)
+	testing.expect_value(t, set.tools[1].name, "Sites")
+	testing.expect_value(t, set.tools[2].name, "Sculpt")
+	testing.expect(t, !set.tools[3].valid)
+}
+
+@(test)
+test_canvas_tool_dpad_selection_is_direct_and_ignores_empty_slots :: proc(t: ^testing.T) {
+	set := game.canvas_tool_set_for_kind(.Voronoi_CA)
+	state: game.Canvas_Tool_State
+	game.canvas_tool_update_selection(&set, &state, {nav_pressed_y = -1})
+	testing.expect_value(t, state.selected_slot, 1)
+	testing.expect(t, state.changed)
+	game.canvas_tool_update_selection(&set, &state, {nav_pressed_x = 1})
+	testing.expect_value(t, state.selected_slot, 2)
+	game.canvas_tool_update_selection(&set, &state, {nav_pressed_y = 1})
+	testing.expect_value(t, state.selected_slot, 2)
+	testing.expect(t, !state.changed)
+}

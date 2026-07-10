@@ -268,9 +268,12 @@ pellets_create_descriptors :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 		{binding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
 	if !pellets_create_set_layout(vk_ctx, physics_bindings[:], &gpu.physics_set_layout) {return false}
-	density_bindings := [2]vk.DescriptorSetLayoutBinding{
+	density_bindings := [5]vk.DescriptorSetLayoutBinding{
 		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
 	if !pellets_create_set_layout(vk_ctx, density_bindings[:], &gpu.density_set_layout) {return false}
 	background_bindings := [2]vk.DescriptorSetLayoutBinding{
@@ -297,7 +300,7 @@ pellets_create_descriptors :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 	if !pellets_create_set_layout(vk_ctx, blit_bindings[:], &gpu.trail_blit_set_layout) {return false}
 
 	pool_sizes := [4]vk.DescriptorPoolSize{
-		{type = .STORAGE_BUFFER, descriptorCount = 12 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .STORAGE_BUFFER, descriptorCount = 14 * engine.MAX_FRAMES_IN_FLIGHT},
 		{type = .UNIFORM_BUFFER, descriptorCount = 11 * engine.MAX_FRAMES_IN_FLIGHT},
 		{type = .SAMPLED_IMAGE, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
 		{type = .SAMPLER, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
@@ -378,6 +381,9 @@ pellets_update_descriptors_for_slot :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^en
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = physics_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &counts_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &density_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &grid_params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &counts_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &background_params_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &background_color_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = render_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},

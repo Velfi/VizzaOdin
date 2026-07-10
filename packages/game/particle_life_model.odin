@@ -633,6 +633,7 @@ Particle_Life_Gpu_State :: struct {
 }
 
 Particle_Life_Simulation :: struct {
+	canvas_tool: Canvas_Tool_State,
 	settings: Particle_Life_Settings,
 	runtime: Particle_Life_Runtime_State,
 	gpu: Particle_Life_Gpu_State,
@@ -817,6 +818,8 @@ particle_life_step :: proc(sim: ^Particle_Life_Simulation, dt: f32) {
 }
 
 particle_life_apply_frame_input :: proc(sim: ^Particle_Life_Simulation, input: Ui_Frame_Input) {
+	tool_set := canvas_tool_set_for_mode(.Particle_Life)
+	canvas_tool_update_selection(&tool_set, &sim.canvas_tool, input)
 	camera := particle_life_camera_control_state(sim)
 	camera_controls_apply_input(&camera, input)
 	particle_life_store_camera_control_state(sim, camera)

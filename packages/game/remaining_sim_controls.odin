@@ -493,6 +493,8 @@ remaining_sim_draw_display_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 }
 
 remaining_sim_draw_interaction_controls :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, heading: string = "") {
+	tool_set := canvas_tool_set_for_kind(kind)
+	tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
 	options := Controls_Panel_Options {
 		heading = heading,
 		mouse_interaction_text = "",
@@ -509,14 +511,32 @@ remaining_sim_draw_interaction_controls :: proc(sim: ^Remaining_Sim_State, gui: 
 		options.mouse_interaction_text = gui.input.active_device == .Controller ? "Primary: spawn particles | Secondary: remove particles" : "Left click: spawn particles | Right click: remove particles"
 		options.cursor.show_strength = false
 	case .Pellets:
-		options.mouse_interaction_text = gui.input.active_device == .Controller ? "Primary: attract particles" : "Left click: attract particles"
+		options.mouse_interaction_text = gui.input.active_device == .Controller ? "Primary: grab particles | Secondary: black hole" : "Left click: grab particles | Right click: black hole"
 	case .Voronoi_CA:
+		options.mouse_interaction_text = fmt.tprintf("%s — Left: %s | Right: %s", tool.name, tool.primary_label, tool.secondary_label)
+		if gui.input.active_device == .Controller {
+			options.mouse_interaction_text = fmt.tprintf("%s — Primary: %s | Secondary: %s | D-pad selects tools", tool.name, tool.primary_label, tool.secondary_label)
+		}
 		options.cursor_settings_title = "Cursor Settings"
 		options.cursor.strength_step = 0.01
 	case .Primordial:
 		options.mouse_interaction_text = gui.input.active_device == .Controller ? "Primary: fling particles | Triggers: zoom" : "Drag: fling particles | Scroll: zoom"
 	case:
 		options.mouse_interaction_text = "Mouse interaction"
+	}
+	tool_count := 0
+	for candidate in tool_set.tools {if candidate.valid {tool_count += 1}}
+	if tool_count > 1 {
+		uifw.gui_heading(gui, "Canvas Tools")
+		for candidate, index in tool_set.tools {
+			if !candidate.valid {continue}
+			label := sim.canvas_tool.selected_slot == index ? fmt.tprintf("• %s", candidate.name) : candidate.name
+			if uifw.gui_button(gui, label, fmt.tprintf("canvas_tool_%d", index)) {
+				sim.canvas_tool.previous_slot = sim.canvas_tool.selected_slot
+				sim.canvas_tool.selected_slot = index
+				sim.canvas_tool.changed = true
+			}
+		}
 	}
 	_ = shared_controls_panel(gui, options, &sim.cursor_size, &sim.cursor_strength)
 }
@@ -795,6 +815,11 @@ remaining_sim_draw_voronoi_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 	settings := &sim.voronoi
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, heading)
+	interaction_help := "Canvas: drag attracts, right-drag repels, Shift-drag plucks and flings, click releases a shockwave, and Ctrl-drag/right-drag paints or erases sites."
+	if gui.input.active_device == .Controller {
+		interaction_help = "Canvas: primary attracts, secondary repels, right-stick up + primary plucks, right-stick down + primary/secondary paints or erases, and a trigger tap releases a shockwave."
+	}
+	shared_control_explanation(gui, "voronoi_playground", interaction_help)
 	point_count := f32(settings.point_count)
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Points: %d", settings.point_count), "voronoi_points", &point_count, 100, 32, 20000) {
 		settings.point_count = u32(point_count)

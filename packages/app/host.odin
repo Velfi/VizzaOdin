@@ -184,6 +184,11 @@ app_run :: proc(config: App_Run_Config = {}) -> int {
 	}
 	defer sdl.Quit()
 	sdl.SetGamepadEventsEnabled(true)
+	// Deliver the click that gives the window mouse focus. Without this, a
+	// mouse-first launch can consume the first press as window activation, so
+	// controls appear to require a double click. This must be set before the
+	// window is created.
+	_ = sdl.SetHint(sdl.HINT_MOUSE_FOCUS_CLICKTHROUGH, "1")
 
 	flags := sdl.WINDOW_VULKAN | sdl.WINDOW_RESIZABLE | sdl.WINDOW_HIGH_PIXEL_DENSITY
 	app.window = sdl.CreateWindow("Vizza", c.int(app.settings.window_width), c.int(app.settings.window_height), flags)

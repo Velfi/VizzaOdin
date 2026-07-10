@@ -226,6 +226,7 @@ Gray_Scott_Runtime_State :: struct {
 }
 
 Gray_Scott_Simulation :: struct {
+	canvas_tool: Canvas_Tool_State,
 	settings: Gray_Scott_Settings,
 	runtime: Gray_Scott_Runtime_State,
 	gpu: Gray_Scott_Gpu_State,
@@ -467,6 +468,8 @@ gray_scott_screen_to_world :: proc(sim: ^Gray_Scott_Simulation, mouse_pos: uifw.
 }
 
 gray_scott_apply_frame_input :: proc(sim: ^Gray_Scott_Simulation, input: Ui_Frame_Input) {
+	tool_set := canvas_tool_set_for_mode(.Gray_Scott)
+	canvas_tool_update_selection(&tool_set, &sim.canvas_tool, input)
 	gray_scott_update_camera(sim, input)
 	sim.runtime.paint_active = false
 	if !input.mouse_down || input.window_width <= 0 || input.window_height <= 0 {
