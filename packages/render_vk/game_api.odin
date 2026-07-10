@@ -226,6 +226,7 @@ fixed_string :: game.fixed_string
 gray_scott_hash01 :: game.gray_scott_hash01
 gray_scott_nutrient_image_value :: game.gray_scott_nutrient_image_value
 gray_scott_stop_webcam :: game.gray_scott_stop_webcam
+app_ui_simulation_set_paused :: game.app_ui_simulation_set_paused
 infinite_render_tile_count :: game.infinite_render_tile_count
 shared_image_destroy :: game.shared_image_destroy
 shared_image_load_rgba8 :: game.shared_image_load_rgba8

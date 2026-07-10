@@ -31,6 +31,8 @@ App_State :: struct {
 	held_mouse_button: u32,
 	touch_active: bool,
 	touch_finger_id: sdl.FingerID,
+	touch_secondary_active: bool,
+	touch_secondary_finger_id: sdl.FingerID,
 	space_pan_consumed: bool,
 	input_sequence: u64,
 	last_mouse_keyboard_input_sequence: u64,
@@ -349,6 +351,7 @@ app_poll_events :: proc(app: ^App_State) {
 	app.controller_right_trigger_event_down = app.controller_right_trigger_down
 	app.input.controller_connected = false
 	app.input.controller_disconnected = false
+	app.input.canvas_tool_slot = 0
 	app.controller_connected_this_frame = false
 	app.controller_disconnected_this_frame = false
 
@@ -475,6 +478,14 @@ app_apply_touch_finger_event :: proc(app: ^App_State, event: sdl.TouchFingerEven
 	#partial switch event.type {
 	case .FINGER_DOWN:
 		if app.touch_active {
+			if !app.touch_secondary_active {
+				// A second finger temporarily promotes the canvas gesture to the
+				// paired secondary action. The first finger remains the brush cursor.
+				app_apply_mouse_button_event(app, 1, app.input.mouse_pos.x, app.input.mouse_pos.y, false)
+				app.touch_secondary_active = true
+				app.touch_secondary_finger_id = event.fingerID
+				app_apply_mouse_button_event(app, 3, app.input.mouse_pos.x, app.input.mouse_pos.y, true)
+			}
 			return
 		}
 		app.touch_active = true
@@ -491,11 +502,26 @@ app_apply_touch_finger_event :: proc(app: ^App_State, event: sdl.TouchFingerEven
 		app.input.mouse_moved = true
 		app_mark_mouse_keyboard_input(app)
 	case .FINGER_UP, .FINGER_CANCELED:
+		if app.touch_secondary_active && event.fingerID == app.touch_secondary_finger_id {
+			app_apply_mouse_button_event(app, 3, app.input.mouse_pos.x, app.input.mouse_pos.y, false)
+			app.touch_secondary_active = false
+			if app.touch_active {
+				app_apply_mouse_button_event(app, 1, app.input.mouse_pos.x, app.input.mouse_pos.y, true)
+			}
+			return
+		}
+		if app.touch_secondary_active && event.fingerID == app.touch_finger_id {
+			app_apply_mouse_button_event(app, 3, position.x, position.y, false)
+			app.touch_active = false
+			app.touch_secondary_active = false
+			return
+		}
 		if !app.touch_active || event.fingerID != app.touch_finger_id {
 			return
 		}
 		app_apply_mouse_button_event(app, 1, position.x, position.y, false)
 		app.touch_active = false
+		app.touch_secondary_active = false
 	}
 }
 
@@ -641,6 +667,8 @@ app_apply_key_event :: proc(app: ^App_State, key: sdl.Keycode, scancode: sdl.Sca
 	} else if app_key_matches(key, scancode, sdl.K_RIGHT, .RIGHT) {
 		if down && !is_repeat {app.keyboard_nav_pressed_x = 1}
 		app.input.key_right = down
+	} else if down && !is_repeat && key >= sdl.K_1 && key <= sdl.K_4 {
+		app.input.canvas_tool_slot = u32(key - sdl.K_1) + 1
 	} else if app_key_matches(key, scancode, sdl.K_UP, .UP) {
 		if down && !is_repeat {app.keyboard_nav_pressed_y = -1}
 		app.input.key_up = down
@@ -1418,6 +1446,7 @@ app_send_frame :: proc(app: ^App_State) {
 		secondary_released = secondary_released,
 		controller_connected = app.controller_connected_this_frame,
 		controller_disconnected = app.controller_disconnected_this_frame,
+		canvas_tool_slot = app.input.canvas_tool_slot,
 		controller_left = app.controller_left,
 		controller_right = app.controller_right,
 		controller_zoom = app_controller_camera_zoom(app),

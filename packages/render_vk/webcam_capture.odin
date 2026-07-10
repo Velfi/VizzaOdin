@@ -3,6 +3,32 @@ package render_vk
 import engine "../engine"
 import sdl "vendor:sdl3"
 
+simulation_leave_cleanup :: proc(app_ui: ^App_Ui_State, gray_scott: ^Gray_Scott_Simulation, particle_life: ^Particle_Life_Simulation, mode: App_Mode) {
+	state: ^Remaining_Sim_State
+	if app_ui != nil {
+		#partial switch mode {
+		case .Vectors: state = &app_ui.vectors
+		case .Moire: state = &app_ui.moire
+		case .Flow_Field: state = &app_ui.flow_field
+		case .Slime_Mold: state = &app_ui.slime_mold
+		case .Pellets: state = &app_ui.pellets
+		case .Voronoi_CA: state = &app_ui.voronoi_ca
+		case .Primordial: state = &app_ui.primordial
+		case:
+		}
+	}
+	app_ui_simulation_set_paused(mode, gray_scott, particle_life, state, true)
+	if mode == .Gray_Scott {
+		if gray_scott != nil {gray_scott_stop_webcam(gray_scott)}
+		return
+	}
+	if state != nil && state.webcam_capture != nil {
+		sdl.CloseCamera(state.webcam_capture)
+		state.webcam_capture = nil
+		write_fixed_string(state.webcam_capture_status[:], "Webcam stopped")
+	}
+}
+
 // Shared latest-frame capture/transform path for every image consumer. SDL
 // retains native camera format negotiation; this converts exactly once and
 // drops stale frames naturally because AcquireCameraFrame only yields the

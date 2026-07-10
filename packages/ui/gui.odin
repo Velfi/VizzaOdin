@@ -176,6 +176,7 @@ Input_State :: struct {
 	secondary_released: bool,
 	controller_connected: bool,
 	controller_disconnected: bool,
+	canvas_tool_slot: u32,
 	text_input: [32]u8,
 	text_input_len: int,
 	clipboard_paste: [256]u8,

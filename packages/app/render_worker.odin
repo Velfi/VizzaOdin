@@ -414,6 +414,7 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 			secondary_released = cmd.frame_input.secondary_released,
 			controller_connected = cmd.frame_input.controller_connected,
 			controller_disconnected = cmd.frame_input.controller_disconnected,
+			canvas_tool_slot = cmd.frame_input.canvas_tool_slot,
 			text_input = cmd.frame_input.text_input,
 			text_input_len = cmd.frame_input.text_input_len,
 			clipboard_paste = cmd.frame_input.clipboard_paste,

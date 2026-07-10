@@ -50,6 +50,7 @@ Ui_Frame_Input :: struct {
 	secondary_released: bool,
 	controller_connected: bool,
 	controller_disconnected: bool,
+	canvas_tool_slot: u32,
 	controller_left: uifw.Vec2,
 	controller_right: uifw.Vec2,
 	controller_zoom: f32,

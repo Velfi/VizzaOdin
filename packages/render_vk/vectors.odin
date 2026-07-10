@@ -251,7 +251,9 @@ vectors_gpu_load_image_path :: proc(gpu: ^Vectors_Gpu_State, path: string, setti
 vectors_gpu_refresh_image_if_needed :: proc(gpu: ^Vectors_Gpu_State, settings: ^Vectors_Settings) {
 	path := fixed_string(settings.image_path[:])
 	if len(path) == 0 {
-		gpu.image_loaded = false
+		// An empty still-image path is also the normal state while the webcam
+		// owns image_data.  The explicit Clear_Vectors_Image command clears the
+		// GPU state, so do not discard a live camera frame here every draw.
 		return
 	}
 	if gpu.image_loaded &&

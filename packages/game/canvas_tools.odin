@@ -89,6 +89,9 @@ canvas_tool_selected :: proc(set: ^Canvas_Tool_Set, state: ^Canvas_Tool_State) -
 canvas_tool_update_selection :: proc(set: ^Canvas_Tool_Set, state: ^Canvas_Tool_State, input: Ui_Frame_Input) {
 	state.changed = false
 	target := -1
+	if input.canvas_tool_slot >= 1 && input.canvas_tool_slot <= 4 {
+		target = int(input.canvas_tool_slot - 1)
+	}
 	if input.nav_pressed_x < -0.5 {target = 0}
 	if input.nav_pressed_y < -0.5 {target = 1}
 	if input.nav_pressed_x > 0.5 {target = 2}

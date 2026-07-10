@@ -450,6 +450,8 @@ write_info_plist() {
 	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>VizzaOdin uses the camera to create live image-driven simulation fields.</string>
 </dict>
 </plist>
 PLIST

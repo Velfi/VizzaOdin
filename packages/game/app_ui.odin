@@ -1246,6 +1246,7 @@ app_ui_clear_gui_global_shortcuts :: proc(gui: ^uifw.Gui_Context) {
 }
 
 app_ui_clear_navigation_input :: proc(input: ^Ui_Frame_Input) {
+	input.canvas_tool_slot = 0
 	input.text_input = {}
 	input.text_input_len = 0
 	input.clipboard_paste = {}
@@ -1547,6 +1548,32 @@ app_ui_draw_simulation_bar :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, mo
 	}
 	info_x := x + gap
 	info_rect := uifw.Rect{info_x, content.y, max(content.x + content.w - info_x, 1), content.h}
+	if remaining != nil {
+		kind := remaining_sim_kind_from_app_mode(mode)
+			tool_set := canvas_tool_set_for_kind(kind)
+			tool_count := 0
+			for candidate in tool_set.tools {if candidate.valid {tool_count += 1}}
+			if tool_count > 1 {
+				tool_gap := max(gui.style.border_width * 2, f32(3))
+				tools_w := min(info_rect.w * 0.58, f32(tool_count) * max(gui.style.row_height * 1.45, f32(72)))
+				tool_w := max((tools_w - tool_gap * f32(tool_count - 1)) / f32(tool_count), f32(1))
+				tool_x := info_rect.x
+				for candidate, index in tool_set.tools {
+					if !candidate.valid {continue}
+					tool_rect := uifw.Rect{tool_x, info_rect.y, tool_w, info_rect.h}
+					selected := remaining.canvas_tool.selected_slot == index
+					if uifw.gui_button_at(gui, uifw.gui_make_id(gui, fmt.tprintf("tool_%d", index)), tool_rect, candidate.name, true, false) {
+						remaining.canvas_tool.previous_slot = remaining.canvas_tool.selected_slot
+						remaining.canvas_tool.selected_slot = index
+						remaining.canvas_tool.changed = true
+					}
+					if selected {uifw.gui_round_stroke(gui, tool_rect, gui.style.radius_control, gui.style.accent, max(gui.style.border_width * 1.5, 1.5))}
+					tool_x += tool_w + tool_gap
+				}
+				info_rect.x += tools_w + gap
+				info_rect.w = max(info_rect.w - tools_w - gap, 1)
+			}
+	}
 	app_ui_draw_simulation_bar_info(gui, info_rect, simulation_name, paused, loading, ui.last_stats.fps)
 	uifw.gui_pop_id(gui)
 

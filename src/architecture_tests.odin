@@ -2101,3 +2101,15 @@ test_canvas_tool_dpad_selection_is_direct_and_ignores_empty_slots :: proc(t: ^te
 	testing.expect_value(t, state.selected_slot, 2)
 	testing.expect(t, !state.changed)
 }
+
+@(test)
+test_canvas_tool_number_shortcuts_select_slots_directly :: proc(t: ^testing.T) {
+	set := game.canvas_tool_set_for_kind(.Voronoi_CA)
+	state: game.Canvas_Tool_State
+	game.canvas_tool_update_selection(&set, &state, {canvas_tool_slot = 3})
+	testing.expect_value(t, state.selected_slot, 2)
+	testing.expect(t, state.changed)
+	game.canvas_tool_update_selection(&set, &state, {canvas_tool_slot = 4})
+	testing.expect_value(t, state.selected_slot, 2)
+	testing.expect(t, !state.changed)
+}

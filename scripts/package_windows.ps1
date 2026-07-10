@@ -221,16 +221,20 @@ function Split-Flags {
 
 function Build-App {
 	$outExe = Join-Path $BuildDir "$ExecutableName.exe"
-	$linkerFlags = "/LIBPATH:`"$VcpkgLibDir`" harfbuzz.lib freetype.lib"
+	# This path is controlled by the workflow and contains no spaces. Avoid
+	# nested quotes here: Odin reparses this string before invoking link.exe.
+	$linkerFlags = "/LIBPATH:$VcpkgLibDir harfbuzz.lib freetype.lib"
 	$args = @("build", "src")
 	$args += Split-Flags $OdinFlags
 	$args += "-show-system-calls"
-	$args += "-print-linker-flags"
 	$args += "-extra-linker-flags:$linkerFlags"
 	$args += "-out:$outExe"
 	Write-Host "Odin linker search directory: $VcpkgLibDir"
 	Write-Host "Odin extra linker flags: $linkerFlags"
 	Invoke-Tool "odin" $args
+	if (-not (Test-Path $outExe)) {
+		throw "Odin reported success but did not create the expected executable: $outExe"
+	}
 	return $outExe
 }
 
