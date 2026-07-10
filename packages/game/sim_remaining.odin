@@ -44,6 +44,7 @@ Remaining_Sim_State :: struct {
 	webcam_capture: ^sdl.Camera,
 	webcam_capture_command: Ui_To_Render_Command_Kind,
 	webcam_capture_status: [128]u8,
+	webcam_capture_frames: u64,
 	slime_reset_requested: bool,
 	slime_clear_trails_requested: bool,
 	slime_randomize_undo: Slime_Randomize_Undo,

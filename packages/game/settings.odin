@@ -74,7 +74,11 @@ Toml_Result :: struct {
 	internal: rawptr,
 }
 
-foreign import tomlc17 "../../third_party/tomlc17/src/libtomlc17.a"
+when ODIN_OS == .Windows {
+	foreign import tomlc17 "../../third_party/tomlc17/src/tomlc17.lib"
+} else {
+	foreign import tomlc17 "../../third_party/tomlc17/src/libtomlc17.a"
+}
 
 @(default_calling_convention = "c")
 foreign tomlc17 {

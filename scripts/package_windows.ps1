@@ -106,7 +106,7 @@ function Build-Tomlc17 {
 	$objDir = Join-Path $BuildDir "windows-obj"
 	$src = Join-Path $RootDir "third_party/tomlc17/src/tomlc17.c"
 	$obj = Join-Path $objDir "tomlc17.obj"
-	$lib = Join-Path $RootDir "third_party/tomlc17/src/libtomlc17.a"
+	$lib = Join-Path $RootDir "third_party/tomlc17/src/tomlc17.lib"
 
 	New-Item -ItemType Directory -Force -Path $objDir | Out-Null
 	Invoke-Tool "cl" @("/nologo", "/O2", "/DNDEBUG", "/std:c17", "/c", $src, "/Fo$obj")
@@ -117,7 +117,7 @@ function Build-Textshape {
 	$objDir = Join-Path $BuildDir "windows-obj"
 	$src = Join-Path $RootDir "third_party/textshape/textshape.c"
 	$obj = Join-Path $objDir "textshape.obj"
-	$lib = Join-Path $RootDir "third_party/textshape/libtextshape.a"
+	$lib = Join-Path $RootDir "third_party/textshape/textshape.lib"
 	$harfbuzzInclude = Join-Path $VcpkgIncludeDir "harfbuzz"
 	$freetypeInclude = Join-Path $VcpkgIncludeDir "freetype2"
 

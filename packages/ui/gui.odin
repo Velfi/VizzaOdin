@@ -6,7 +6,11 @@ import "core:strconv"
 import "core:sync"
 import "core:time"
 
-foreign import textshape "../../third_party/textshape/libtextshape.a"
+when ODIN_OS == .Windows {
+	foreign import textshape "../../third_party/textshape/textshape.lib"
+} else {
+	foreign import textshape "../../third_party/textshape/libtextshape.a"
+}
 
 @(default_calling_convention = "c")
 foreign textshape {

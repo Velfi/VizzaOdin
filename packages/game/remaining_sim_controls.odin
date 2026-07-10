@@ -6,7 +6,6 @@ import engine "../engine"
 import "core:fmt"
 import "core:math"
 import "core:c"
-import "core:strings"
 import sdl "vendor:sdl3"
 
 remaining_sim_directory :: proc(kind: Remaining_Sim_Kind) -> string {
@@ -554,19 +553,23 @@ remaining_sim_enqueue_image_command :: proc(worker: ^Product_Context, kind: Ui_T
 	_ = engine.queue_try_push(worker.ui_to_render, cmd)
 }
 
-// Captures one frame from the preferred camera and routes it through the same
-// decoded-image path as file sources. Keeping this asynchronous lets SDL finish
-// permission negotiation without blocking the render/UI frame.
+// Polls SDL once per render frame. AcquireCameraFrame returns nil until the
+// camera has a new frame, so this naturally follows the device cadence (30/60
+// fps, etc.) instead of throttling it to a timer.
 remaining_sim_webcam_capture_control :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, worker: ^Product_Context, command: Ui_To_Render_Command_Kind, key: string) {
 	count: c.int
 	ids := sdl.GetCameras(&count)
 	defer if ids != nil {sdl.free(ids)}
 	available := ids != nil && count > 0
-	capture_requested := false
+	start_requested := false
 	if sim.webcam_capture == nil {
-		if available {capture_requested = uifw.gui_button(gui, "Capture Webcam Frame", key)} else {uifw.gui_disabled_button(gui, "Capture Webcam Frame")}
+		if available {start_requested = uifw.gui_button(gui, "Start Webcam", key)} else {uifw.gui_disabled_button(gui, "Start Webcam")}
+	} else if uifw.gui_button(gui, "Stop Webcam", fmt.tprintf("%s_stop", key)) {
+		sdl.CloseCamera(sim.webcam_capture)
+		sim.webcam_capture = nil
+		write_fixed_string(sim.webcam_capture_status[:], fmt.tprintf("Webcam stopped after %d frames", sim.webcam_capture_frames))
 	}
-	if capture_requested {
+	if start_requested {
 		selected := 0
 		if worker != nil && len(worker.settings.preferred_camera) > 0 {
 			for i in 0..<int(count) {
@@ -576,25 +579,8 @@ remaining_sim_webcam_capture_control :: proc(sim: ^Remaining_Sim_State, gui: ^ui
 		}
 		sim.webcam_capture = sdl.OpenCamera(ids[selected], nil)
 		sim.webcam_capture_command = command
+		sim.webcam_capture_frames = 0
 		write_fixed_string(sim.webcam_capture_status[:], sim.webcam_capture == nil ? "Could not open preferred camera" : "Waiting for camera permission…")
-	}
-	if sim.webcam_capture != nil {
-		timestamp: u64
-		frame := sdl.AcquireCameraFrame(sim.webcam_capture, &timestamp)
-		if frame != nil {
-			path := "config/webcam_capture.png"
-			cpath, err := strings.clone_to_cstring(path, context.temp_allocator)
-			ok := err == nil && sdl.SavePNG(frame, cpath)
-			sdl.ReleaseCameraFrame(sim.webcam_capture, frame)
-			sdl.CloseCamera(sim.webcam_capture)
-			sim.webcam_capture = nil
-			if ok {
-				remaining_sim_enqueue_image_command(worker, sim.webcam_capture_command, path)
-				write_fixed_string(sim.webcam_capture_status[:], "Captured frame from preferred camera")
-			} else {
-				write_fixed_string(sim.webcam_capture_status[:], "Could not save captured camera frame")
-			}
-		}
 	}
 	if !available && sim.webcam_capture == nil {uifw.gui_label(gui, "No webcam devices")}
 	status := fixed_string(sim.webcam_capture_status[:])
