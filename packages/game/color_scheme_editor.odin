@@ -18,6 +18,7 @@ Color_Scheme_Editor_Stop :: struct {
 Color_Scheme_Editor_State :: struct {
 	open: bool,
 	modal_open: bool,
+	modal_invoker_focus: uifw.Gui_Id,
 	initialized: bool,
 	name: [COLOR_SCHEME_NAME_MAX]u8,
 	name_len: int,
@@ -116,6 +117,7 @@ color_scheme_editor_draw_selector :: proc(ctx: ^uifw.Gui_Context, editor: ^Color
 	if COLOR_SCHEME_MINI_EDITOR_ENABLED {
 		if uifw.gui_button(ctx, "Edit Color Scheme", "edit_color_scheme") {
 			editor.modal_open = true
+			editor.modal_invoker_focus = ctx.focused
 			editor.modal_scroll = 0
 			if color_name != nil {
 				color_scheme_name_set(&editor.modal_original_name, color_scheme_name_get(color_name))
@@ -133,21 +135,28 @@ color_scheme_editor_draw_scheme_picker :: proc(ctx: ^uifw.Gui_Context, color_nam
 	left := uifw.Rect{row.x, row.y, arrow_w, row.h}
 	right := uifw.Rect{row.x + row.w - arrow_w, row.y, arrow_w, row.h}
 	center := uifw.Rect{row.x + arrow_w, row.y, max(row.w - arrow_w * 2, 0), row.h}
+	combo_id := uifw.gui_make_id(ctx, "color_scheme")
 	changed := false
 
-	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "color_scheme_previous"), left, -1, true) {
+	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "color_scheme_previous"), left, -1, true, false) {
+		ctx.focused = combo_id
 		color_index = (color_index - 1 + len(color_names)) % len(color_names)
 		color_scheme_name_set(color_name, color_names[color_index])
 		changed = true
 	}
 	uifw.gui_tooltip(ctx, left, "Previous color scheme")
 
-	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "color_scheme_next"), right, 1, true) {
+	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "color_scheme_next"), right, 1, true, false) {
+		ctx.focused = combo_id
 		color_index = (color_index + 1) % len(color_names)
 		color_scheme_name_set(color_name, color_names[color_index])
 		changed = true
 	}
 	uifw.gui_tooltip(ctx, right, "Next color scheme")
+	if uifw.gui_combobox_cycle_focused(ctx, combo_id, &color_index, len(color_names)) {
+		color_scheme_name_set(color_name, color_names[color_index])
+		changed = true
+	}
 
 	uifw.gui_layout_begin(ctx, center, .Column, 0, center.h)
 	if uifw.gui_combobox(ctx, color_scheme_name_get(color_name), "color_scheme", &color_index, color_names, query_buffer) {
@@ -257,7 +266,20 @@ color_scheme_editor_draw_modal :: proc(ctx: ^uifw.Gui_Context, editor: ^Color_Sc
 
 	changed := false
 	uifw.gui_push_id(ctx, "color_scheme_modal")
-	uifw.gui_overlay_input_begin(ctx, dialog)
+	uifw.gui_overlay_input_begin(ctx, {0, 0, window_w, window_h})
+	if ctx.input.back {
+		color_scheme_editor_cancel_modal(editor, color_name)
+		color_scheme_editor_restore_focus(ctx, editor)
+		uifw.gui_overlay_input_cancel(ctx)
+		uifw.gui_pop_id(ctx)
+		return false
+	}
+	uifw.gui_spatial_group_begin(ctx, "color_modal_focus_scope")
+	defer uifw.gui_spatial_group_end(ctx)
+	uifw.gui_focus_scope_trap_current(ctx)
+	previous_explicit_activation := ctx.controller_explicit_activation
+	ctx.controller_explicit_activation = previous_explicit_activation || ctx.input.active_device == .Controller
+	defer ctx.controller_explicit_activation = previous_explicit_activation
 	uifw.gui_panel_begin(ctx, dialog)
 	header := uifw.gui_next_rect(ctx, height = ctx.style.row_height)
 	close_w := min(ctx.style.row_height * 2.3, header.w * 0.24)
@@ -266,8 +288,10 @@ color_scheme_editor_draw_modal :: proc(ctx: ^uifw.Gui_Context, editor: ^Color_Sc
 	uifw.gui_text_clipped(ctx, title_rect, {title_rect.x + 2, title_rect.y + 5}, "Color Scheme Editor", ctx.style.text)
 	if uifw.gui_button_at(ctx, uifw.gui_make_id(ctx, "close"), close_rect, "Cancel", true) {
 		color_scheme_editor_cancel_modal(editor, color_name)
+		color_scheme_editor_restore_focus(ctx, editor)
+		uifw.gui_focus_scope_release(ctx)
 		uifw.gui_panel_end(ctx)
-		uifw.gui_overlay_input_end(ctx)
+		uifw.gui_overlay_input_cancel(ctx)
 		uifw.gui_pop_id(ctx)
 		return false
 	}
@@ -277,14 +301,18 @@ color_scheme_editor_draw_modal :: proc(ctx: ^uifw.Gui_Context, editor: ^Color_Sc
 	uifw.gui_scroll_begin(ctx, viewport, content_height, &editor.modal_scroll)
 	changed = color_scheme_editor_draw_mini(ctx, editor, color_name) || changed
 	uifw.gui_scroll_end(ctx)
+	if !editor.modal_open {
+		color_scheme_editor_restore_focus(ctx, editor)
+		uifw.gui_focus_scope_release(ctx)
+	}
 	uifw.gui_panel_end(ctx)
-	uifw.gui_overlay_input_end(ctx)
+	if editor.modal_open {
+		uifw.gui_overlay_input_end(ctx)
+	} else {
+		uifw.gui_overlay_input_cancel(ctx)
+	}
 	uifw.gui_pop_id(ctx)
 
-	if ctx.input.key_escape {
-		color_scheme_editor_cancel_modal(editor, color_name)
-		return false
-	}
 	return changed
 }
 
@@ -297,6 +325,13 @@ color_scheme_editor_cancel_modal :: proc(editor: ^Color_Scheme_Editor_State, col
 	}
 	editor.modal_open = false
 	editor.modal_scroll = 0
+}
+
+color_scheme_editor_restore_focus :: proc(ctx: ^uifw.Gui_Context, editor: ^Color_Scheme_Editor_State) {
+	if ctx != nil && editor.modal_invoker_focus != uifw.GUI_ID_NONE {
+		ctx.focused = editor.modal_invoker_focus
+	}
+	editor.modal_invoker_focus = uifw.GUI_ID_NONE
 }
 
 color_scheme_editor_mini_content_height :: proc(ctx: ^uifw.Gui_Context) -> f32 {
@@ -450,7 +485,8 @@ color_scheme_editor_gradient_control :: proc(ctx: ^uifw.Gui_Context, editor: ^Co
 			break
 		}
 	}
-	if !over_stop && uifw.gui_button_behavior(ctx, preview_id, track, true) && editor.stop_count < COLOR_SCHEME_EDITOR_MAX_STOPS {
+	preview_control := uifw.gui_control(ctx, preview_id, track, true, false)
+	if !over_stop && preview_control.hovered && ctx.active == preview_id && ctx.input.mouse_released && editor.stop_count < COLOR_SCHEME_EDITOR_MAX_STOPS {
 		t := uifw.gui_clamp01((ctx.input.mouse_pos.x - track.x) / max(track.w, 1))
 		color_scheme_editor_add_stop(editor, t)
 	}
@@ -461,18 +497,33 @@ color_scheme_editor_gradient_control :: proc(ctx: ^uifw.Gui_Context, editor: ^Co
 		x := track.x + track.w * uifw.gui_clamp01(stop.position)
 		handle_rect := uifw.Rect{x - 6, track.y - 5, 12, track.h + 10}
 		handle_id := uifw.gui_make_id(ctx, "stop")
-		if uifw.gui_drag_handle_region(ctx, handle_id, handle_rect, {x, track.y + track.h * 0.5}, 10) {
-			stop.position = uifw.gui_clamp01((ctx.input.mouse_pos.x - track.x) / max(track.w, 1))
+		dragging := uifw.gui_drag_handle_region(ctx, handle_id, handle_rect, {x, track.y + track.h * 0.5}, 10)
+		if dragging {
+			fine := uifw.gui_pointer_fine_adjust_scale(ctx, handle_id)
+			if fine < 1 {
+				stop.position = uifw.gui_clamp01(stop.position + ctx.mouse_delta.x / max(track.w, 1) * fine)
+			} else {
+				stop.position = uifw.gui_clamp01((ctx.input.mouse_pos.x - track.x) / max(track.w, 1))
+			}
 			editor.selected_stop = i
 			color_scheme_editor_sort_stops(editor)
 		}
-		if uifw.gui_button_behavior(ctx, handle_id, handle_rect, true) {
+		_ = uifw.gui_update_focus_edit(ctx, handle_id, ctx.focused == handle_id)
+		uifw.gui_controller_edit_f32(ctx, handle_id, &stop.position)
+		nav_x, nav_y := uifw.gui_focused_nav_pressed(ctx, handle_id)
+		if nav_x != 0 || nav_y != 0 {
+			lower := i > 0 ? editor.stops[i - 1].position : f32(0)
+			upper := i + 1 < editor.stop_count ? editor.stops[i + 1].position : f32(1)
+			stop.position = min(max(stop.position + (nav_x - nav_y) * 0.02 * uifw.gui_fine_adjust_scale(ctx), lower), upper)
+		}
+		if ctx.focused == handle_id || (uifw.gui_mouse_contains(ctx, handle_rect) && ctx.input.mouse_pressed) {
 			editor.selected_stop = i
 			editor.selected_hsv = uifw.gui_rgb_to_hsv(editor.stops[i].color)
 		}
 		border := editor.selected_stop == i ? ctx.style.accent : ctx.style.text
 		uifw.gui_round_rect(ctx, handle_rect, 4, stop.color)
 		uifw.gui_round_stroke(ctx, handle_rect, 4, border, 2)
+		uifw.gui_focus_or_edit_ring(ctx, handle_id, handle_rect)
 		uifw.gui_pop_id(ctx)
 	}
 }

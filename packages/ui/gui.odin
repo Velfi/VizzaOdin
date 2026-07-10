@@ -150,6 +150,7 @@ Input_State :: struct {
 	nav_pressed_x: f32,
 	nav_pressed_y: f32,
 	accept: bool,
+	accept_pressed: bool,
 	back: bool,
 	pause: bool,
 	toggle_ui: bool,
@@ -190,6 +191,7 @@ Input_State :: struct {
 	key_x: bool,
 	key_v: bool,
 	key_c: bool,
+	key_f1: bool,
 	key_slash: bool,
 	key_space: bool,
 	key_space_down: bool,
@@ -223,6 +225,115 @@ Draw_Command_Kind :: enum {
 Gui_Image_Id :: distinct u64
 Gui_Id :: u64
 GUI_ID_NONE :: Gui_Id(0)
+
+// Shared controller focus primitives. Screens own their region hierarchy; the
+// framework owns phase transitions and optional per-region cursor memory.
+Controller_Focus_Phase :: enum {
+	Unfocused,
+	Region,
+	Child_Region,
+	Active_Control,
+}
+
+Controller_Focus_Memory :: struct {
+	region: Gui_Id,
+	control: Gui_Id,
+}
+
+MAX_CONTROLLER_FOCUS_MEMORY :: 32
+
+Controller_Focus_State :: struct {
+	phase: Controller_Focus_Phase,
+	region: Gui_Id,
+	parent_region: Gui_Id,
+	active_control: Gui_Id,
+	remember_focus: bool,
+	memory: [MAX_CONTROLLER_FOCUS_MEMORY]Controller_Focus_Memory,
+	memory_count: int,
+}
+
+Controller_Edit_Snapshot_Kind :: enum {
+	None,
+	Float,
+	Integer,
+	Boolean,
+	Text,
+	Vec2,
+	Hsv,
+}
+
+gui_controller_focus_init :: proc(state: ^Controller_Focus_State, remember_focus := true) {
+	state^ = {phase = .Unfocused, remember_focus = remember_focus}
+}
+
+gui_controller_focus_remember :: proc(state: ^Controller_Focus_State, region, control: Gui_Id) {
+	if state == nil || !state.remember_focus || region == GUI_ID_NONE || control == GUI_ID_NONE {
+		return
+	}
+	for i in 0 ..< state.memory_count {
+		if state.memory[i].region == region {
+			state.memory[i].control = control
+			return
+		}
+	}
+	if state.memory_count < MAX_CONTROLLER_FOCUS_MEMORY {
+		state.memory[state.memory_count] = {region = region, control = control}
+		state.memory_count += 1
+	}
+}
+
+gui_controller_focus_restore :: proc(state: ^Controller_Focus_State, region, fallback: Gui_Id) -> Gui_Id {
+	if state != nil && state.remember_focus {
+		for i in 0 ..< state.memory_count {
+			if state.memory[i].region == region && state.memory[i].control != GUI_ID_NONE {
+				return state.memory[i].control
+			}
+		}
+	}
+	return fallback
+}
+
+gui_controller_focus_enter_region :: proc(state: ^Controller_Focus_State, region, parent_region, fallback: Gui_Id) -> Gui_Id {
+	if state == nil {
+		return fallback
+	}
+	state.parent_region = parent_region
+	state.region = region
+	state.active_control = GUI_ID_NONE
+	state.phase = parent_region == GUI_ID_NONE ? .Region : .Child_Region
+	return gui_controller_focus_restore(state, region, fallback)
+}
+
+gui_controller_focus_activate :: proc(state: ^Controller_Focus_State, control: Gui_Id) {
+	if state == nil || control == GUI_ID_NONE {
+		return
+	}
+	state.active_control = control
+	state.phase = .Active_Control
+}
+
+gui_controller_focus_deactivate :: proc(state: ^Controller_Focus_State) {
+	if state == nil {
+		return
+	}
+	state.active_control = GUI_ID_NONE
+	state.phase = state.parent_region == GUI_ID_NONE ? .Region : .Child_Region
+}
+
+gui_controller_focus_leave_region :: proc(state: ^Controller_Focus_State) {
+	if state == nil {
+		return
+	}
+	if state.parent_region != GUI_ID_NONE {
+		state.region = state.parent_region
+		state.parent_region = GUI_ID_NONE
+		state.phase = .Region
+	} else {
+		state.region = GUI_ID_NONE
+		state.phase = .Unfocused
+	}
+	state.active_control = GUI_ID_NONE
+}
 
 Draw_Command :: struct {
 	kind: Draw_Command_Kind,
@@ -286,6 +397,7 @@ Gui_Style :: struct {
 	margin: f32,
 	section_gap: f32,
 	scrollbar_width: f32,
+	scrollbar_gutter: f32,
 	focus_ring_width: f32,
 	row_height: f32,
 	text_height: f32,
@@ -324,6 +436,16 @@ Gui_Scroll_Frame :: struct {
 	previous_scroll: f32,
 	target_scroll: ^f32,
 	wheel_consumed: bool,
+	focus_record: int,
+}
+
+Gui_Scroll_Focus_Record :: struct {
+	viewport: Rect,
+	scroll: f32,
+	max_scroll: f32,
+	target_scroll: ^f32,
+	animation_id: Gui_Id,
+	parent: int,
 }
 
 Gui_Scroll_Hit :: struct {
@@ -338,6 +460,7 @@ MAX_GUI_LAYOUT_DEPTH :: 16
 MAX_GUI_CLIP_DEPTH :: 16
 MAX_GUI_SCROLL_DEPTH :: 8
 MAX_GUI_SCROLL_HITS :: 32
+MAX_GUI_SCROLL_FOCUS_RECORDS :: 32
 MAX_GUI_ID_DEPTH :: 32
 MAX_GUI_DEBUG_IDS :: 512
 MAX_GUI_ANIMATION_SLOTS :: 128
@@ -427,6 +550,9 @@ Gui_Spatial_Item :: struct {
 	group: Gui_Id,
 	order: int,
 	enabled: bool,
+	focusable: bool,
+	visible: bool,
+	scroll_owner: int,
 }
 
 Gui_Shaped_Glyph :: struct {
@@ -447,6 +573,7 @@ Gui_Context :: struct {
 	mouse_prev_pos: Vec2,
 	mouse_delta: Vec2,
 	mouse_initialized: bool,
+	fine_pointer_drag_id: Gui_Id,
 	text_edit_id: Gui_Id,
 	text_edit_buffer: [64]u8,
 	text_edit_len: int,
@@ -455,22 +582,34 @@ Gui_Context :: struct {
 	text_edit_scroll_x: f32,
 	text_edit_blink: f32,
 	text_edit_selecting: bool,
+	wants_text_input: bool,
+	number_edit_snapshot_id: Gui_Id,
+	number_edit_snapshot_value: f32,
 	clipboard_set_pending: bool,
 	clipboard_set_text: [256]u8,
 	clipboard_set_len: int,
 	focus_order_next: int,
-	focus_first: Gui_Id,
-	focus_prev: Gui_Id,
-	focus_last: Gui_Id,
-	focus_last_previous: Gui_Id,
-	focus_next_from: Gui_Id,
 	focus_moved: bool,
 	focus_edit_id: Gui_Id,
 	focus_edit_seen: bool,
+	controller_explicit_activation: bool,
+	controller_armed_id: Gui_Id,
+	controller_snapshot_id: Gui_Id,
+	controller_snapshot_kind: Controller_Edit_Snapshot_Kind,
+	controller_snapshot_f32: f32,
+	controller_snapshot_int: int,
+	controller_snapshot_bool: bool,
+	controller_snapshot_vec2: Vec2,
+	controller_snapshot_hsv: Hsv_Color,
+	controller_snapshot_text: [256]u8,
+	controller_snapshot_text_len: int,
+	controller_cancel_id: Gui_Id,
 	spatial_items: [MAX_GUI_SPATIAL_ITEMS]Gui_Spatial_Item,
 	spatial_item_count: int,
 	spatial_groups: [MAX_GUI_SPATIAL_GROUP_DEPTH]Gui_Spatial_Group,
 	spatial_group_depth: int,
+	focus_scope: Gui_Id,
+	focus_scope_active: bool,
 	frame_index: u64,
 	open_panel: Gui_Id,
 	combo_highlight: int,
@@ -482,8 +621,12 @@ Gui_Context :: struct {
 	combo_popup_query: [128]u8,
 	combo_popup_query_len: int,
 	tooltip_visible: bool,
+	tooltip_from_hover: bool,
 	tooltip_rect: Rect,
 	tooltip_text: string,
+	notice_text: [192]u8,
+	notice_text_len: int,
+	notice_seconds: f32,
 	next_cursor: Vec2,
 	content_width: f32,
 	style: Gui_Style,
@@ -505,6 +648,8 @@ Gui_Context :: struct {
 	scroll_hit_count: int,
 	next_scroll_hits: [MAX_GUI_SCROLL_HITS]Gui_Scroll_Hit,
 	next_scroll_hit_count: int,
+	scroll_focus_records: [MAX_GUI_SCROLL_FOCUS_RECORDS]Gui_Scroll_Focus_Record,
+	scroll_focus_record_count: int,
 	id_stack: [MAX_GUI_ID_DEPTH]Gui_Id,
 	id_depth: int,
 	debug_registered_ids: [MAX_GUI_DEBUG_IDS]Gui_Id,
@@ -552,6 +697,7 @@ gui_default_style :: proc() -> Gui_Style {
 		margin = 16,
 		section_gap = 40,
 		scrollbar_width = 6,
+		scrollbar_gutter = 8,
 		focus_ring_width = 2,
 		row_height = 44,
 		text_height = 32,
@@ -596,6 +742,7 @@ gui_style_scaled :: proc(base: Gui_Style, scale: f32) -> Gui_Style {
 	style.margin *= s
 	style.section_gap *= s
 	style.scrollbar_width *= s
+	style.scrollbar_gutter *= s
 	style.focus_ring_width *= s
 	style.row_height *= s
 	style.text_height *= s
@@ -678,6 +825,7 @@ gui_style_for_viewport :: proc(base: Gui_Style, width, height, ui_scale: f32) ->
 	style.radius_control = max(gui_snap(rhythm * 0.10), 3)
 	style.border_width = min(max(gui_snap(rhythm * 0.03), 1), 3)
 	style.scrollbar_width = min(max(gui_snap(rhythm * 0.15), 4), 12)
+	style.scrollbar_gutter = min(max(gui_snap(rhythm * 0.20), 6), 16)
 	style.focus_ring_width = min(max(gui_snap(rhythm * 0.05), 2), 5)
 	style.shadow_blur = gui_snap(rhythm * 0.25)
 	style.shadow_offset = {0, gui_snap(rhythm * 0.08)}
@@ -725,6 +873,10 @@ gui_begin_frame :: proc(ctx: ^Gui_Context, input: Input_State) {
 	frame_input := input
 	gui_input_apply_keyboard_fallbacks(&frame_input, ctx.input)
 	ctx.previous_input = ctx.input
+	// Controller focus is navigational until the user explicitly accepts an
+	// editable control. Mouse and keyboard retain their direct-manipulation
+	// conventions (click-to-drag, focused text entry, arrow-key editing).
+	ctx.controller_explicit_activation = frame_input.active_device == .Controller
 	if ctx.mouse_initialized {
 		ctx.mouse_delta = {frame_input.mouse_pos.x - ctx.mouse_prev_pos.x, frame_input.mouse_pos.y - ctx.mouse_prev_pos.y}
 	} else {
@@ -738,21 +890,28 @@ gui_begin_frame :: proc(ctx: ^Gui_Context, input: Input_State) {
 	ctx.input = frame_input
 	ctx.hot = GUI_ID_NONE
 	ctx.focus_order_next = 0
-	ctx.focus_first = GUI_ID_NONE
-	ctx.focus_prev = GUI_ID_NONE
-	ctx.focus_last = GUI_ID_NONE
-	ctx.focus_next_from = frame_input.focus_next ? ctx.focused : GUI_ID_NONE
 	ctx.focus_moved = false
 	ctx.focus_edit_seen = false
+	ctx.wants_text_input = false
 	ctx.spatial_item_count = 0
 	ctx.spatial_group_depth = 0
+	ctx.focus_scope = GUI_ID_NONE
+	ctx.focus_scope_active = false
 	ctx.combo_popup_visible = false
 	ctx.tooltip_visible = false
+	ctx.tooltip_from_hover = false
+	if ctx.notice_seconds > 0 {
+		ctx.notice_seconds = max(ctx.notice_seconds - max(frame_input.delta_time, 0), 0)
+		if ctx.notice_seconds <= 0 {
+			ctx.notice_text_len = 0
+		}
+	}
 	ctx.layout_depth = 0
 	ctx.input_clip_depth = 0
 	ctx.next_overlay_input_rect_count = 0
 	ctx.overlay_input_depth = 0
 	ctx.scroll_depth = 0
+	ctx.scroll_focus_record_count = 0
 	ctx.wheel_scroll_consumed = false
 	ctx.wheel_scroll_depth = -1
 	ctx.wheel_scroll_target_depth = -1
@@ -830,6 +989,7 @@ gui_profile_snapshot :: proc() -> Gui_Profile_Snapshot {
 
 gui_end_frame :: proc(ctx: ^Gui_Context) {
 	gui_draw_combo_popup_overlay(ctx)
+	gui_draw_notice_overlay(ctx)
 	gui_draw_tooltip_overlay(ctx)
 	ctx.overlay_input_rect_count = ctx.next_overlay_input_rect_count
 	for i in 0 ..< ctx.overlay_input_rect_count {
@@ -841,22 +1001,44 @@ gui_end_frame :: proc(ctx: ^Gui_Context) {
 	}
 	if ctx.input.mouse_down == false {
 		ctx.active = GUI_ID_NONE
+		ctx.fine_pointer_drag_id = GUI_ID_NONE
 	}
 	if ctx.focus_edit_id != GUI_ID_NONE && ctx.input.back {
+		cancelled_id := ctx.focus_edit_id
 		ctx.focus_edit_id = GUI_ID_NONE
+		if ctx.controller_armed_id == cancelled_id {
+			ctx.controller_armed_id = GUI_ID_NONE
+		}
+		gui_controller_edit_clear_snapshot(ctx, cancelled_id)
 	}
 	if ctx.focus_edit_id != GUI_ID_NONE && (!ctx.focus_edit_seen || ctx.focused != ctx.focus_edit_id || !gui_spatial_item_registered(ctx, ctx.focus_edit_id)) {
+		abandoned_id := ctx.focus_edit_id
 		ctx.focus_edit_id = GUI_ID_NONE
-	}
-	if ctx.input.focus_next && ctx.focus_first != GUI_ID_NONE {
-		if ctx.focused == GUI_ID_NONE {
-			ctx.focused = ctx.focus_first
-		} else if ctx.focus_next_from != GUI_ID_NONE && !ctx.focus_moved {
-			ctx.focused = ctx.focus_first
+		if ctx.controller_armed_id == abandoned_id {
+			ctx.controller_armed_id = GUI_ID_NONE
 		}
+		gui_controller_edit_clear_snapshot(ctx, abandoned_id)
 	}
+	gui_enforce_focus_scope(ctx)
+	gui_apply_tab_navigation(ctx)
 	gui_apply_spatial_navigation(ctx)
-	ctx.focus_last_previous = ctx.focus_last
+	// A wheel gesture is an explicit request to move the viewport.  Do not let
+	// focus reveal snap it back toward the currently hovered/focused control.
+	if ctx.focus_moved && !ctx.wheel_scroll_consumed {
+		gui_reveal_focused_item(ctx)
+	}
+	if ctx.focused != GUI_ID_NONE && !gui_spatial_item_registered(ctx, ctx.focused) {
+		stale_id := ctx.focused
+		if ctx.text_edit_id == ctx.focused {
+			ctx.text_edit_id = GUI_ID_NONE
+			ctx.text_edit_len = 0
+			ctx.text_edit_selecting = false
+		}
+		ctx.focused = GUI_ID_NONE
+		ctx.focus_edit_id = GUI_ID_NONE
+		ctx.controller_armed_id = GUI_ID_NONE
+		gui_controller_edit_clear_snapshot(ctx, stale_id)
+	}
 }
 
 gui_spatial_group_begin :: proc(ctx: ^Gui_Context, key: string, options := Gui_Spatial_Group_Options{enabled = true}) {
@@ -878,6 +1060,22 @@ gui_spatial_group_end :: proc(ctx: ^Gui_Context) {
 	if ctx.spatial_group_depth > 0 {
 		ctx.spatial_group_depth -= 1
 	}
+}
+
+gui_focus_scope_trap_current :: proc(ctx: ^Gui_Context) {
+	if ctx.spatial_group_depth <= 0 {
+		return
+	}
+	group := ctx.spatial_groups[ctx.spatial_group_depth - 1]
+	if group.enabled {
+		ctx.focus_scope = group.id
+		ctx.focus_scope_active = true
+	}
+}
+
+gui_focus_scope_release :: proc(ctx: ^Gui_Context) {
+	ctx.focus_scope = GUI_ID_NONE
+	ctx.focus_scope_active = false
 }
 
 gui_focus_editing :: proc(ctx: ^Gui_Context, id: Gui_Id) -> bool {
@@ -907,6 +1105,9 @@ gui_begin_panel :: proc(ctx: ^Gui_Context, bounds: Rect) {
 
 gui_panel_begin :: proc(ctx: ^Gui_Context, bounds: Rect) {
 	gui_shadow(ctx, bounds, ctx.style.radius_panel, ctx.style.shadow_offset, ctx.style.shadow_blur, ctx.style.shadow_color)
+	// A stable scrim keeps controls legible over bright, high-frequency
+	// simulations while the refractive layer preserves the glass character.
+	gui_round_rect(ctx, bounds, ctx.style.radius_panel, ctx.style.panel)
 	gui_refractive_glass_rect(ctx, bounds, gui_default_glass_style(ctx, ctx.style.radius_panel))
 	gui_round_stroke(ctx, bounds, ctx.style.radius_panel, ctx.style.panel_border, ctx.style.border_width)
 	gui_layout_begin(ctx, gui_inset(bounds, ctx.style.panel_padding), .Column, ctx.style.spacing, ctx.style.row_height)
@@ -1174,8 +1375,8 @@ gui_scroll_begin :: proc(ctx: ^Gui_Context, viewport: Rect, content_height: f32,
 	scroll^ = min(max(scroll^, 0), max_scroll)
 	gui_record_scroll_hit(ctx, viewport, scroll^, max_scroll, 32, ctx.scroll_depth)
 	visible_scroll := scroll^
+	scroll_id := gui_id_child_int(gui_make_id(ctx, "scroll"), ctx.scroll_depth)
 	if ctx.input.delta_time > 0 {
-		scroll_id := gui_id_child_int(gui_make_id(ctx, "scroll"), ctx.scroll_depth)
 		slot := gui_animation_slot(ctx, scroll_id)
 		if slot != nil {
 			if slot.last_frame == 0 {
@@ -1188,6 +1389,24 @@ gui_scroll_begin :: proc(ctx: ^Gui_Context, viewport: Rect, content_height: f32,
 		}
 	}
 
+	focus_record := -1
+	if ctx.scroll_focus_record_count < MAX_GUI_SCROLL_FOCUS_RECORDS {
+		focus_record = ctx.scroll_focus_record_count
+		parent := -1
+		if ctx.scroll_depth > 0 {
+			parent = ctx.scroll_stack[ctx.scroll_depth - 1].focus_record
+		}
+		ctx.scroll_focus_records[focus_record] = {
+			viewport = viewport,
+			scroll = visible_scroll,
+			max_scroll = max_scroll,
+			target_scroll = scroll,
+			animation_id = scroll_id,
+			parent = parent,
+		}
+		ctx.scroll_focus_record_count += 1
+	}
+
 	if ctx.scroll_depth < MAX_GUI_SCROLL_DEPTH {
 		ctx.scroll_stack[ctx.scroll_depth] = {
 			viewport = viewport,
@@ -1196,13 +1415,15 @@ gui_scroll_begin :: proc(ctx: ^Gui_Context, viewport: Rect, content_height: f32,
 			previous_scroll = previous_scroll,
 			target_scroll = scroll,
 			wheel_consumed = consumed_wheel,
+			focus_record = focus_record,
 		}
 		ctx.scroll_depth += 1
 	}
 
 	gui_scissor_begin(ctx, viewport)
 	gui_input_clip_begin(ctx, viewport)
-	content := Rect{viewport.x, viewport.y - visible_scroll, viewport.w, max(content_height, viewport.h)}
+	content_w := gui_scrollbar_content_width(ctx, viewport, content_height)
+	content := Rect{viewport.x, viewport.y - visible_scroll, content_w, max(content_height, viewport.h)}
 	gui_layout_begin(ctx, content, .Column, ctx.style.spacing, ctx.style.row_height)
 }
 
@@ -1297,8 +1518,8 @@ gui_button_content_width :: proc(ctx: ^Gui_Context, label: string) -> f32 {
 	return max(text_w + ctx.style.control_padding * 3, ctx.style.row_height)
 }
 
-gui_button_at :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, label: string, enabled: bool) -> bool {
-	control := gui_control(ctx, id, bounds, enabled)
+gui_button_at :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, label: string, enabled: bool, pointer_focus := true) -> bool {
+	control := gui_control(ctx, id, bounds, enabled, true, pointer_focus)
 
 	color := ctx.style.control
 	border := ctx.style.panel_border
@@ -1375,6 +1596,7 @@ gui_number_drag_f32_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: 
 		if ctx.text_edit_id == id {
 			ctx.text_edit_id = GUI_ID_NONE
 			ctx.text_edit_len = 0
+			ctx.number_edit_snapshot_id = GUI_ID_NONE
 		}
 		gui_round_rect(ctx, bounds, ctx.style.radius_control, ctx.style.control_disabled)
 		gui_round_stroke(ctx, bounds, ctx.style.radius_control, ctx.style.panel_border, ctx.style.border_width)
@@ -1384,15 +1606,23 @@ gui_number_drag_f32_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: 
 	control := gui_control(ctx, id, bounds, true)
 	changed := false
 	editing := ctx.text_edit_id == id
+	ctx.wants_text_input = ctx.wants_text_input ||
+		(control.focused && (!ctx.controller_explicit_activation || ctx.focus_edit_id == id || editing))
 	start_edit := control.focused && !editing && gui_number_edit_wants_text(ctx)
-	if control.focused && !editing && ctx.input.key_space {
-		gui_focus_edit_begin(ctx, id)
-	} else if !control.focused {
-		gui_focus_edit_end(ctx, id)
+	if ctx.controller_explicit_activation {
+		_ = gui_update_focus_edit(ctx, id, control.focused)
+	} else {
+		if control.focused && !editing && ctx.input.key_space {
+			gui_focus_edit_begin(ctx, id)
+		} else if !control.focused {
+			gui_focus_edit_end(ctx, id)
+		}
 	}
+	gui_controller_edit_f32(ctx, id, value)
+	adjust_scale := gui_fine_adjust_scale(ctx)
 
 	if ctx.active == id && ctx.input.mouse_down && !editing {
-		delta := ctx.input.wheel_delta * speed + ctx.mouse_delta.x * speed * 0.1
+		delta := (ctx.input.wheel_delta * speed + ctx.mouse_delta.x * speed * 0.1) * adjust_scale
 		value^ += delta
 		if value^ < min do value^ = min
 		if value^ > max_value do value^ = max_value
@@ -1403,8 +1633,12 @@ gui_number_drag_f32_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: 
 			ctx.text_edit_anchor = 0
 		}
 	}
-	if !editing && !start_edit && gui_focus_editing(ctx, id) && (ctx.input.nav_x != 0 || ctx.input.nav_y != 0) {
-		value^ += (ctx.input.nav_x - ctx.input.nav_y) * speed
+	// Value edits advance on the navigation action's initial press and repeat,
+	// not every frame an axis is held. This keeps an activated control's rate
+	// stable across refresh rates and gives the user time to make fine edits.
+	nav_x, nav_y := gui_focused_nav_pressed(ctx, id)
+	if !editing && !start_edit && (nav_x != 0 || nav_y != 0) {
+		value^ += (nav_x - nav_y) * speed * adjust_scale
 		if value^ < min do value^ = min
 		if value^ > max_value do value^ = max_value
 		changed = true
@@ -1416,7 +1650,9 @@ gui_number_drag_f32_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: 
 	}
 	if control.focused && (editing || start_edit) {
 		if start_edit && ctx.input.accept {
-			gui_focus_edit_end(ctx, id)
+			if !ctx.controller_explicit_activation {
+				gui_focus_edit_end(ctx, id)
+			}
 			gui_number_edit_begin(ctx, id, value^)
 		} else {
 			if editing {
@@ -1429,9 +1665,11 @@ gui_number_drag_f32_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: 
 	} else if ctx.text_edit_id == id {
 		ctx.text_edit_id = GUI_ID_NONE
 		ctx.text_edit_len = 0
+		ctx.number_edit_snapshot_id = GUI_ID_NONE
 	}
 
-	gui_text_field_chrome(ctx, bounds, ctx.active == id, ctx.hot == id, control.focused)
+	gui_text_field_chrome(ctx, bounds, ctx.active == id || ctx.focus_edit_id == id, ctx.hot == id, control.focused)
+	gui_focus_or_edit_ring(ctx, id, bounds)
 	display_label := label
 	if ctx.text_edit_id == id {
 		display_label = string(ctx.text_edit_buffer[:ctx.text_edit_len])
@@ -1464,15 +1702,23 @@ gui_slider_f32_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: ^f32,
 	handle := Vec2{track.x + track.w * t, track.y + track.h * 0.5}
 
 	if gui_drag_handle_region(ctx, id, bounds, handle, 12) {
-		t = (ctx.input.mouse_pos.x - track.x) / max(track.w, 1)
-		t = gui_clamp01(t)
-		value^ = min + (max_value - min) * t
+		pointer_scale := gui_pointer_fine_adjust_scale(ctx, id)
+		if pointer_scale < 1 {
+			value^ += ctx.mouse_delta.x / max(track.w, 1) * (max_value - min) * pointer_scale
+			if value^ < min do value^ = min
+			if value^ > max_value do value^ = max_value
+		} else {
+			t = (ctx.input.mouse_pos.x - track.x) / max(track.w, 1)
+			t = gui_clamp01(t)
+			value^ = min + (max_value - min) * t
+		}
 		changed = true
 	}
 	_ = gui_update_focus_edit(ctx, id, ctx.focused == id)
-	nav_x, nav_y := gui_focused_nav(ctx, id)
+	gui_controller_edit_f32(ctx, id, value)
+	nav_x, nav_y := gui_focused_nav_pressed(ctx, id)
 	if nav_x != 0 || nav_y != 0 {
-		step := (max_value - min) * 0.05
+		step := (max_value - min) * 0.05 * gui_fine_adjust_scale(ctx)
 		value^ += (nav_x - nav_y) * step
 		if value^ < min do value^ = min
 		if value^ > max_value do value^ = max_value
@@ -1489,9 +1735,7 @@ gui_slider_f32_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: ^f32,
 	gui_round_rect(ctx, fill, track.h * 0.5, ctx.style.accent)
 	gui_round_stroke(ctx, track, track.h * 0.5, ctx.style.panel_border, ctx.style.border_width)
 	gui_draw_handle(ctx, handle, handle_radius)
-	if ctx.focused == id {
-		gui_focus_ring(ctx, bounds)
-	}
+	gui_focus_or_edit_ring(ctx, id, bounds)
 
 	return changed
 }
@@ -1870,9 +2114,6 @@ gui_text_field_chrome :: proc(ctx: ^Gui_Context, bounds: Rect, active, hot, focu
 	}
 	gui_round_rect(ctx, bounds, ctx.style.radius_control, color)
 	gui_round_stroke(ctx, bounds, ctx.style.radius_control, border, stroke_width)
-	if focused {
-		gui_focus_ring(ctx, bounds)
-	}
 }
 
 gui_text_input_clear_rect :: proc(ctx: ^Gui_Context, bounds: Rect) -> Rect {
@@ -1915,6 +2156,11 @@ gui_text_input_keyed :: proc(ctx: ^Gui_Context, label, key: string, buffer: []u8
 	id := gui_make_id(ctx, key)
 	bounds := gui_next_rect(ctx)
 	control := gui_control(ctx, id, bounds, true)
+	editing := control.focused
+	if ctx.controller_explicit_activation {
+		editing = gui_update_focus_edit(ctx, id, control.focused)
+	}
+	gui_controller_edit_text(ctx, id, buffer, length)
 	changed := false
 
 	if length^ < 0 {
@@ -1933,7 +2179,8 @@ gui_text_input_keyed :: proc(ctx: ^Gui_Context, label, key: string, buffer: []u8
 	body := gui_text_input_body_rect(bounds, clear_hit, clear_visible)
 	text_pos := Vec2{bounds.x + ctx.style.control_padding * 1.5, bounds.y + max((bounds.h - ctx.style.body_text_height) * 0.5, 0)}
 
-	if control.focused {
+	if editing {
+		ctx.wants_text_input = true
 		gui_text_edit_begin(ctx, id, length^)
 		if clear_clicked {
 			length^ = 0
@@ -1946,7 +2193,7 @@ gui_text_input_keyed :: proc(ctx: ^Gui_Context, label, key: string, buffer: []u8
 			ctx.text_edit_blink = 0
 			changed = true
 			clear_visible = false
-		} else {
+		} else if !(ctx.controller_explicit_activation && gui_accept_pressed(ctx)) {
 			gui_text_edit_handle_mouse(ctx, id, buffer, length^, body, text_pos)
 			changed = gui_text_edit_process(ctx, id, buffer, length) || changed
 		}
@@ -1958,9 +2205,10 @@ gui_text_input_keyed :: proc(ctx: ^Gui_Context, label, key: string, buffer: []u8
 		ctx.text_edit_selecting = false
 	}
 
-	gui_text_field_chrome(ctx, bounds, ctx.active == id, ctx.hot == id, control.focused)
+	gui_text_field_chrome(ctx, bounds, ctx.active == id || editing, ctx.hot == id, control.focused)
+	gui_focus_or_edit_ring(ctx, id, bounds)
 	trailing_inset := clear_visible ? max(bounds.x + bounds.w - clear_hit.x, 0) : f32(0)
-	gui_text_edit_draw(ctx, bounds, text_pos, buffer, length^, label, control.focused, trailing_inset)
+	gui_text_edit_draw(ctx, bounds, text_pos, buffer, length^, label, editing, trailing_inset)
 	if clear_visible {
 		gui_text_input_draw_clear_button(ctx, clear_visual, clear_hot, clear_active)
 	}
@@ -1982,26 +2230,38 @@ gui_selector_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int,
 	center := Rect{bounds.x + arrow_w, bounds.y, max(bounds.w - arrow_w * 2, 0), bounds.h}
 	changed := false
 
-	if gui_stepper_button_at(ctx, gui_id_child(id, "left"), left, -1, true) {
+	// The arrows are pointer affordances. Keeping them out of controller focus
+	// makes the selector one coherent control: confirm to edit, D-pad to change.
+	if gui_stepper_button_at(ctx, gui_id_child(id, "left"), left, -1, true, false) {
+		ctx.focused = id
 		current^ = (current^ - 1 + len(options)) % len(options)
 		changed = true
 	}
 	gui_tooltip(ctx, left, "Previous option")
 	center_control := gui_control(ctx, id, center, true)
-	if center_control.activated {
-		gui_focus_edit_begin(ctx, id)
-	}
 	if center_control.hovered && ctx.active == id && ctx.input.mouse_released {
 		current^ = (current^ + 1) % len(options)
 		changed = true
 	}
-	if gui_stepper_button_at(ctx, gui_id_child(id, "right"), right, 1, true) {
+	if gui_stepper_button_at(ctx, gui_id_child(id, "right"), right, 1, true, false) {
+		ctx.focused = id
 		current^ = (current^ + 1) % len(options)
 		changed = true
 	}
 	gui_tooltip(ctx, right, "Next option")
-	_ = gui_update_focus_edit(ctx, id, ctx.focused == id)
-	nav_x, nav_y := gui_focused_nav_pressed(ctx, id)
+	editing := gui_update_focus_edit(ctx, id, ctx.focused == id)
+	nav_x, nav_y: f32
+	if editing {
+		nav_x, nav_y = gui_focused_nav_pressed(ctx, id)
+	} else if !ctx.controller_explicit_activation && center_control.focused && (ctx.input.nav_pressed_x != 0 || ctx.input.nav_pressed_y != 0) {
+		gui_focus_edit_begin(ctx, id)
+		ctx.focus_moved = true
+		nav_x = ctx.input.nav_pressed_x
+		nav_y = ctx.input.nav_pressed_y
+	}
+	// Capture before applying the first keyboard navigation step. Keyboard
+	// arrows may engage a selector and change it in the same frame.
+	gui_controller_edit_int(ctx, id, current)
 	if nav_x != 0 || nav_y != 0 {
 		delta := int(nav_x + nav_y)
 		current^ = (current^ + delta + len(options)) % len(options)
@@ -2015,9 +2275,7 @@ gui_selector_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int,
 	gui_stroke(ctx, {center.x, center.y, center.w, center.h}, ctx.style.panel_border)
 	text_y := center.y + max((center.h - ctx.style.body_text_height) * 0.5, 0)
 	gui_text_clipped(ctx, gui_inset(center, 8), {center.x + 12, text_y}, label, ctx.style.text)
-	if ctx.focused == id {
-		gui_focus_ring(ctx, center)
-	}
+	gui_focus_or_edit_ring(ctx, id, center)
 	return changed
 }
 
@@ -2074,6 +2332,7 @@ gui_switch_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: ^bool) ->
 	track_w := max(track_h * 1.85, f32(54))
 	track := Rect{bounds.x + 8, bounds.y + (bounds.h - track_h) * 0.5, track_w, track_h}
 	clicked := gui_button_behavior(ctx, id, bounds, true)
+	gui_controller_edit_bool(ctx, id, value)
 	if clicked {
 		value^ = !value^
 	}
@@ -2211,11 +2470,16 @@ gui_radio_group_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^i
 		gui_text_clipped(ctx, gui_inset_edges(bounds, {left = size + 20, top = 0, right = 8, bottom = 0}), {bounds.x + size + 24, bounds.y + max((bounds.h - ctx.style.body_text_height) * 0.5, 0)}, option, ctx.style.text)
 	}
 	group_control := gui_control(ctx, group_id, group_bounds, true)
-	if group_control.activated {
+	editing := group_control.focused
+	if ctx.controller_explicit_activation {
+		editing = gui_update_focus_edit(ctx, group_id, group_control.focused)
+		gui_controller_edit_int(ctx, group_id, current)
+	}
+	if group_control.activated && !ctx.controller_explicit_activation {
 		current^ = (current^ + 1) % len(options)
 		changed = true
 	}
-	if group_control.focused {
+	if editing {
 		nav_delta := int(ctx.input.nav_pressed_x + ctx.input.nav_pressed_y)
 		if nav_delta != 0 {
 			next := (current^ + nav_delta + len(options)) % len(options)
@@ -2224,11 +2488,13 @@ gui_radio_group_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^i
 				changed = true
 			}
 		}
+	}
+	if group_control.focused {
 		focus_bounds := group_bounds
 		if current^ >= 0 && current^ < option_count {
 			focus_bounds = row_bounds[current^]
 		}
-		gui_focus_ring(ctx, focus_bounds)
+		gui_focus_or_edit_ring(ctx, group_id, focus_bounds)
 	}
 	return changed
 }
@@ -2252,7 +2518,8 @@ gui_area_slider_f32_at :: proc(ctx: ^Gui_Context, id: Gui_Id, area: Rect, value:
 		changed = true
 	}
 	_ = gui_update_focus_edit(ctx, id, ctx.focused == id)
-	nav_x, nav_y := gui_focused_nav(ctx, id)
+	gui_controller_edit_vec2(ctx, id, value)
+	nav_x, nav_y := gui_focused_nav_pressed(ctx, id)
 	if nav_x != 0 || nav_y != 0 {
 		step := Vec2{(max_value.x - min_value.x) * 0.05, (max_value.y - min_value.y) * 0.05}
 		value^.x += nav_x * step.x
@@ -2268,9 +2535,7 @@ gui_area_slider_f32_at :: proc(ctx: ^Gui_Context, id: Gui_Id, area: Rect, value:
 	normalized = gui_vec2_to_normalized(value^, min_value, max_value)
 	handle = gui_normalized_to_rect_point(area, normalized)
 	gui_draw_handle(ctx, handle, 7)
-	if ctx.focused == id {
-		gui_focus_ring(ctx, area)
-	}
+	gui_focus_or_edit_ring(ctx, id, area)
 	return changed
 }
 
@@ -2311,7 +2576,8 @@ gui_hue_wheel_at :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, hsv: ^Hsv_
 		changed = true
 	}
 	_ = gui_update_focus_edit(ctx, id, ctx.focused == id)
-	nav_x, nav_y := gui_focused_nav(ctx, id)
+	gui_controller_edit_hsv(ctx, id, hsv)
+	nav_x, nav_y := gui_focused_nav_pressed(ctx, id)
 	if nav_x != 0 || nav_y != 0 {
 		hsv.h = gui_wrap01(hsv.h + (nav_x - nav_y) * 0.01)
 		changed = true
@@ -2320,9 +2586,7 @@ gui_hue_wheel_at :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, hsv: ^Hsv_
 	angle = h * GUI_TAU
 	handle = Vec2{center.x + math.cos(angle) * ((inner + outer) * 0.5), center.y + math.sin(angle) * ((inner + outer) * 0.5)}
 	gui_draw_handle(ctx, handle, 7)
-	if ctx.focused == id {
-		gui_focus_ring(ctx, bounds)
-	}
+	gui_focus_or_edit_ring(ctx, id, bounds)
 	return changed
 }
 
@@ -2346,7 +2610,8 @@ gui_sv_grid_at :: proc(ctx: ^Gui_Context, id: Gui_Id, grid: Rect, hsv: ^Hsv_Colo
 		changed = true
 	}
 	_ = gui_update_focus_edit(ctx, id, ctx.focused == id)
-	nav_x, nav_y := gui_focused_nav(ctx, id)
+	gui_controller_edit_hsv(ctx, id, hsv)
+	nav_x, nav_y := gui_focused_nav_pressed(ctx, id)
 	if nav_x != 0 || nav_y != 0 {
 		hsv.s = gui_clamp01(hsv.s + nav_x * 0.05)
 		hsv.v = gui_clamp01(hsv.v - nav_y * 0.05)
@@ -2355,9 +2620,7 @@ gui_sv_grid_at :: proc(ctx: ^Gui_Context, id: Gui_Id, grid: Rect, hsv: ^Hsv_Colo
 	gui_round_stroke(ctx, grid, ctx.style.radius_control, ctx.style.panel_border, ctx.style.border_width)
 	handle = gui_normalized_to_rect_point(grid, {gui_clamp01(hsv.s), 1 - gui_clamp01(hsv.v)})
 	gui_draw_handle(ctx, handle, 7)
-	if ctx.focused == id {
-		gui_focus_ring(ctx, grid)
-	}
+	gui_focus_or_edit_ring(ctx, id, grid)
 	return changed
 }
 
@@ -2375,7 +2638,8 @@ gui_alpha_slider :: proc(ctx: ^Gui_Context, label, key: string, hsv: ^Hsv_Color)
 		changed = true
 	}
 	_ = gui_update_focus_edit(ctx, id, ctx.focused == id)
-	nav_x, nav_y := gui_focused_nav(ctx, id)
+	gui_controller_edit_hsv(ctx, id, hsv)
+	nav_x, nav_y := gui_focused_nav_pressed(ctx, id)
 	if nav_x != 0 || nav_y != 0 {
 		hsv.a = gui_clamp01(hsv.a + (nav_x - nav_y) * 0.05)
 		changed = true
@@ -2384,6 +2648,7 @@ gui_alpha_slider :: proc(ctx: ^Gui_Context, label, key: string, hsv: ^Hsv_Color)
 	x = track.x + track.w * gui_clamp01(hsv.a)
 	gui_draw_handle(ctx, {x, track.y + track.h * 0.5}, 6)
 	gui_text_clipped(ctx, gui_inset(bounds, 6), {bounds.x + 10, bounds.y + 6}, label, ctx.style.text)
+	gui_focus_or_edit_ring(ctx, id, bounds)
 	return changed
 }
 
@@ -2417,8 +2682,28 @@ gui_circular_progress :: proc(ctx: ^Gui_Context, label: string, value: f32) {
 
 gui_combobox :: gui_combobox_keyed
 
-gui_stepper_button_at :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, direction: int, enabled: bool) -> bool {
-	control := gui_control(ctx, id, bounds, enabled)
+// Cycles a closed combobox from either navigation axis. Composite controls can
+// use this with pointer-only side arrows so they still behave as one input for
+// keyboard and controller focus.
+gui_combobox_cycle_focused :: proc(ctx: ^Gui_Context, id: Gui_Id, current: ^int, option_count: int) -> bool {
+	if option_count <= 0 || ctx.focused != id || ctx.open_panel == id {
+		return false
+	}
+	delta := 0
+	if ctx.input.nav_pressed_x < 0 || ctx.input.nav_pressed_y < 0 {
+		delta = -1
+	} else if ctx.input.nav_pressed_x > 0 || ctx.input.nav_pressed_y > 0 {
+		delta = 1
+	}
+	if delta == 0 {
+		return false
+	}
+	current^ = (current^ + delta + option_count) % option_count
+	return true
+}
+
+gui_stepper_button_at :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, direction: int, enabled: bool, focusable := true) -> bool {
+	control := gui_control(ctx, id, bounds, enabled, focusable)
 	fill := ctx.style.control
 	border := ctx.style.panel_border
 	if !enabled {
@@ -2468,9 +2753,6 @@ gui_select_chrome :: proc(ctx: ^Gui_Context, bounds: Rect, display: string, id: 
 	gui_text_clipped(ctx, text_rect, {text_rect.x, bounds.y + max((bounds.h - ctx.style.body_text_height) * 0.5, 0)}, display, ctx.style.text)
 	icon_center := Vec2{bounds.x + bounds.w - bounds.h * 0.5, bounds.y + bounds.h * 0.5}
 	gui_chevron(ctx, icon_center, max(bounds.h * 0.16, 5), open, ctx.style.text_muted)
-	if focused {
-		gui_focus_ring(ctx, bounds)
-	}
 }
 
 gui_chevron :: proc(ctx: ^Gui_Context, center: Vec2, size: f32, up: bool, color: Color) {
@@ -2524,7 +2806,7 @@ gui_combo_popup_content_width :: proc(ctx: ^Gui_Context, options: []string) -> f
 	for option in options {
 		width = max(width, gui_text_width(ctx, option))
 	}
-	return width + ctx.style.control_padding * 4 + ctx.style.scrollbar_width
+	return width + ctx.style.control_padding * 4 + gui_scrollbar_reserved_width(ctx)
 }
 
 gui_combo_match_count :: proc(options: []string, query: string) -> int {
@@ -2606,8 +2888,9 @@ gui_combobox_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int,
 	open := ctx.open_panel == id
 	opened_this_frame := false
 	control := gui_control(ctx, id, bounds, true)
-	clicked := control.activated || (control.hovered && ctx.active == id && ctx.input.mouse_released)
-	if open && ctx.input.accept {
+	accept_pressed := gui_accept_pressed(ctx)
+	clicked := (control.focused && accept_pressed) || (control.hovered && ctx.active == id && ctx.input.mouse_released)
+	if open && accept_pressed {
 		clicked = false
 	}
 	if open && clicked {
@@ -2653,6 +2936,7 @@ gui_combobox_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int,
 	if !open {
 		return changed
 	}
+	ctx.wants_text_input = true
 
 	query_changed := false
 	if ctx.input.text_input_len > 0 {
@@ -2691,7 +2975,7 @@ gui_combobox_keyed :: proc(ctx: ^Gui_Context, label, key: string, current: ^int,
 		if !opened_this_frame && ctx.input.nav_pressed_y < 0 {
 			ctx.combo_highlight = gui_next_match(matches[:], ctx.combo_highlight, -1)
 		}
-		if ctx.input.accept {
+		if !opened_this_frame && accept_pressed {
 			current^ = ctx.combo_highlight
 			ctx.open_panel = GUI_ID_NONE
 			return true
@@ -2785,7 +3069,7 @@ gui_draw_combo_popup_overlay :: proc(ctx: ^Gui_Context) {
 			if match == ctx.combo_highlight {
 				gui_rect(ctx, {row.x + 3, row.y + 7, max(ctx.style.border_width * 2, 2), max(row.h - 14, 1)}, ctx.style.accent)
 			}
-			gui_text_clipped(ctx, gui_inset_edges(row, {left = ctx.style.control_padding * 1.5, top = 0, right = ctx.style.scrollbar_width + ctx.style.control_padding, bottom = 0}), {text_left, row.y + max((row.h - ctx.style.body_text_height) * 0.5, 0)}, option, ctx.style.text)
+			gui_text_clipped(ctx, gui_inset_edges(row, {left = ctx.style.control_padding * 1.5, top = 0, right = gui_scrollbar_reserved_width(ctx) + ctx.style.control_padding, bottom = 0}), {text_left, row.y + max((row.h - ctx.style.body_text_height) * 0.5, 0)}, option, ctx.style.text)
 		}
 		y += ctx.style.row_height
 		if y >= popup.y + popup.h {
@@ -2805,7 +3089,7 @@ gui_collapsible_begin_keyed :: proc(ctx: ^Gui_Context, label, key: string, open:
 	id := gui_make_id(ctx, key)
 	bounds := gui_next_rect(ctx)
 	control := gui_control(ctx, id, bounds, true)
-	if control.activated || (control.focused && ctx.input.key_space) || (control.hovered && ctx.active == id && ctx.input.mouse_released) {
+	if (control.focused && (gui_accept_pressed(ctx) || ctx.input.key_space)) || (control.hovered && ctx.active == id && ctx.input.mouse_released) {
 		open^ = !open^
 	}
 	gui_expander_chrome(ctx, bounds, label, id, open^, control.focused)
@@ -2911,6 +3195,13 @@ gui_overlay_input_end :: proc(ctx: ^Gui_Context) {
 	}
 }
 
+gui_overlay_input_cancel :: proc(ctx: ^Gui_Context) {
+	gui_overlay_input_end(ctx)
+	if ctx.next_overlay_input_rect_count > 0 {
+		ctx.next_overlay_input_rect_count -= 1
+	}
+}
+
 gui_scrollbar :: proc(ctx: ^Gui_Context, viewport: Rect, content_height, scroll: f32) {
 	if content_height <= viewport.h || viewport.h <= 0 {
 		return
@@ -2929,6 +3220,17 @@ gui_scrollbar :: proc(ctx: ^Gui_Context, viewport: Rect, content_height, scroll:
 	thumb := Rect{track.x, thumb_y, track.w, thumb_h}
 	gui_round_rect(ctx, track, track.w * 0.5, gui_apply_opacity(ctx.style.control, 0.55))
 	gui_round_rect(ctx, thumb, thumb.w * 0.5, gui_apply_opacity(ctx.style.text_muted, 0.70))
+}
+
+gui_scrollbar_reserved_width :: proc(ctx: ^Gui_Context) -> f32 {
+	return ctx.style.scrollbar_width + ctx.style.scrollbar_gutter + ctx.style.border_width * 2
+}
+
+gui_scrollbar_content_width :: proc(ctx: ^Gui_Context, viewport: Rect, content_height: f32) -> f32 {
+	if content_height <= viewport.h || viewport.h <= 0 {
+		return viewport.w
+	}
+	return max(viewport.w - gui_scrollbar_reserved_width(ctx), 0)
 }
 
 gui_next_row :: proc(ctx: ^Gui_Context, width := f32(-1), height := f32(-1)) -> Rect {
@@ -3049,7 +3351,8 @@ gui_default_glass_style :: proc(ctx: ^Gui_Context, radius: f32) -> Gui_Glass_Sty
 		r = ctx.style.radius_panel
 	}
 	return {
-		tint = {0.07, 0.09, 0.11, 0.38},
+		// Keep bright simulations from washing out white controls and labels.
+		tint = {0.07, 0.09, 0.11, 0.68},
 		radius = r,
 		thickness = max(ctx.style.rhythm * 0.18, f32(7)),
 		roughness = 0.50,
@@ -3090,6 +3393,21 @@ gui_refractive_glass_rect :: proc(ctx: ^Gui_Context, rect: Rect, style: Gui_Glas
 gui_focus_ring :: proc(ctx: ^Gui_Context, rect: Rect) {
 	outer := gui_inset(rect, -ctx.style.focus_ring_width)
 	gui_round_stroke(ctx, outer, ctx.style.radius_control + ctx.style.focus_ring_width, gui_apply_opacity(ctx.style.accent, 0.86), ctx.style.focus_ring_width)
+}
+
+// Focus is an outer ring: the control is a navigation destination. Activation
+// adds a strong inner ring: directional or text input is currently captured by
+// this control, and Accept/Back will commit/cancel that editing session.
+gui_focus_or_edit_ring :: proc(ctx: ^Gui_Context, id: Gui_Id, rect: Rect) {
+	if ctx.focused != id {
+		return
+	}
+	gui_focus_ring(ctx, rect)
+	if ctx.focus_edit_id == id || ctx.active == id {
+		inner_width := max(ctx.style.border_width * 2, f32(2))
+		inner := gui_inset(rect, inner_width * 0.75)
+		gui_round_stroke(ctx, inner, max(ctx.style.radius_control - inner_width * 0.5, 0), ctx.style.accent, inner_width)
+	}
 }
 
 gui_box :: proc(ctx: ^Gui_Context, rect: Rect, style: Gui_Box_Style) {
@@ -3302,18 +3620,54 @@ gui_text_right :: proc(ctx: ^Gui_Context, rect: Rect, text: string, color: Color
 	gui_text_aligned(ctx, rect, text, color, .Right)
 }
 
+gui_tooltip_place :: proc(ctx: ^Gui_Context, bounds: Rect, text: string, from_hover: bool) {
+	if len(text) == 0 {
+		return
+	}
+	padding := f32(8)
+	viewport_w := ctx.input.window_width > 0 ? f32(ctx.input.window_width) : f32(1280)
+	max_w := min(max(viewport_w * 0.34, f32(240)), f32(420))
+	w := min(gui_text_width(ctx, text) + padding * 2, max_w)
+	w = max(w, min(f32(220), max_w))
+	wrap_w := max(w - padding * 2, ctx.style.body_char_width)
+	lines := gui_wrap_line_count(ctx, text, wrap_w)
+	h := f32(lines) * ctx.style.body_line_height + padding * 2
+	x := bounds.x + bounds.w + ctx.style.spacing_1
+	y := bounds.y
+	if from_hover {
+		x = ctx.input.mouse_pos.x + 14
+		y = ctx.input.mouse_pos.y + 18
+	} else if ctx.input.window_width > 0 && x + w > f32(ctx.input.window_width) - ctx.style.spacing_1 {
+		x = bounds.x - w - ctx.style.spacing_1
+	}
+	ctx.tooltip_visible = true
+	ctx.tooltip_from_hover = from_hover
+	ctx.tooltip_rect = gui_overlay_nudge_into_view(ctx, {x, y, w, h})
+	ctx.tooltip_text = text
+}
+
 gui_tooltip :: proc(ctx: ^Gui_Context, bounds: Rect, text: string) {
 	if len(text) == 0 || !gui_mouse_contains(ctx, bounds) {
 		return
 	}
-	padding := f32(8)
-	w := gui_text_width(ctx, text) + padding * 2
-	h := ctx.style.text_height + padding * 2
-	x := ctx.input.mouse_pos.x + 14
-	y := ctx.input.mouse_pos.y + 18
-	ctx.tooltip_visible = true
-	ctx.tooltip_rect = gui_overlay_nudge_into_view(ctx, {x, y, w, h})
-	ctx.tooltip_text = text
+	gui_tooltip_place(ctx, bounds, text, true)
+}
+
+// Contextual help follows both pointer hover and keyboard/controller focus.
+// Pointer help wins when a focused control and a hovered control differ.
+gui_tooltip_for_id :: proc(ctx: ^Gui_Context, id: Gui_Id, text: string) {
+	if len(text) == 0 || (ctx.hot != id && ctx.focused != id) {
+		return
+	}
+	item, ok := gui_find_spatial_item(ctx, id)
+	if !ok || !item.visible {
+		return
+	}
+	if ctx.hot == id {
+		gui_tooltip_place(ctx, item.bounds, text, true)
+	} else if !ctx.tooltip_visible || !ctx.tooltip_from_hover {
+		gui_tooltip_place(ctx, item.bounds, text, false)
+	}
 }
 
 gui_draw_tooltip_overlay :: proc(ctx: ^Gui_Context) {
@@ -3324,7 +3678,45 @@ gui_draw_tooltip_overlay :: proc(ctx: ^Gui_Context) {
 	gui_shadow(ctx, rect, ctx.style.radius_control, {0, 4}, 12, ctx.style.shadow_color)
 	gui_round_rect(ctx, rect, ctx.style.radius_control, {0.02, 0.025, 0.035, 0.96})
 	gui_round_stroke(ctx, rect, ctx.style.radius_control, ctx.style.panel_border, ctx.style.border_width)
-	gui_text_clipped(ctx, gui_inset(rect, 6), {rect.x + 8, rect.y + 7}, ctx.tooltip_text, ctx.style.text)
+	content := gui_inset(rect, 8)
+	gui_scissor_begin(ctx, content)
+	gui_text_wrapped_at(ctx, {content.x, content.y}, ctx.tooltip_text, content.w, ctx.style.text)
+	gui_scissor_end(ctx)
+}
+
+gui_notice :: proc(ctx: ^Gui_Context, text: string, seconds := f32(3.2)) {
+	bytes := transmute([]u8)text
+	ctx.notice_text_len = min(len(bytes), len(ctx.notice_text))
+	copy(ctx.notice_text[:ctx.notice_text_len], bytes[:ctx.notice_text_len])
+	ctx.notice_seconds = max(seconds, 0)
+}
+
+gui_draw_notice_overlay :: proc(ctx: ^Gui_Context) {
+	if ctx.notice_text_len <= 0 || ctx.notice_seconds <= 0 || ctx.input.window_width <= 0 || ctx.input.window_height <= 0 {
+		return
+	}
+	text := string(ctx.notice_text[:ctx.notice_text_len])
+	padding := f32(10)
+	max_w := min(max(f32(ctx.input.window_width) * 0.48, f32(280)), f32(560))
+	w := min(gui_text_width(ctx, text) + padding * 2, max_w)
+	w = max(w, min(f32(260), max_w))
+	wrap_w := max(w - padding * 2, ctx.style.body_char_width)
+	lines := gui_wrap_line_count(ctx, text, wrap_w)
+	h := f32(lines) * ctx.style.body_line_height + padding * 2
+	rect := Rect{
+		(f32(ctx.input.window_width) - w) * 0.5,
+		max(ctx.style.row_height + ctx.style.spacing_3 * 2, f32(72)),
+		w,
+		h,
+	}
+	alpha := min(max(ctx.notice_seconds / 0.24, 0), 1)
+	gui_shadow(ctx, rect, ctx.style.radius_control, {0, 4}, 14, gui_apply_opacity(ctx.style.shadow_color, alpha))
+	gui_round_rect(ctx, rect, ctx.style.radius_control, {0.025, 0.032, 0.045, 0.96 * alpha})
+	gui_round_stroke(ctx, rect, ctx.style.radius_control, gui_apply_opacity(ctx.style.accent, 0.72 * alpha), max(ctx.style.border_width, f32(1)))
+	content := gui_inset(rect, padding)
+	gui_scissor_begin(ctx, content)
+	gui_text_wrapped_at(ctx, {content.x, content.y}, text, content.w, gui_apply_opacity(ctx.style.text, alpha))
+	gui_scissor_end(ctx)
 }
 
 gui_contains :: proc(rect: Rect, p: Vec2) -> bool {
@@ -3426,6 +3818,34 @@ gui_clamp01 :: proc(v: f32) -> f32 {
 	if v < 0 do return 0
 	if v > 1 do return 1
 	return v
+}
+
+gui_fine_adjust_active :: proc(ctx: ^Gui_Context) -> bool {
+	if ctx.input.key_shift {
+		return true
+	}
+	if ctx.input.active_device == .Controller {
+		// D-pad navigation arrives at full magnitude. A deliberately light stick
+		// tilt stays below that magnitude, giving controllers a second speed
+		// without consuming another button.
+		magnitude := max(abs(ctx.input.nav_x), abs(ctx.input.nav_y))
+		return magnitude > 0.05 && magnitude < 0.86
+	}
+	return false
+}
+
+gui_fine_adjust_scale :: proc(ctx: ^Gui_Context) -> f32 {
+	return gui_fine_adjust_active(ctx) ? f32(0.2) : f32(1)
+}
+
+// Once fine mode is engaged during a pointer drag, keep it engaged until the
+// button is released. Releasing Shift mid-drag must not snap an absolute
+// slider or pad to the pointer position.
+gui_pointer_fine_adjust_scale :: proc(ctx: ^Gui_Context, id: Gui_Id) -> f32 {
+	if ctx.input.mouse_down && ctx.active == id && ctx.input.key_shift {
+		ctx.fine_pointer_drag_id = id
+	}
+	return ctx.fine_pointer_drag_id == id ? f32(0.2) : f32(1)
 }
 
 gui_measure_text :: proc(ctx: ^Gui_Context, text: string) -> Vec2 {
@@ -3867,13 +4287,21 @@ gui_register_spatial_item :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, e
 		return
 	}
 	group := gui_current_spatial_group(ctx)
-	item_enabled := enabled && group.enabled && gui_spatial_bounds_visible(ctx, bounds)
+	item_focusable := enabled && group.enabled
+	item_visible := item_focusable && gui_spatial_bounds_visible(ctx, bounds)
+	scroll_owner := -1
+	if ctx.scroll_depth > 0 {
+		scroll_owner = ctx.scroll_stack[ctx.scroll_depth - 1].focus_record
+	}
 	ctx.spatial_items[ctx.spatial_item_count] = {
 		id = id,
 		bounds = bounds,
 		group = group.id,
 		order = ctx.focus_order_next,
-		enabled = item_enabled,
+		enabled = item_visible,
+		focusable = item_focusable,
+		visible = item_visible,
+		scroll_owner = scroll_owner,
 	}
 	ctx.spatial_item_count += 1
 	ctx.focus_order_next += 1
@@ -3882,7 +4310,7 @@ gui_register_spatial_item :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, e
 gui_find_spatial_item :: proc(ctx: ^Gui_Context, id: Gui_Id) -> (Gui_Spatial_Item, bool) {
 	for i in 0 ..< ctx.spatial_item_count {
 		item := ctx.spatial_items[i]
-		if item.id == id && item.enabled {
+		if item.id == id && item.focusable {
 			return item, true
 		}
 	}
@@ -3952,7 +4380,12 @@ gui_apply_spatial_navigation :: proc(ctx: ^Gui_Context) {
 	best_order := 0
 	for i in 0 ..< ctx.spatial_item_count {
 		item := ctx.spatial_items[i]
-		if !item.enabled || item.id == current.id || item.group != current.group {
+		if !item.focusable || item.id == current.id || item.group != current.group {
+			continue
+		}
+		// Clipping alone must not make a long scroll panel unreachable, but an
+		// arbitrary scissor remains a hard navigation boundary.
+		if !item.visible && (current.scroll_owner < 0 || item.scroll_owner != current.scroll_owner) {
 			continue
 		}
 		valid, forward, perpendicular, overlap := gui_spatial_candidate_score(current.bounds, item.bounds, dir_x, dir_y)
@@ -3986,8 +4419,140 @@ gui_apply_spatial_navigation :: proc(ctx: ^Gui_Context) {
 	}
 }
 
-gui_control :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, enabled := true) -> Gui_Control {
-	if enabled {
+gui_tab_item_candidate :: proc(item: Gui_Spatial_Item, group: Gui_Id, scoped: bool) -> bool {
+	if !item.focusable || (!item.visible && item.scroll_owner < 0) {
+		return false
+	}
+	return !scoped || item.group == group
+}
+
+gui_apply_tab_navigation :: proc(ctx: ^Gui_Context) {
+	if ctx.focus_moved || (!ctx.input.focus_next && !ctx.input.focus_prev) || ctx.focus_edit_id != GUI_ID_NONE || ctx.open_panel != GUI_ID_NONE {
+		return
+	}
+
+	current, has_current := gui_find_spatial_item(ctx, ctx.focused)
+	group := GUI_ID_NONE
+	scoped := has_current
+	if ctx.focus_scope_active {
+		group = ctx.focus_scope
+		scoped = true
+		if !has_current || current.group != group {
+			has_current = false
+		}
+	} else if has_current {
+		group = current.group
+	}
+
+	first := Gui_Spatial_Item{}
+	last := Gui_Spatial_Item{}
+	next := Gui_Spatial_Item{}
+	previous := Gui_Spatial_Item{}
+	has_first, has_last, has_next, has_previous: bool
+	for i in 0 ..< ctx.spatial_item_count {
+		item := ctx.spatial_items[i]
+		if !gui_tab_item_candidate(item, group, scoped) {
+			continue
+		}
+		if !has_first || item.order < first.order {
+			first = item
+			has_first = true
+		}
+		if !has_last || item.order > last.order {
+			last = item
+			has_last = true
+		}
+		if has_current && item.order > current.order && (!has_next || item.order < next.order) {
+			next = item
+			has_next = true
+		}
+		if has_current && item.order < current.order && (!has_previous || item.order > previous.order) {
+			previous = item
+			has_previous = true
+		}
+	}
+
+	target := GUI_ID_NONE
+	if ctx.input.focus_prev {
+		if has_previous {
+			target = previous.id
+		} else if has_last {
+			target = last.id
+		}
+	} else if has_next {
+		target = next.id
+	} else if has_first {
+		target = first.id
+	}
+	if target != GUI_ID_NONE {
+		ctx.focused = target
+		ctx.focus_moved = true
+	}
+}
+
+gui_enforce_focus_scope :: proc(ctx: ^Gui_Context) {
+	if !ctx.focus_scope_active {
+		return
+	}
+	current, ok := gui_find_spatial_item(ctx, ctx.focused)
+	if ok && gui_tab_item_candidate(current, ctx.focus_scope, true) {
+		return
+	}
+	for i in 0 ..< ctx.spatial_item_count {
+		item := ctx.spatial_items[i]
+		if gui_tab_item_candidate(item, ctx.focus_scope, true) {
+			ctx.focused = item.id
+			ctx.focus_moved = true
+			return
+		}
+	}
+}
+
+gui_reveal_focused_item :: proc(ctx: ^Gui_Context) {
+	if ctx.focused == GUI_ID_NONE {
+		return
+	}
+	item, ok := gui_find_spatial_item(ctx, ctx.focused)
+	if !ok || item.scroll_owner < 0 {
+		return
+	}
+
+	reveal_bounds := item.bounds
+	owner := item.scroll_owner
+	for depth := 0; owner >= 0 && owner < ctx.scroll_focus_record_count && depth < MAX_GUI_SCROLL_DEPTH; depth += 1 {
+		record := &ctx.scroll_focus_records[owner]
+		padding := min(max(ctx.style.border_width * 3, f32(4)), record.viewport.h * 0.2)
+		top := record.viewport.y + padding
+		bottom := record.viewport.y + record.viewport.h - padding
+		delta := f32(0)
+		if reveal_bounds.h > max(bottom - top, 0) {
+			delta = reveal_bounds.y - top
+		} else if reveal_bounds.y < top {
+			delta = reveal_bounds.y - top
+		} else if reveal_bounds.y + reveal_bounds.h > bottom {
+			delta = reveal_bounds.y + reveal_bounds.h - bottom
+		}
+
+		if delta != 0 && record.target_scroll != nil {
+			target := min(max(record.scroll + delta, 0), record.max_scroll)
+			record.target_scroll^ = target
+			record.scroll = target
+			if ctx.input.delta_time > 0 {
+				slot := gui_animation_slot(ctx, record.animation_id)
+				if slot != nil {
+					slot.value = target
+					slot.last_frame = ctx.frame_index
+				}
+			}
+		}
+
+		reveal_bounds = record.viewport
+		owner = record.parent
+	}
+}
+
+gui_control :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, enabled := true, focusable := true, pointer_focus := true) -> Gui_Control {
+	if enabled && focusable {
 		gui_register_focusable(ctx, id, bounds)
 	}
 
@@ -3996,7 +4561,9 @@ gui_control :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, enabled := true
 		ctx.hot = id
 		if ctx.input.mouse_pressed {
 			ctx.active = id
-			ctx.focused = id
+			if focusable && pointer_focus {
+				ctx.focused = id
+			}
 		}
 	}
 
@@ -4013,7 +4580,7 @@ gui_control :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, enabled := true
 		enabled = enabled,
 		hovered = hovered,
 		focused = focused,
-		activated = focused && ctx.input.accept,
+		activated = focused && gui_accept_pressed(ctx),
 		nav_x = nav_x,
 		nav_y = nav_y,
 	}
@@ -4036,6 +4603,10 @@ gui_key_down_pressed :: proc(ctx: ^Gui_Context) -> bool {
 	return ctx.input.nav_pressed_y > 0
 }
 
+gui_accept_pressed :: proc(ctx: ^Gui_Context) -> bool {
+	return ctx.input.accept_pressed || (ctx.input.accept && !ctx.previous_input.accept)
+}
+
 gui_focused_nav_pressed :: proc(ctx: ^Gui_Context, id: Gui_Id) -> (nav_x, nav_y: f32) {
 	if ctx.focused != id || ctx.focus_edit_id != id {
 		return 0, 0
@@ -4053,12 +4624,149 @@ gui_key_right_pressed :: proc(ctx: ^Gui_Context) -> bool {
 	return ctx.input.nav_pressed_x > 0
 }
 
+gui_controller_edit_clear_snapshot :: proc(ctx: ^Gui_Context, id: Gui_Id) {
+	if ctx.controller_snapshot_id == id {
+		ctx.controller_snapshot_id = GUI_ID_NONE
+		ctx.controller_snapshot_kind = .None
+	}
+	if ctx.controller_cancel_id == id {
+		ctx.controller_cancel_id = GUI_ID_NONE
+	}
+}
+
+gui_controller_edit_f32 :: proc(ctx: ^Gui_Context, id: Gui_Id, value: ^f32) {
+	if ctx.controller_cancel_id == id && ctx.controller_snapshot_id == id && ctx.controller_snapshot_kind == .Float {
+		value^ = ctx.controller_snapshot_f32
+		gui_controller_edit_clear_snapshot(ctx, id)
+		return
+	}
+	if ctx.focus_edit_id == id && ctx.controller_snapshot_id != id {
+		ctx.controller_snapshot_id = id
+		ctx.controller_snapshot_kind = .Float
+		ctx.controller_snapshot_f32 = value^
+	}
+}
+
+gui_controller_edit_int :: proc(ctx: ^Gui_Context, id: Gui_Id, value: ^int) {
+	if ctx.controller_cancel_id == id && ctx.controller_snapshot_id == id && ctx.controller_snapshot_kind == .Integer {
+		value^ = ctx.controller_snapshot_int
+		gui_controller_edit_clear_snapshot(ctx, id)
+		return
+	}
+	if ctx.focus_edit_id == id && ctx.controller_snapshot_id != id {
+		ctx.controller_snapshot_id = id
+		ctx.controller_snapshot_kind = .Integer
+		ctx.controller_snapshot_int = value^
+	}
+}
+
+gui_controller_edit_bool :: proc(ctx: ^Gui_Context, id: Gui_Id, value: ^bool) {
+	if ctx.controller_cancel_id == id && ctx.controller_snapshot_id == id && ctx.controller_snapshot_kind == .Boolean {
+		value^ = ctx.controller_snapshot_bool
+		gui_controller_edit_clear_snapshot(ctx, id)
+		return
+	}
+	if ctx.focus_edit_id == id && ctx.controller_snapshot_id != id {
+		ctx.controller_snapshot_id = id
+		ctx.controller_snapshot_kind = .Boolean
+		ctx.controller_snapshot_bool = value^
+	}
+}
+
+gui_controller_edit_text :: proc(ctx: ^Gui_Context, id: Gui_Id, buffer: []u8, length: ^int) {
+	if ctx.controller_cancel_id == id && ctx.controller_snapshot_id == id && ctx.controller_snapshot_kind == .Text {
+		length^ = min(ctx.controller_snapshot_text_len, len(buffer))
+		for i in 0 ..< length^ {
+			buffer[i] = ctx.controller_snapshot_text[i]
+		}
+		if length^ < len(buffer) {
+			buffer[length^] = 0
+		}
+		gui_controller_edit_clear_snapshot(ctx, id)
+		return
+	}
+	if ctx.focus_edit_id == id && ctx.controller_snapshot_id != id {
+		ctx.controller_snapshot_id = id
+		ctx.controller_snapshot_kind = .Text
+		ctx.controller_snapshot_text_len = min(length^, min(len(buffer), len(ctx.controller_snapshot_text)))
+		for i in 0 ..< ctx.controller_snapshot_text_len {
+			ctx.controller_snapshot_text[i] = buffer[i]
+		}
+	}
+}
+
+gui_controller_edit_vec2 :: proc(ctx: ^Gui_Context, id: Gui_Id, value: ^Vec2) {
+	if ctx.controller_cancel_id == id && ctx.controller_snapshot_id == id && ctx.controller_snapshot_kind == .Vec2 {
+		value^ = ctx.controller_snapshot_vec2
+		gui_controller_edit_clear_snapshot(ctx, id)
+		return
+	}
+	if ctx.focus_edit_id == id && ctx.controller_snapshot_id != id {
+		ctx.controller_snapshot_id = id
+		ctx.controller_snapshot_kind = .Vec2
+		ctx.controller_snapshot_vec2 = value^
+	}
+}
+
+gui_controller_edit_hsv :: proc(ctx: ^Gui_Context, id: Gui_Id, value: ^Hsv_Color) {
+	if ctx.controller_cancel_id == id && ctx.controller_snapshot_id == id && ctx.controller_snapshot_kind == .Hsv {
+		value^ = ctx.controller_snapshot_hsv
+		gui_controller_edit_clear_snapshot(ctx, id)
+		return
+	}
+	if ctx.focus_edit_id == id && ctx.controller_snapshot_id != id {
+		ctx.controller_snapshot_id = id
+		ctx.controller_snapshot_kind = .Hsv
+		ctx.controller_snapshot_hsv = value^
+	}
+}
+
 gui_update_focus_edit :: proc(ctx: ^Gui_Context, id: Gui_Id, focused: bool) -> bool {
 	if !focused {
+		if ctx.controller_armed_id == id {
+			ctx.controller_armed_id = GUI_ID_NONE
+		}
+		gui_controller_edit_clear_snapshot(ctx, id)
 		gui_focus_edit_end(ctx, id)
 		return false
 	}
-	if ctx.focus_edit_id != id && (ctx.input.accept || ctx.input.key_space) {
+	if ctx.controller_explicit_activation {
+		if ctx.focus_edit_id == id {
+			if gui_accept_pressed(ctx) || ctx.input.back {
+				if ctx.input.back {
+					ctx.controller_cancel_id = id
+				} else {
+					gui_controller_edit_clear_snapshot(ctx, id)
+				}
+				gui_focus_edit_end(ctx, id)
+				ctx.controller_armed_id = GUI_ID_NONE
+				return false
+			}
+			ctx.focus_edit_seen = true
+			return true
+		}
+		if gui_accept_pressed(ctx) {
+			gui_focus_edit_begin(ctx, id)
+			ctx.controller_armed_id = id
+			ctx.focus_edit_seen = true
+			return true
+		}
+		return false
+	}
+	if ctx.focus_edit_id == id {
+		if gui_accept_pressed(ctx) || ctx.input.back {
+			if ctx.input.back {
+				ctx.controller_cancel_id = id
+			} else {
+				gui_controller_edit_clear_snapshot(ctx, id)
+			}
+			gui_focus_edit_end(ctx, id)
+			return false
+		}
+		ctx.focus_edit_seen = true
+		return true
+	}
+	if gui_accept_pressed(ctx) || ctx.input.key_space {
 		gui_focus_edit_begin(ctx, id)
 	}
 	if ctx.focus_edit_id == id {
@@ -4072,29 +4780,16 @@ gui_register_focusable :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds := Rect{}) 
 	if bounds.w > 0 && bounds.h > 0 {
 		gui_register_spatial_item(ctx, id, bounds, true)
 	}
-	if ctx.focus_first == GUI_ID_NONE {
-		ctx.focus_first = id
-	}
-	if ctx.input.focus_prev && ctx.focused == id && !ctx.focus_moved {
-		next_focus := ctx.focus_prev
-		if next_focus == GUI_ID_NONE {
-			next_focus = ctx.focus_last_previous
-		}
-		if next_focus != GUI_ID_NONE {
-			ctx.focused = next_focus
-			ctx.focus_moved = true
-		}
-	}
-	if ctx.focus_next_from != GUI_ID_NONE && ctx.focus_prev == ctx.focus_next_from && !ctx.focus_moved {
-		ctx.focused = id
-		ctx.focus_moved = true
-	}
-	ctx.focus_prev = id
-	ctx.focus_last = id
 }
 
 gui_button_behavior :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, enabled: bool) -> bool {
 	control := gui_control(ctx, id, bounds, enabled)
+	// Buttons, toggles, checkboxes, and radio choices are immediate actions.
+	// Explicit engagement is reserved for controls with an editable value or
+	// nested interaction mode (sliders, selectors, text fields, canvases).
+	if ctx.controller_explicit_activation && control.focused && gui_accept_pressed(ctx) {
+		return true
+	}
 	return control.activated || (enabled && control.hovered && ctx.active == id && ctx.input.mouse_released)
 }
 
@@ -4356,7 +5051,17 @@ gui_match_contains :: proc(matches: []int, value: int) -> bool {
 }
 
 gui_number_edit_f32 :: proc(ctx: ^Gui_Context, id: Gui_Id, value: ^f32, min_value, max_value: f32) -> bool {
-	if ctx.input.back || ctx.input.accept {
+	if ctx.input.back {
+		if ctx.number_edit_snapshot_id == id {
+			value^ = ctx.number_edit_snapshot_value
+		}
+		ctx.number_edit_snapshot_id = GUI_ID_NONE
+		ctx.text_edit_id = GUI_ID_NONE
+		ctx.text_edit_len = 0
+		return false
+	}
+	if ctx.input.accept {
+		ctx.number_edit_snapshot_id = GUI_ID_NONE
 		ctx.text_edit_id = GUI_ID_NONE
 		ctx.text_edit_len = 0
 		return false
@@ -4383,6 +5088,10 @@ gui_number_edit_f32 :: proc(ctx: ^Gui_Context, id: Gui_Id, value: ^f32, min_valu
 }
 
 gui_number_edit_begin :: proc(ctx: ^Gui_Context, id: Gui_Id, value: f32) {
+	if ctx.number_edit_snapshot_id != id {
+		ctx.number_edit_snapshot_id = id
+		ctx.number_edit_snapshot_value = value
+	}
 	ctx.text_edit_id = id
 	gui_number_edit_set_value(ctx, value)
 	ctx.text_edit_caret = ctx.text_edit_len

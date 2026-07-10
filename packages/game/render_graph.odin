@@ -1194,7 +1194,7 @@ render_pass_simulation_present :: proc(ctx: ^Render_Context, pass: ^Render_Pass_
 	}
 	if ctx.app_mode == .Slime_Mold && ctx.app_ui != nil && ctx.slime_gpu != nil {
 		engine.vk_cmd_begin_swapchain_render_pass(ctx.vk_ctx, ctx.frame, slime_clear_color(&ctx.app_ui.slime_mold.slime))
-		slime_gpu_present(ctx.slime_gpu, ctx.vk_ctx, ctx.frame)
+		slime_gpu_present(ctx.slime_gpu, ctx.vk_ctx, ctx.frame, &ctx.app_ui.slime_mold.camera)
 		if draw_ui_in_pass {
 			ui_start := time.tick_now()
 			engine.vk_cmd_label_begin(ctx.vk_ctx, ctx.frame.command_buffer, "UI overlay")

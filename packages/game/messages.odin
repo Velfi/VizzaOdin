@@ -8,6 +8,7 @@ MAX_ERROR_TEXT :: 512
 MAX_FILE_PATH :: 512
 
 Ui_Frame_Input :: struct {
+	actions: Input_Action_Frame,
 	frame_index: u64,
 	window_width: i32,
 	window_height: i32,
@@ -21,6 +22,9 @@ Ui_Frame_Input :: struct {
 	wheel_delta: f32,
 	delta_time: f32,
 	camera_sensitivity: f32,
+	controller_camera_sensitivity: f32,
+	controller_camera_invert_y: bool,
+	camera_reset: bool,
 	active_device: uifw.Input_Device_Kind,
 	pointer_enabled: bool,
 	virtual_cursor_pos: uifw.Vec2,
@@ -31,6 +35,7 @@ Ui_Frame_Input :: struct {
 	accept: bool,
 	back: bool,
 	pause: bool,
+	help: bool,
 	toggle_ui: bool,
 	focus_next: bool,
 	focus_prev: bool,
@@ -72,6 +77,7 @@ Ui_Frame_Input :: struct {
 	key_x: bool,
 	key_v: bool,
 	key_c: bool,
+	key_f1: bool,
 	key_slash: bool,
 	key_space: bool,
 	key_space_down: bool,

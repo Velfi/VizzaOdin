@@ -10,13 +10,28 @@ height = 1080
 maximized = true
 
 [ui]
-auto_hide = true
 auto_hide_delay = 3000
 menu_position = "right"
-experimental_controller_ui = true
+remember_controller_focus = true
+
+[input]
+controller_deadzone = 0.25
+controller_cursor_speed = 0.72
+navigation_repeat_delay_ms = 350
+navigation_repeat_interval_ms = 90
+controller_face_layout = "South Accept"
+controller_menu_layout = "Start Pauses"
+controller_shoulder_layout = "Right Next"
+controller_trigger_layout = "Right Primary"
+keyboard_shortcut_profile = "Standard"
+keyboard_pause_binding = "Space"
+keyboard_toggle_ui_binding = "Slash"
+keyboard_help_binding = "F1"
 
 [camera]
 default_sensitivity = 1.00
+controller_sensitivity = 1.00
+controller_invert_y = false
 
 [gpu]
 memory_ceiling_fraction = 0.000

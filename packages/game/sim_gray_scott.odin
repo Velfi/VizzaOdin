@@ -200,6 +200,17 @@ Gray_Scott_Settings :: struct {
 	paused: bool,
 }
 
+Gray_Scott_Randomize_Undo :: struct {
+	feed: f32,
+	kill: f32,
+	diffusion_a: f32,
+	diffusion_b: f32,
+	timestep: f32,
+	simulation_speed: f32,
+	seed: u32,
+	current_preset_index: int,
+}
+
 Gray_Scott_Runtime_State :: struct {
 	simulation_time: f32,
 	frame_index: u64,
@@ -218,6 +229,8 @@ Gray_Scott_Runtime_State :: struct {
 	camera_smoothing_factor: f32,
 	current_preset_index: int,
 	preset_fieldset: Preset_Fieldset_State,
+	randomize_undo: Gray_Scott_Randomize_Undo,
+	randomize_undo_available: bool,
 	nutrient_image_loaded: bool,
 	webcam: ^sdl.Camera,
 	webcam_active: bool,
@@ -370,7 +383,6 @@ gray_scott_apply_builtin_preset :: proc(sim: ^Gray_Scott_Simulation, index: int)
 	sim.settings.stability_factor = preset.stability_factor
 	sim.settings.enable_adaptive_timestep = false
 	sim.runtime.current_preset_index = index
-	sim.runtime.pending_seed_mode = GRAY_SCOTT_MODE_INITIAL_SEED
 }
 
 gray_scott_init :: proc(sim: ^Gray_Scott_Simulation, width, height: i32) {
@@ -1900,7 +1912,6 @@ gray_scott_seed_noise :: proc(sim: ^Gray_Scott_Simulation) {
 		sim.runtime.seed = 0x6d2b79f5
 	}
 	sim.runtime.pending_seed_mode = GRAY_SCOTT_MODE_NOISE_SEED
-	sim.gpu.ready = false
 }
 
 gray_scott_random01 :: proc(seed: ^u32) -> f32 {
@@ -1917,6 +1928,17 @@ gray_scott_random_range :: proc(seed: ^u32, min_value, max_value: f32) -> f32 {
 }
 
 gray_scott_randomize_settings :: proc(sim: ^Gray_Scott_Simulation) {
+	sim.runtime.randomize_undo = {
+		feed = sim.settings.feed,
+		kill = sim.settings.kill,
+		diffusion_a = sim.settings.diffusion_a,
+		diffusion_b = sim.settings.diffusion_b,
+		timestep = sim.settings.timestep,
+		simulation_speed = sim.settings.simulation_speed,
+		seed = sim.runtime.seed,
+		current_preset_index = sim.runtime.current_preset_index,
+	}
+	sim.runtime.randomize_undo_available = true
 	seed := sim.runtime.seed + u32(sim.runtime.frame_index & 0xffffffff) + 1
 	sim.settings.feed = gray_scott_random_range(&seed, 0.02, 0.08)
 	sim.settings.kill = gray_scott_random_range(&seed, 0.04, 0.08)
@@ -1928,8 +1950,26 @@ gray_scott_randomize_settings :: proc(sim: ^Gray_Scott_Simulation) {
 	sim.runtime.current_preset_index = len(GRAY_SCOTT_BUILTIN_PRESET_NAMES) - 1
 }
 
+gray_scott_undo_randomize_settings :: proc(sim: ^Gray_Scott_Simulation) -> bool {
+	if sim == nil || !sim.runtime.randomize_undo_available {
+		return false
+	}
+	undo := sim.runtime.randomize_undo
+	sim.settings.feed = undo.feed
+	sim.settings.kill = undo.kill
+	sim.settings.diffusion_a = undo.diffusion_a
+	sim.settings.diffusion_b = undo.diffusion_b
+	sim.settings.timestep = undo.timestep
+	sim.settings.simulation_speed = undo.simulation_speed
+	sim.runtime.seed = undo.seed
+	sim.runtime.randomize_undo_available = false
+	sim.runtime.current_preset_index = undo.current_preset_index
+	return true
+}
+
 gray_scott_load_settings :: proc(sim: ^Gray_Scott_Simulation, settings: Gray_Scott_Settings) {
 	sim.settings = settings
+	sim.runtime.randomize_undo_available = false
 	sim.runtime.current_preset_index = len(GRAY_SCOTT_BUILTIN_PRESET_NAMES) - 1
 	gray_scott_upload_nutrient_map(sim)
 }
@@ -1938,7 +1978,49 @@ gray_scott_save_settings :: proc(sim: ^Gray_Scott_Simulation) -> Gray_Scott_Sett
 	return sim.settings
 }
 
-gray_scott_controls_content_height :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Context) -> f32 {
+gray_scott_xy_plot_height :: proc(ctx: ^uifw.Gui_Context) -> f32 {
+	return max(ctx.style.row_height * 3.25, f32(206))
+}
+
+gray_scott_controls_content_height :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Context, section := -1) -> f32 {
+	row := ctx.style.row_height + ctx.style.spacing
+	undo_row := sim.runtime.randomize_undo_available ? row : f32(0)
+	heading := ctx.style.heading_line_height + ctx.style.spacing
+	spacer := f32(8) + ctx.style.spacing
+	if section >= 0 {
+		switch section {
+		case 0:
+			return heading + row * 4
+		case 1:
+			return heading * 2 + row * f32(preset_fieldset_content_rows(&sim.runtime.preset_fieldset) + 4) + spacer
+		case CONTROLLER_SECTION_PRESETS:
+			return heading * 3 + row * f32(preset_fieldset_content_rows(&sim.runtime.preset_fieldset) + 7) + spacer * 2 + undo_row
+		case 2:
+			return heading + row * 4
+		case 3:
+			return heading + row * 4
+		case CONTROLLER_SECTION_LOOK:
+			return heading * 2 + row * 9 + spacer
+		case 4:
+			return heading + shared_two_axis_pad_height(ctx) + row * 2 + spacer
+		case 5:
+			return heading + row * 3 + spacer + undo_row
+		case GRAY_SCOTT_SECTION_PATTERN:
+			return heading + row * 7 + spacer + gray_scott_xy_plot_height(ctx) * 2
+		case GRAY_SCOTT_SECTION_MASK:
+			rows := 2
+			if sim.settings.mask_pattern != .Disabled {
+				rows += 5
+				if sim.settings.mask_pattern == .Nutrient_Map {
+					rows += 7
+				}
+			}
+			return heading + row * f32(rows) + spacer
+		case 7:
+			return heading + row * 5 + spacer
+		case:
+		}
+	}
 	rows := 0
 	sections := 0
 	add_section :: proc(rows: ^int, sections: ^int, count: int) {
@@ -1951,7 +2033,7 @@ gray_scott_controls_content_height :: proc(sim: ^Gray_Scott_Simulation, ctx: ^ui
 	add_section(&rows, &sections, 34) // Display
 	add_section(&rows, &sections, 5) // Post Processing
 	add_section(&rows, &sections, 5) // Controls
-	add_section(&rows, &sections, 4) // Settings
+	add_section(&rows, &sections, sim.runtime.randomize_undo_available ? 5 : 4) // Settings
 	add_section(&rows, &sections, 26) // Reaction-Diffusion
 	if sim.settings.mask_pattern != .Disabled {
 		rows += 6
@@ -1963,6 +2045,32 @@ gray_scott_controls_content_height :: proc(sim: ^Gray_Scott_Simulation, ctx: ^ui
 	slider_extra := max(uifw.gui_slider_height(ctx) - ctx.style.row_height, 0)
 	slider_count := sim.settings.mask_pattern != .Disabled ? 6 : 5
 	return f32(rows) * ctx.style.row_height + f32(max(rows - 1, 0) + sections + 8) * ctx.style.spacing + f32(sections) * 12 + slider_extra * f32(slider_count)
+}
+
+gray_scott_draw_actions :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Context) -> bool {
+	changed := false
+	if uifw.gui_button(ctx, "Reset Simulation", "reset") {
+		gray_scott_reset_runtime(sim)
+		uifw.gui_notice(ctx, "Fresh pattern started. Your settings stayed exactly as they were.")
+		changed = true
+	}
+	if uifw.gui_button(ctx, "Randomize Settings", "randomize") {
+		gray_scott_randomize_settings(sim)
+		uifw.gui_notice(ctx, "Settings randomized. Restore Before Randomize is available here.")
+		changed = true
+	}
+	if sim.runtime.randomize_undo_available && uifw.gui_button(ctx, "Restore Before Randomize", "undo_randomize") {
+		if gray_scott_undo_randomize_settings(sim) {
+			uifw.gui_notice(ctx, "Previous Gray-Scott settings restored.")
+			changed = true
+		}
+	}
+	if uifw.gui_button(ctx, "Seed Noise", "seed_noise") {
+		gray_scott_seed_noise(sim)
+		uifw.gui_notice(ctx, "New noise seed added. Settings stayed unchanged.")
+		changed = true
+	}
+	return changed
 }
 
 gray_scott_enqueue_preset_command :: proc(worker: ^Render_Worker_State, kind: Ui_To_Render_Command_Kind, name: string) {
@@ -2005,35 +2113,57 @@ gray_scott_draw_plot_grid :: proc(ctx: ^uifw.Gui_Context, area: uifw.Rect) {
 }
 
 gray_scott_draw_plot_handle :: proc(ctx: ^uifw.Gui_Context, center: uifw.Vec2, fill, stroke: uifw.Color) {
-	outer := f32(11)
-	inner := f32(8)
+	outer := max(ctx.style.row_height * 0.25, f32(11))
+	inner := max(ctx.style.row_height * 0.18, f32(8))
 	uifw.gui_ellipse(ctx, {center.x - outer, center.y - outer, outer * 2, outer * 2}, uifw.gui_apply_opacity(fill, 0.20))
 	uifw.gui_ellipse(ctx, {center.x - inner, center.y - inner, inner * 2, inner * 2}, fill)
 	uifw.gui_ellipse_stroke(ctx, {center.x - inner, center.y - inner, inner * 2, inner * 2}, stroke, 2)
 }
 
 gray_scott_xy_plot :: proc(ctx: ^uifw.Gui_Context, title, key, x_label, y_label, x_short, y_short: string, x: ^f32, y: ^f32, min_value, max_value: uifw.Vec2, fill, stroke: uifw.Color) -> bool {
-	bounds := uifw.gui_next_rect(ctx, height = 206)
+	bounds := uifw.gui_next_rect(ctx, height = gray_scott_xy_plot_height(ctx))
 	id := uifw.gui_make_id(ctx, key)
 	title_rect := uifw.Rect{bounds.x, bounds.y, bounds.w, ctx.style.row_height}
-	uifw.gui_text_clipped(ctx, title_rect, {bounds.x + 2, bounds.y + 4}, title, ctx.style.text)
+	uifw.gui_text_clipped(ctx, title_rect, {bounds.x + ctx.style.spacing_1, bounds.y + max((ctx.style.row_height - ctx.style.body_text_height) * 0.5, 0)}, title, ctx.style.text)
 
-	plot_top := bounds.y + ctx.style.row_height + 4
-	plot_height := max(bounds.h - ctx.style.row_height - 28, 64)
-	area := uifw.Rect{bounds.x + 8, plot_top, max(bounds.w - 16, 1), plot_height}
+	plot_top := bounds.y + ctx.style.row_height + ctx.style.spacing_1
+	footer_h := max(ctx.style.small_line_height + ctx.style.spacing_1, f32(28))
+	plot_height := max(bounds.h - ctx.style.row_height - footer_h - ctx.style.spacing_1, ctx.style.row_height * 1.35)
+	area_inset := max(ctx.style.spacing_2, f32(8))
+	area := uifw.Rect{bounds.x + area_inset, plot_top, max(bounds.w - area_inset * 2, 1), plot_height}
 	current := uifw.Vec2{x^, y^}
 	handle := gray_scott_plot_value_to_point(area, current, min_value, max_value)
 	changed := false
 
-	if uifw.gui_drag_handle_region(ctx, id, area, handle, 12) {
-		next := gray_scott_plot_point_to_value(area, ctx.input.mouse_pos, min_value, max_value)
+	if uifw.gui_drag_handle_region(ctx, id, area, handle, max(ctx.style.row_height * 0.12, f32(12))) {
+		next: uifw.Vec2
+		fine := uifw.gui_pointer_fine_adjust_scale(ctx, id)
+		if fine < 1 {
+			next = {
+				current.x + ctx.mouse_delta.x / max(area.w, 1) * (max_value.x - min_value.x) * fine,
+				current.y - ctx.mouse_delta.y / max(area.h, 1) * (max_value.y - min_value.y) * fine,
+			}
+			next.x = min(max(next.x, min_value.x), max_value.x)
+			next.y = min(max(next.y, min_value.y), max_value.y)
+		} else {
+			next = gray_scott_plot_point_to_value(area, ctx.input.mouse_pos, min_value, max_value)
+		}
 		x^ = next.x
 		y^ = next.y
+		current = next
 		changed = true
 	}
-	nav_x, nav_y := uifw.gui_focused_nav(ctx, id)
+	_ = uifw.gui_update_focus_edit(ctx, id, ctx.focused == id)
+	uifw.gui_controller_edit_vec2(ctx, id, &current)
+	if current.x != x^ || current.y != y^ {
+		x^ = current.x
+		y^ = current.y
+		changed = true
+	}
+	nav_x, nav_y := uifw.gui_focused_nav_pressed(ctx, id)
 	if nav_x != 0 || nav_y != 0 {
-		step := uifw.Vec2{(max_value.x - min_value.x) * 0.025, (max_value.y - min_value.y) * 0.025}
+		adjust_scale := uifw.gui_fine_adjust_scale(ctx)
+		step := uifw.Vec2{(max_value.x - min_value.x) * 0.025 * adjust_scale, (max_value.y - min_value.y) * 0.025 * adjust_scale}
 		x^ += nav_x * step.x
 		y^ -= nav_y * step.y
 		x^ = min(max(x^, min_value.x), max_value.x)
@@ -2041,7 +2171,7 @@ gray_scott_xy_plot :: proc(ctx: ^uifw.Gui_Context, title, key, x_label, y_label,
 		changed = true
 	}
 
-	panel := uifw.gui_inset(area, -6)
+	panel := uifw.gui_inset(area, -max(ctx.style.spacing_1, f32(6)))
 	bg := uifw.gui_lerp_color(ctx.style.panel, ctx.style.control, 0.55)
 	uifw.gui_round_rect(ctx, panel, ctx.style.radius_control, bg)
 	uifw.gui_round_stroke(ctx, panel, ctx.style.radius_control, ctx.style.panel_border, ctx.style.border_width)
@@ -2053,9 +2183,7 @@ gray_scott_xy_plot :: proc(ctx: ^uifw.Gui_Context, title, key, x_label, y_label,
 	uifw.gui_line(ctx, {area.x, handle.y}, {area.x + area.w, handle.y}, cross_color, 1)
 	uifw.gui_line(ctx, {handle.x, area.y}, {handle.x, area.y + area.h}, cross_color, 1)
 	gray_scott_draw_plot_handle(ctx, handle, fill, stroke)
-	if ctx.focused == id {
-		uifw.gui_focus_ring(ctx, panel)
-	}
+	uifw.gui_focus_or_edit_ring(ctx, id, panel)
 
 	uifw.gui_text_clipped(ctx, {area.x, area.y + area.h + 4, area.w, ctx.style.text_height}, {area.x + 2, area.y + area.h + 5}, fmt.tprintf("%s %.3f - %.3f", x_label, min_value.x, max_value.x), ctx.style.text_muted)
 	uifw.gui_text_right(ctx, {area.x, area.y + area.h + 4, area.w, ctx.style.text_height}, fmt.tprintf("%s %.3f - %.3f", y_label, min_value.y, max_value.y), ctx.style.text_muted)
@@ -2064,18 +2192,21 @@ gray_scott_xy_plot :: proc(ctx: ^uifw.Gui_Context, title, key, x_label, y_label,
 	return changed
 }
 
-gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Context, panel: uifw.Rect, scroll: ^f32, worker: ^Render_Worker_State, color_editor: ^Color_Scheme_Editor_State) -> bool {
+gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Context, panel: uifw.Rect, scroll: ^f32, worker: ^Render_Worker_State, color_editor: ^Color_Scheme_Editor_State, section := -1) -> bool {
 	changed := false
 	uifw.gui_panel_begin(ctx, panel)
 	viewport := uifw.gui_next_rect(ctx, height = max(panel.h - ctx.style.panel_padding * 2, 0))
-	content_height := gray_scott_controls_content_height(sim, ctx)
+	content_height := gray_scott_controls_content_height(sim, ctx, section)
 	uifw.gui_scroll_begin(ctx, viewport, content_height, scroll)
 	uifw.gui_push_id(ctx, "gray_scott_controls")
 
+	if section < 0 || section == 0 {
 	uifw.gui_heading(ctx, "About this simulation")
 	uifw.gui_text_block(ctx, "Reaction-diffusion patterns from two virtual chemicals, U and V, with feed and kill rates shaping spots, stripes, spirals, and labyrinths.", ctx.content_width, ctx.style.text_muted)
 	uifw.gui_spacer(ctx, 8)
+	}
 
+	if section < 0 || section == 1 || section == CONTROLLER_SECTION_PRESETS {
 	uifw.gui_heading(ctx, "Presets")
 	preset_fieldset_draw(
 		ctx,
@@ -2086,25 +2217,43 @@ gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Con
 		sim.runtime.current_preset_index,
 		Preset_Fieldset_Builtin_Context {kind = .Gray_Scott, gray_scott = sim},
 	)
+	if section == CONTROLLER_SECTION_PRESETS {
+		uifw.gui_spacer(ctx, 8)
+		uifw.gui_heading(ctx, "Start Over")
+		changed = gray_scott_draw_actions(sim, ctx) || changed
+	}
+	if section == 1 || section == CONTROLLER_SECTION_PRESETS {
+		uifw.gui_spacer(ctx, 8)
+		uifw.gui_heading(ctx, "About this simulation")
+		uifw.gui_text_block(ctx, "Reaction-diffusion patterns from two virtual chemicals, U and V, with feed and kill rates shaping spots, stripes, spirals, and labyrinths.", ctx.content_width, ctx.style.text_muted)
+	}
 	uifw.gui_spacer(ctx, 8)
+	}
 
+	if section < 0 || section == 2 || section == CONTROLLER_SECTION_LOOK {
 	uifw.gui_heading(ctx, "Display Settings")
 	if color_scheme_editor_draw_selector(ctx, color_editor, "gray_scott_color_scheme", &sim.settings.color_scheme, &sim.settings.color_scheme_reversed) {
 		changed = true
 	}
 	uifw.gui_spacer(ctx, 8)
+	}
 
+	if section < 0 || section == 3 || section == CONTROLLER_SECTION_LOOK {
 	post_options := shared_default_post_processing_menu_options()
 	if shared_post_processing_menu(ctx, &sim.settings.blur_enabled, &sim.settings.blur_radius, &sim.settings.blur_sigma, post_options) {
 		changed = true
 	}
 	uifw.gui_spacer(ctx, 8)
+	}
 
+	if section < 0 || section == 4 {
 	cursor_options := shared_default_cursor_config_options()
 	cursor_options.size_step = 0.01
 	cursor_options.strength_step = 0.05
+	interaction_text := ctx.input.active_device == .Controller ? "Primary: seed reaction | Secondary: erase" : "Left click: seed reaction | Right click: erase"
 	controls_options := Controls_Panel_Options {
-		mouse_interaction_text = "Left click: seed reaction | Right click: erase",
+		heading = section >= 0 ? "Brush" : "Controls",
+		mouse_interaction_text = interaction_text,
 		cursor_settings_title = "Cursor Settings",
 		cursor = cursor_options,
 	}
@@ -2112,56 +2261,70 @@ gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Con
 		changed = true
 	}
 	uifw.gui_spacer(ctx, 8)
+	}
 
+	if section < 0 || section == 5 {
 	uifw.gui_heading(ctx, "Settings")
-	if uifw.gui_button(ctx, "Reset Simulation", "reset") {
-		gray_scott_reset_runtime(sim)
-		changed = true
-	}
-	if uifw.gui_button(ctx, "Randomize Settings", "randomize") {
-		gray_scott_randomize_settings(sim)
-		changed = true
-	}
-	if uifw.gui_button(ctx, "Seed Noise", "seed_noise") {
-		gray_scott_seed_noise(sim)
-		changed = true
-	}
+	changed = gray_scott_draw_actions(sim, ctx) || changed
 	uifw.gui_spacer(ctx, 8)
+	}
 
+	if section < 0 || section == 6 || section == GRAY_SCOTT_SECTION_PATTERN {
 	uifw.gui_heading(ctx, "Reaction-Diffusion")
 	uifw.gui_label(ctx, "Drag the handles to adjust paired parameters.")
 	if gray_scott_xy_plot(ctx, "Feed Rate vs Kill Rate", "feed_kill_plot", "Feed", "Kill", "F", "K", &sim.settings.feed, &sim.settings.kill, {0.0, 0.0}, {0.1, 0.1}, {0.94, 0.28, 0.31, 1.0}, {0.74, 0.16, 0.18, 1.0}) {
 		changed = true
 	}
+	shared_control_explanation(ctx, "feed_kill_plot", "Feed adds fresh chemical U; Kill removes chemical V. Tiny changes can turn spots into stripes or spirals.")
 	if gray_scott_xy_plot(ctx, "Diffusion U vs Diffusion V", "diffusion_plot", "Diffusion U", "Diffusion V", "Du", "Dv", &sim.settings.diffusion_a, &sim.settings.diffusion_b, {0.0, 0.0}, {0.5, 0.25}, {0.20, 0.78, 0.42, 1.0}, {0.10, 0.55, 0.28, 1.0}) {
 		changed = true
 	}
-	if uifw.gui_slider_f32(ctx, fmt.tprintf("Feed Rate: %.3f", sim.settings.feed), "feed", &sim.settings.feed, 0.0, 0.1) {
-		changed = true
-	}
-	if uifw.gui_slider_f32(ctx, fmt.tprintf("Kill Rate: %.3f", sim.settings.kill), "kill", &sim.settings.kill, 0.0, 0.1) {
-		changed = true
-	}
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Diffusion U: %.3f", sim.settings.diffusion_a), "diffusion_u", &sim.settings.diffusion_a, 0.01, 0.0, 0.5) {
-		changed = true
-	}
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Diffusion V: %.3f", sim.settings.diffusion_b), "diffusion_v", &sim.settings.diffusion_b, 0.01, 0.0, 0.25) {
-		changed = true
+	shared_control_explanation(ctx, "diffusion_plot", "Diffusion is how quickly each chemical spreads. The difference between U and V helps patterns form.")
+	// The spatial plots are the primary controller UI. Keep the legacy precise
+	// fields in the full menu, where their duplication remains useful.
+	if section != GRAY_SCOTT_SECTION_PATTERN {
+		if uifw.gui_slider_f32(ctx, fmt.tprintf("Feed Rate: %.3f", sim.settings.feed), "feed", &sim.settings.feed, 0.0, 0.1) {
+			changed = true
+		}
+		shared_control_explanation(ctx, "feed", "Feed adds fresh chemical U. Higher values refill the pattern faster.")
+		if uifw.gui_slider_f32(ctx, fmt.tprintf("Kill Rate: %.3f", sim.settings.kill), "kill", &sim.settings.kill, 0.0, 0.1) {
+			changed = true
+		}
+		shared_control_explanation(ctx, "kill", "Kill removes chemical V. Small changes can switch the kind of pattern you see.")
+		if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Diffusion U: %.3f", sim.settings.diffusion_a), "diffusion_u", &sim.settings.diffusion_a, 0.01, 0.0, 0.5) {
+			changed = true
+		}
+		shared_control_explanation(ctx, "diffusion_u", "Diffusion U is how quickly chemical U spreads into nearby pixels.")
+		if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Diffusion V: %.3f", sim.settings.diffusion_b), "diffusion_v", &sim.settings.diffusion_b, 0.01, 0.0, 0.25) {
+			changed = true
+		}
+		shared_control_explanation(ctx, "diffusion_v", "Diffusion V is how quickly chemical V spreads into nearby pixels.")
 	}
 	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Timestep: %.2f", sim.settings.timestep), "timestep", &sim.settings.timestep, 0.05, 0.0, 4.0) {
 		changed = true
 	}
+	shared_control_explanation(ctx, "timestep", "Timestep is the size of each simulation step. Higher moves faster, but can become unstable.")
 	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Simulation Speed: %.2fx", sim.settings.simulation_speed), "simulation_speed", &sim.settings.simulation_speed, 0.25, 0.0, 32.0) {
 		changed = true
 	}
 	if uifw.gui_toggle(ctx, fmt.tprintf("Adaptive Timestep: %v", sim.settings.enable_adaptive_timestep), "adaptive_timestep", &sim.settings.enable_adaptive_timestep) {
 		changed = true
 	}
+	shared_control_explanation(ctx, "adaptive_timestep", "Adaptive Timestep automatically takes smaller steps when the pattern needs more care.")
 	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Max Timestep: %.2f", sim.settings.max_timestep), "max_timestep", &sim.settings.max_timestep, 0.05, 0.1, 8.0) {
 		changed = true
 	}
+	shared_control_explanation(ctx, "max_timestep", "Max Timestep is the speed limit used by Adaptive Timestep.")
 	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Stability: %.2f", sim.settings.stability_factor), "stability", &sim.settings.stability_factor, 0.05, 0.1, 1.0) {
 		changed = true
+	}
+	shared_control_explanation(ctx, "stability", "Stability controls how cautious Adaptive Timestep is. Lower is safer; higher is bolder.")
+	}
+
+	if section < 0 || section == 6 || section == GRAY_SCOTT_SECTION_MASK {
+	if section == GRAY_SCOTT_SECTION_MASK {
+		uifw.gui_heading(ctx, "Mask")
+		uifw.gui_text_block(ctx, "Shape the reaction field with a procedural pattern, selected image, or live camera.", ctx.content_width, ctx.style.text_muted)
 	}
 	pattern_index := int(u32(sim.settings.mask_pattern))
 	if uifw.gui_selector(ctx, fmt.tprintf("Mask Pattern: %s", GRAY_SCOTT_MASK_PATTERN_NAMES[pattern_index]), "mask_pattern", &pattern_index, GRAY_SCOTT_MASK_PATTERN_NAMES[:]) {
@@ -2243,7 +2406,9 @@ gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Con
 			uifw.gui_label(ctx, status)
 		}
 	}
+	}
 
+	if section < 0 || section == 7 {
 	uifw.gui_spacer(ctx, 8)
 	uifw.gui_heading(ctx, "Camera")
 	if uifw.gui_button(ctx, "Reset Camera", "reset_camera") {
@@ -2264,6 +2429,7 @@ gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Con
 	}
 	if uifw.gui_slider_f32(ctx, fmt.tprintf("Camera Smoothing: %.2f", sim.runtime.camera_smoothing_factor), "camera_smoothing", &sim.runtime.camera_smoothing_factor, 0.0, 1.0) {
 		changed = true
+	}
 	}
 	uifw.gui_pop_id(ctx)
 	uifw.gui_scroll_end(ctx)

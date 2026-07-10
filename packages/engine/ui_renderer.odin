@@ -3,6 +3,7 @@ package engine
 import uifw "../ui"
 
 import vk "vendor:vulkan"
+import "core:bytes"
 import "core:fmt"
 import "core:math"
 import png "core:image/png"
@@ -41,8 +42,11 @@ UI_BACKDROP_QUARTER_TEXTURE_ID :: 6
 UI_BACKDROP_EIGHTH_TEMP_TEXTURE_ID :: 7
 UI_BACKDROP_EIGHTH_TEXTURE_ID :: 8
 UI_BACKDROP_TEXTURE_ID :: UI_BACKDROP_EIGHTH_TEXTURE_ID
-UI_FONT_TEXTURE_FIRST_ID :: 9
+UI_ICONOIR_ATLAS_TEXTURE_ID :: 9
+UI_FONT_TEXTURE_FIRST_ID :: 10
 UI_FONT_TEXTURE_COUNT :: UI_MAX_TEXTURES - UI_FONT_TEXTURE_FIRST_ID
+UI_ICONOIR_ICON_SIZE :: u32(96)
+UI_ICONOIR_ICON_COUNT :: 10
 UI_FONT_ATLAS_COLUMNS :: 16
 UI_EXAMPLE_SCREENSHOT_PATH :: "vizzaodin-ui-screenshot.png"
 UI_EXAMPLE_SCREENSHOT_MAX_WIDTH :: u32(512)
@@ -287,6 +291,7 @@ ui_renderer_create_texture_resources :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Co
 		return false
 	}
 	_ = ui_renderer_create_example_screenshot_texture(renderer, ctx)
+	_ = ui_renderer_create_iconoir_atlas_texture(renderer, ctx)
 	return true
 }
 
@@ -353,6 +358,57 @@ ui_renderer_create_example_screenshot_texture :: proc(renderer: ^Ui_Renderer, ct
 	}
 
 	return ui_renderer_create_owned_texture(renderer, ctx, UI_EXAMPLE_SCREENSHOT_TEXTURE_ID, target_width, target_height, rgba)
+}
+
+ui_renderer_create_iconoir_atlas_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) -> bool {
+	paths := [?]string {
+		"assets/icons/iconoir/png/96/play.png",
+		"assets/icons/iconoir/png/96/color-wheel.png",
+		"assets/icons/iconoir/png/96/design-pencil.png",
+		"assets/icons/iconoir/png/96/transition-right.png",
+		"assets/icons/iconoir/png/96/compass.png",
+		"assets/icons/iconoir/png/96/droplet.png",
+		"assets/icons/iconoir/png/96/planet.png",
+		"assets/icons/iconoir/png/96/sparks.png",
+		"assets/icons/iconoir/png/96/video-camera.png",
+		"assets/icons/iconoir/png/96/database-script.png",
+	}
+	atlas_width := UI_ICONOIR_ICON_SIZE * u32(len(paths))
+	atlas_height := UI_ICONOIR_ICON_SIZE
+	icon_stride := int(UI_ICONOIR_ICON_SIZE * 4)
+	atlas := make([]u8, int(atlas_width * atlas_height * 4), context.temp_allocator)
+	defer delete(atlas, context.temp_allocator)
+	loaded_count := 0
+
+	for path, icon_index in paths {
+		img, err := png.load(path, {.alpha_add_if_missing})
+		if err != nil || img == nil {
+			log_warn("ui_renderer_create_iconoir_atlas_texture: failed to load ", path)
+			if img != nil {
+				png.destroy(img)
+			}
+			continue
+		}
+		if img.depth != 8 || img.channels != 4 || img.width != int(UI_ICONOIR_ICON_SIZE) || img.height != int(UI_ICONOIR_ICON_SIZE) {
+			log_warn("ui_renderer_create_iconoir_atlas_texture: unexpected icon format ", path, " size=", img.width, "x", img.height, " channels=", img.channels, " depth=", img.depth)
+			png.destroy(img)
+			continue
+		}
+
+		pixels := bytes.buffer_to_bytes(&img.pixels)
+		for y in 0 ..< int(UI_ICONOIR_ICON_SIZE) {
+			src_start := y * icon_stride
+			dst_start := (y * int(atlas_width) + icon_index * int(UI_ICONOIR_ICON_SIZE)) * 4
+			copy(atlas[dst_start:dst_start + icon_stride], pixels[src_start:src_start + icon_stride])
+		}
+		loaded_count += 1
+		png.destroy(img)
+	}
+
+	if loaded_count == 0 {
+		return false
+	}
+	return ui_renderer_create_owned_texture(renderer, ctx, UI_ICONOIR_ATLAS_TEXTURE_ID, atlas_width, atlas_height, atlas)
 }
 
 ui_renderer_create_owned_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, index: int, width, height: u32, rgba: []u8) -> bool {

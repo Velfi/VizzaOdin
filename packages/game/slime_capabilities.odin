@@ -1,15 +1,12 @@
 package game
 
 SLIME_CONTROL_INSTRUMENTS := [?]Control_Instrument_Descriptor {
-	{instrument = .Play, label = "Play", icon = "P", description = "Playback and simulation-level actions."},
-	{instrument = .Look, label = "Look", icon = "L", description = "Palette, background, and post-processing."},
-	{instrument = .Brush, label = "Brush", icon = "B", description = "Pointer interaction controls."},
-	{instrument = .Motion, label = "Motion", icon = "M", description = "Agent speed and turning."},
-	{instrument = .Awareness, label = "Awareness", icon = "A", description = "Sensor cone controls."},
-	{instrument = .Field, label = "Field", icon = "F", description = "Trail deposition, memory, and spread."},
-	{instrument = .World, label = "World", icon = "W", description = "Mask source, target, and transform."},
-	{instrument = .Birth, label = "Birth", icon = "N", description = "Seed and initial placement."},
-	{instrument = .Capture, label = "Capture", icon = "C", description = "Screenshot and recording actions."},
+	{instrument = .Presets, label = "Presets", icon = "database-script", description = "Load presets, respawn agents, or establish a new behavior."},
+	{instrument = .Look, label = "Look", icon = "color-wheel", description = "Palette, background, and post-processing."},
+	{instrument = .Motion, label = "Agents", icon = "transition-right", description = "Agent motion, steering, and sensing."},
+	{instrument = .Field, label = "Trails", icon = "droplet", description = "Trail deposition, memory, and spread."},
+	{instrument = .Brush, label = "Brush", icon = "design-pencil", description = "Pointer interaction controls."},
+	{instrument = .World, label = "World", icon = "planet", description = "Initial placement and world masks."},
 }
 
 SLIME_CONTROL_DESCRIPTORS := [?]Control_Descriptor {
@@ -904,6 +901,26 @@ SLIME_CONTROL_DESCRIPTORS := [?]Control_Descriptor {
 		wiring_status = .Deprecated,
 		legacy_names = "diffusion_frequency",
 		instrument = .Field,
+	},
+	{
+		id = .Presets_Manage,
+		stable_id = "presets.manage",
+		label = "Manage Presets",
+		description = "Load built-in Slime presets and save the current Slime settings.",
+		type = .Action,
+		semantic_group = .Presets,
+		feel_group = .Source,
+		reuse_level = .Universal,
+		importance = .Essential,
+		frequency = .PerSession,
+		scope = .SimulationSpecific,
+		preset_scope = .No,
+		runtime_apply_policy = .ActionOnly,
+		simulation_support = "Slime Mold",
+		ui_hint = .Button,
+		controller_hint = .Primary,
+		wiring_status = .FullyWired,
+		instrument = .Presets,
 	},
 	{
 		id = .Capture_Record,

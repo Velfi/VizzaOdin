@@ -8,6 +8,7 @@ import "core:c"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:sync"
 import "core:time"
 import sdl "vendor:sdl3"
 
@@ -20,6 +21,7 @@ Render_Worker_State :: struct {
 	initial_pixel_height: i32,
 	screenshot: ^engine.Screenshot_State,
 	theme_preview: bool,
+	text_input_requested: bool,
 	running: bool,
 }
 
@@ -398,6 +400,7 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 			nav_pressed_x = cmd.frame_input.nav_pressed_x,
 			nav_pressed_y = cmd.frame_input.nav_pressed_y,
 			accept = cmd.frame_input.accept,
+			accept_pressed = cmd.frame_input.actions.accept.pressed,
 			back = cmd.frame_input.back,
 			pause = cmd.frame_input.pause,
 			toggle_ui = cmd.frame_input.toggle_ui,
@@ -438,6 +441,7 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 			key_x = cmd.frame_input.key_x,
 			key_v = cmd.frame_input.key_v,
 			key_c = cmd.frame_input.key_c,
+			key_f1 = cmd.frame_input.key_f1,
 			key_slash = cmd.frame_input.key_slash,
 			key_space = cmd.frame_input.key_space,
 			key_space_down = cmd.frame_input.key_space_down,
@@ -449,6 +453,8 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 		})
 		simulation_input := app_ui_simulation_filter_input(&runtime.app_ui, &runtime.gui, cmd.frame_input)
 		simulation_input.camera_sensitivity = runtime.app_ui.settings.default_camera_sensitivity
+		simulation_input.controller_camera_sensitivity = runtime.app_ui.settings.controller_camera_sensitivity
+		simulation_input.controller_camera_invert_y = runtime.app_ui.settings.controller_camera_invert_y
 		if runtime.app_ui.mode == .Particle_Life {
 			particle_life_apply_frame_input(&runtime.particle_life, simulation_input)
 		} else if runtime.app_ui.mode == .Gray_Scott {
@@ -466,6 +472,9 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 		app_ui_draw(&runtime.app_ui, &runtime.gui, &runtime.sim, &runtime.particle_life, &runtime.vk_ctx, state)
 		render_worker_apply_main_menu_palette_after_navigation(runtime, mode_before_ui)
 		uifw.gui_end_frame(&runtime.gui)
+		slime_controller_ui_end_frame(&runtime.app_ui, &runtime.gui)
+		simulation_controller_ui_end_frame(&runtime.app_ui, &runtime.gui)
+		sync.atomic_store(&state.text_input_requested, runtime.gui.wants_text_input)
 		if runtime.gui.clipboard_set_pending {
 			msg: Render_To_Ui_Message
 			msg.kind = .Clipboard_Set
@@ -503,9 +512,15 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 		profile_render_seconds := f64(0)
 		if runtime.vk_ok {
 			profile_render_start := time.tick_now()
-			if !render_backend_draw_frame(&runtime.render_backend, &runtime.vk_ctx, &runtime.sim, &runtime.preview_gray_scott, &runtime.particle_life, &runtime.preview_particle_life, &runtime.vectors_gpu, &runtime.preview_vectors_gpu, &runtime.moire_gpu, &runtime.preview_moire_gpu, &runtime.primordial_gpu, &runtime.preview_primordial_gpu, &runtime.pellets_gpu, &runtime.preview_pellets_gpu, &runtime.flow_gpu, &runtime.preview_flow_gpu, &runtime.slime_gpu, &runtime.voronoi_gpu, &runtime.preview_slime_gpu, &runtime.preview_voronoi_gpu, &runtime.app_ui, &runtime.gui, dt, runtime.app_ui.mode, cmd.frame_input.frame_index, state.screenshot, &runtime.video_recorder) {
+			frame_rendered := render_backend_draw_frame(&runtime.render_backend, &runtime.vk_ctx, &runtime.sim, &runtime.preview_gray_scott, &runtime.particle_life, &runtime.preview_particle_life, &runtime.vectors_gpu, &runtime.preview_vectors_gpu, &runtime.moire_gpu, &runtime.preview_moire_gpu, &runtime.primordial_gpu, &runtime.preview_primordial_gpu, &runtime.pellets_gpu, &runtime.preview_pellets_gpu, &runtime.flow_gpu, &runtime.preview_flow_gpu, &runtime.slime_gpu, &runtime.voronoi_gpu, &runtime.preview_slime_gpu, &runtime.preview_voronoi_gpu, &runtime.app_ui, &runtime.gui, dt, runtime.app_ui.mode, cmd.frame_input.frame_index, state.screenshot, &runtime.video_recorder)
+			if !frame_rendered {
 				engine.log_error("render_worker: render_backend_draw_frame failed frame=", cmd.frame_input.frame_index)
 				render_worker_publish_error(state, "Failed to execute Vulkan render graph")
+			} else {
+				// Menu previews and simulation GPU resources are initialized during
+				// their first successful render. Keep the transition black through
+				// that frame, then allow the next frame to begin fading in.
+				app_ui_mode_transition_notify_loaded(&runtime.app_ui)
 			}
 				if runtime.video_recorder.status == .Failed {
 					err := fixed_string(runtime.video_recorder.last_error[:])
@@ -1028,12 +1043,9 @@ render_worker_hide_ui :: proc(runtime: ^Render_Worker_Runtime) {
 	if runtime == nil {
 		return
 	}
-	runtime.app_ui.simulation_shell.show_ui = false
-	runtime.app_ui.simulation_shell.controls_visible = false
+	app_ui_hide_unfocused_simulation_ui(&runtime.app_ui)
 	runtime.app_ui.simulation_shell.force_hidden = true
 	runtime.app_ui.simulation_shell.idle_seconds = f32(max(runtime.app_ui.settings.auto_hide_delay, 0)) / 1000.0
-	runtime.app_ui.slime_controller.deck_visible = false
-	runtime.app_ui.slime_controller.panel_open = false
 }
 
 render_worker_apply_builtin_preset :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode, index: int) -> bool {

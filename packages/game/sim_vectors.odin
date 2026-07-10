@@ -416,18 +416,17 @@ vectors_gpu_update_geometry :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_
 			}
 			intensity := math.clamp(value, 0, 1)
 			angle := value * 2 * math.PI
-			length := max(settings.line_length, 0.001) * 1.7
-			if image_mode {
-				length *= 0.5 + math.clamp(value, 0, 1) * 0.5
-			}
+			// The configured length is the full segment length, as in Vizza's
+			// original vector renderer. Centering it on the sample doubles it.
+			length := max(settings.line_length, 0.001) * (0.5 + math.clamp(value, 0, 1) * 0.5)
 			half_width := max(settings.line_width, 0.001) * 0.5
 			dx := math.cos(angle) * length
 			dy := math.sin(angle) * length
 			len := max(math.sqrt(dx * dx + dy * dy), 0.000001)
 			px := -dy / len * half_width
 			py := dx / len * half_width
-			x0 := wx - dx
-			y0 := wy - dy
+			x0 := wx
+			y0 := wy
 			x1 := wx + dx
 			y1 := wy + dy
 			base := u32(vertex_count)

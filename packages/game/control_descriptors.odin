@@ -175,6 +175,7 @@ Control_Instrument :: enum {
 	Field,
 	Birth,
 	World,
+	Presets,
 	Source,
 	Capture,
 	Debug,
@@ -221,6 +222,7 @@ Control_Id :: enum {
 	Mask_Reversed,
 	Field_Decay_Frequency,
 	Field_Diffusion_Frequency,
+	Presets_Manage,
 	Capture_Record,
 }
 
@@ -467,7 +469,7 @@ controller_hint_is_valid :: proc(value: Controller_Hint) -> bool {
 
 control_instrument_is_valid :: proc(value: Control_Instrument) -> bool {
 	switch value {
-	case .Play, .Look, .Brush, .Motion, .Awareness, .Field, .Birth, .World, .Source, .Capture, .Debug:
+	case .Play, .Look, .Brush, .Motion, .Awareness, .Field, .Birth, .World, .Presets, .Source, .Capture, .Debug:
 		return true
 	case:
 		return false

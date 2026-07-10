@@ -22,6 +22,7 @@ Prefer the 96px assets when the icon may be scaled up in a 4K viewport. Use the
 - World: `planet`
 - Birth: `sparks`
 - Capture: `video-camera`
+- Presets: `database-script`
 
 ## License
 

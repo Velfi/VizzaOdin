@@ -118,6 +118,7 @@ Slime_Gpu_State :: struct {
 	display_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 	texture_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 	camera_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	present_camera_zoom: f32,
 	agent_buffer: engine.Vk_Buffer,
 	trail_buffer: engine.Vk_Buffer,
 	mask_buffer: engine.Vk_Buffer,
@@ -348,20 +349,34 @@ slime_upload_render_params :: proc(gpu: ^Slime_Gpu_State, frame_slot: int, setti
 	params^ = {filtering_mode = settings.trail_map_filtering == .Nearest ? u32(0) : u32(1)}
 }
 
-slime_upload_camera :: proc(gpu: ^Slime_Gpu_State, frame_slot: int) {
+slime_camera_uniform_for_state :: proc(width, height: u32, control: ^Camera_Control_State = nil) -> Slime_Camera {
+	camera: Camera_Control_State
+	if control != nil {
+		camera = control^
+	} else {
+		camera_controls_init(&camera)
+	}
+	camera_controls_sync(&camera)
+	zoom := max(camera.zoom, CAMERA_MIN_ZOOM)
+	return {
+		transform_matrix = {
+			zoom, 0, 0, 0,
+			0, zoom, 0, 0,
+			0, 0, 1, 0,
+			-camera.position[0] * zoom, -camera.position[1] * zoom, 0, 1,
+		},
+		position = camera.position,
+		zoom = zoom,
+		aspect_ratio = f32(width) / max(f32(height), 1),
+	}
+}
+
+slime_upload_camera :: proc(gpu: ^Slime_Gpu_State, frame_slot: int, control: ^Camera_Control_State = nil) {
+	uniform := slime_camera_uniform_for_state(gpu.width, gpu.height, control)
+	gpu.present_camera_zoom = uniform.zoom
 	if gpu.camera_buffers[frame_slot].mapped == nil {return}
 	camera := cast(^Slime_Camera)gpu.camera_buffers[frame_slot].mapped
-	camera^ = {
-		transform_matrix = {
-			1, 0, 0, 0,
-			0, 1, 0, 0,
-			0, 0, 1, 0,
-			0, 0, 0, 1,
-		},
-		position = {0, 0},
-		zoom = 1,
-		aspect_ratio = f32(gpu.width) / max(f32(gpu.height), 1),
-	}
+	camera^ = uniform
 }
 
 slime_write_uniforms :: proc(gpu: ^Slime_Gpu_State, frame_slot: int, settings: ^Slime_Settings, cursor_active: u32, cursor_pixel: [2]f32, cursor_size, cursor_strength: f32) {
@@ -659,16 +674,16 @@ slime_gpu_step_ready :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 	slime_compute_barrier(vk_ctx, cmd, {.FRAGMENT_SHADER})
 }
 
-slime_gpu_present :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame) {
+slime_gpu_present :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, camera: ^Camera_Control_State = nil) {
 	viewport := vk.Viewport{x = 0, y = 0, width = f32(vk_ctx.swapchain_extent.width), height = f32(vk_ctx.swapchain_extent.height), minDepth = 0, maxDepth = 1}
 	scissor := vk.Rect2D{offset = {0, 0}, extent = vk_ctx.swapchain_extent}
-	slime_gpu_present_viewport(gpu, vk_ctx, frame, viewport, scissor)
+	slime_gpu_present_viewport(gpu, vk_ctx, frame, viewport, scissor, camera)
 }
 
-slime_gpu_present_viewport :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, viewport: vk.Viewport, scissor: vk.Rect2D) {
+slime_gpu_present_viewport :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, viewport: vk.Viewport, scissor: vk.Rect2D, camera: ^Camera_Control_State = nil) {
 	if !gpu.ready || gpu.present_pipeline.pipeline == vk.Pipeline(0) {return}
 	slime_transition_image(vk_ctx, frame.command_buffer, &gpu.display_image, .SHADER_READ_ONLY_OPTIMAL)
-	slime_upload_camera(gpu, int(frame.frame_index))
+	slime_upload_camera(gpu, int(frame.frame_index), camera)
 	slime_gpu_draw_prepared_viewport(gpu, vk_ctx, frame, viewport, scissor)
 }
 
@@ -686,7 +701,12 @@ slime_gpu_draw_prepared_viewport :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.
 	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.present_pipeline.layout, 0, 1, &texture_set, 0, nil)
 	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.present_pipeline.layout, 1, 1, &camera_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
-	vk.CmdDraw(frame.command_buffer, 6, 25, 0, 0)
+	zoom := gpu.present_camera_zoom
+	if zoom <= 0 {
+		zoom = 1
+	}
+	tile_count := infinite_render_tile_count(zoom)
+	vk.CmdDraw(frame.command_buffer, 6, tile_count * tile_count, 0, 0)
 	engine.vk_cmd_count_draw(vk_ctx)
 }
 

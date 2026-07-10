@@ -1,0 +1,387 @@
+package game
+
+import uifw "../ui"
+import engine "../engine"
+
+import "core:fmt"
+
+Simulation_Controller_Ui_State :: struct {
+	deck_visible: bool,
+	panel_open: bool,
+	focused_index: int,
+	active_index: int,
+	panel_scroll: f32,
+	focus: uifw.Controller_Focus_State,
+	pending_panel_focus: bool,
+}
+
+SIMULATION_CONTROLLER_STATE_COUNT :: 8
+
+// The deck is ordered by impact: establish a result quickly, shape the defining
+// behavior, then expose direct interaction and lower-frequency utilities.
+// Values above the legacy 0-7 section range are semantic controller views that
+// may compose several old fieldsets without changing the underlying settings.
+CONTROLLER_SECTION_PRESETS :: 100
+CONTROLLER_SECTION_LOOK :: 101
+GRAY_SCOTT_SECTION_PATTERN :: 102
+GRAY_SCOTT_SECTION_MASK :: 103
+PARTICLE_LIFE_SECTION_FORCES :: 102
+PARTICLE_LIFE_SECTION_POPULATION :: 103
+PARTICLE_LIFE_SECTION_ADVANCED :: 104
+MOIRE_SECTION_PATTERN :: 102
+
+GRAY_SCOTT_CONTROLLER_TABS := [?]string{"Presets", "Look", "Pattern", "Mask", "Brush", "Camera"}
+GRAY_SCOTT_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, GRAY_SCOTT_SECTION_PATTERN, GRAY_SCOTT_SECTION_MASK, 4, 7}
+PARTICLE_LIFE_CONTROLLER_TABS := [?]string{"Presets", "Look", "Forces", "Physics", "Population", "Brush", "Advanced"}
+PARTICLE_LIFE_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, PARTICLE_LIFE_SECTION_FORCES, 5, PARTICLE_LIFE_SECTION_POPULATION, 3, PARTICLE_LIFE_SECTION_ADVANCED}
+FLOW_FIELD_CONTROLLER_TABS := [?]string{"Presets", "Look", "Field", "Particles", "Trails", "Brush"}
+FLOW_FIELD_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 5, 6, 7, 3}
+PELLETS_CONTROLLER_TABS := [?]string{"Presets", "Look", "Physics", "Particles", "Brush"}
+PELLETS_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 6, 5, 3}
+VORONOI_CONTROLLER_TABS := [?]string{"Presets", "Look", "Sites"}
+VORONOI_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 5}
+MOIRE_CONTROLLER_TABS := [?]string{"Presets", "Look", "Pattern", "Flow"}
+MOIRE_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, MOIRE_SECTION_PATTERN, 7}
+VECTORS_CONTROLLER_TABS := [?]string{"Presets", "Look", "Field"}
+VECTORS_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 3}
+PRIMORDIAL_CONTROLLER_TABS := [?]string{"Presets", "Look", "Motion", "Population", "Brush"}
+PRIMORDIAL_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 6, 5, 3}
+
+simulation_controller_ui_init :: proc(state: ^Simulation_Controller_Ui_State) {
+	state^ = {deck_visible = false, panel_open = false}
+	uifw.gui_controller_focus_init(&state.focus)
+}
+
+simulation_controller_ui_state_index :: proc(mode: App_Mode) -> (int, bool) {
+	#partial switch mode {
+	case .Gray_Scott: return 0, true
+	case .Particle_Life: return 1, true
+	case .Flow_Field: return 2, true
+	case .Pellets: return 3, true
+	case .Voronoi_CA: return 4, true
+	case .Moire: return 5, true
+	case .Vectors: return 6, true
+	case .Primordial: return 7, true
+	case: return 0, false
+	}
+}
+
+simulation_controller_ui_state :: proc(ui: ^App_Ui_State) -> ^Simulation_Controller_Ui_State {
+	index, ok := simulation_controller_ui_state_index(ui.mode)
+	return ok ? &ui.simulation_controllers[index] : nil
+}
+
+simulation_controller_ui_tabs :: proc(mode: App_Mode) -> []string {
+	#partial switch mode {
+	case .Gray_Scott: return GRAY_SCOTT_CONTROLLER_TABS[:]
+	case .Particle_Life: return PARTICLE_LIFE_CONTROLLER_TABS[:]
+	case .Flow_Field: return FLOW_FIELD_CONTROLLER_TABS[:]
+	case .Pellets: return PELLETS_CONTROLLER_TABS[:]
+	case .Voronoi_CA: return VORONOI_CONTROLLER_TABS[:]
+	case .Moire: return MOIRE_CONTROLLER_TABS[:]
+	case .Vectors: return VECTORS_CONTROLLER_TABS[:]
+	case .Primordial: return PRIMORDIAL_CONTROLLER_TABS[:]
+	case: return nil
+	}
+}
+
+simulation_controller_ui_section :: proc(mode: App_Mode, tab_index: int) -> int {
+	sections: []int
+	#partial switch mode {
+	case .Gray_Scott: sections = GRAY_SCOTT_CONTROLLER_SECTIONS[:]
+	case .Particle_Life: sections = PARTICLE_LIFE_CONTROLLER_SECTIONS[:]
+	case .Flow_Field: sections = FLOW_FIELD_CONTROLLER_SECTIONS[:]
+	case .Pellets: sections = PELLETS_CONTROLLER_SECTIONS[:]
+	case .Voronoi_CA: sections = VORONOI_CONTROLLER_SECTIONS[:]
+	case .Moire: sections = MOIRE_CONTROLLER_SECTIONS[:]
+	case .Vectors: sections = VECTORS_CONTROLLER_SECTIONS[:]
+	case .Primordial: sections = PRIMORDIAL_CONTROLLER_SECTIONS[:]
+	case: return tab_index
+	}
+	if tab_index < 0 || tab_index >= len(sections) {return tab_index}
+	return sections[tab_index]
+}
+
+simulation_controller_ui_tab_icon_index :: proc(label: string) -> int {
+	if label == "Presets" {return 9} // database-script
+	if label == "Look" {return 1} // color-wheel
+	if label == "Pattern" || label == "Field" {return 5} // droplet
+	if label == "Trails" {return 7} // sparks
+	if label == "Physics" || label == "Forces" || label == "Motion" || label == "Population" || label == "Particles" {return 3} // transition-right
+	if label == "Camera" || label == "Advanced" {return 4} // compass
+	if label == "Brush" {return 2} // design-pencil
+	if label == "Mask" || label == "Sites" {return 6} // planet
+	if label == "Flow" {return 0} // play
+	return 6
+}
+
+simulation_controller_ui_enabled :: proc(ui: ^App_Ui_State) -> bool {
+	if ui == nil {return false}
+	_, ok := simulation_controller_ui_state_index(ui.mode)
+	return ok
+}
+
+simulation_controller_ui_focused :: proc(ui: ^App_Ui_State) -> bool {
+	state := simulation_controller_ui_state(ui)
+	return state != nil && state.focus.phase != .Unfocused
+}
+
+simulation_controller_ui_over_ui :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, input: Ui_Frame_Input) -> bool {
+	state := simulation_controller_ui_state(ui)
+	if state == nil || (!state.deck_visible && !state.panel_open) {return false}
+	deck := simulation_controller_ui_deck_rect(gui, f32(input.window_width), f32(input.window_height), len(simulation_controller_ui_tabs(ui.mode)))
+	if state.deck_visible && uifw.gui_contains(deck, input.mouse_pos) {return true}
+	return state.panel_open && uifw.gui_contains(simulation_controller_ui_panel_rect(gui, f32(input.window_width), f32(input.window_height), deck), input.mouse_pos)
+}
+
+simulation_controller_ui_region_id :: proc(gui: ^uifw.Gui_Context, suffix: string) -> uifw.Gui_Id {
+	return uifw.gui_make_id(gui, fmt.tprintf("simulation_controller_%s", suffix))
+}
+
+simulation_controller_ui_panel_region_id :: proc(gui: ^uifw.Gui_Context, section: int) -> uifw.Gui_Id {
+	uifw.gui_push_id(gui, fmt.tprintf("simulation_controller_section_%d", section))
+	region := simulation_controller_ui_region_id(gui, "panel")
+	uifw.gui_pop_id(gui)
+	return region
+}
+
+simulation_controller_ui_clamp :: proc(state: ^Simulation_Controller_Ui_State, count: int) {
+	if count <= 0 {state.focused_index = 0; state.active_index = 0; return}
+	state.focused_index = max(min(state.focused_index, count - 1), 0)
+	state.active_index = max(min(state.active_index, count - 1), 0)
+}
+
+simulation_controller_ui_deck_rect :: proc(gui: ^uifw.Gui_Context, width, height: f32, count: int) -> uifw.Rect {
+	margin := max(gui.style.spacing_3, f32(18))
+	key_w := slime_controller_ui_key_badge_size(gui)
+	hint_h := max(gui.style.small_line_height, gui.style.body_line_height * 0.72)
+	deck_h := max(gui.style.row_height * 3.65, key_w + gui.style.body_line_height + hint_h + gui.style.spacing_3 + gui.style.spacing_2)
+	tab_min := max(SLIME_CONTROLLER_UI_DECK_MIN_TAB_WIDTH, key_w + gui.style.spacing_2 + gui.style.body_char_width * 5.8)
+	tab_min = min(tab_min, SLIME_CONTROLLER_UI_DECK_MAX_TAB_WIDTH)
+	target_w := f32(max(count, 1)) * tab_min + f32(max(count, 1) + 1) * gui.style.spacing
+	deck_w := min(max(target_w, width * 0.58), max(width - margin * 2, 1))
+	return {max((width - deck_w) * 0.5, margin), max(height - deck_h - margin, margin), deck_w, deck_h}
+}
+
+simulation_controller_ui_panel_rect :: proc(gui: ^uifw.Gui_Context, width, height: f32, deck: uifw.Rect) -> uifw.Rect {
+	margin := max(gui.style.spacing_3, f32(18))
+	panel_w := min(max(width * 0.58, f32(720)), max(width - margin * 2, 1))
+	panel_h := min(max(height * 0.42, gui.style.row_height * 7), max(deck.y - margin * 2, 1))
+	return {max((width - panel_w) * 0.5, margin), max(deck.y - panel_h - margin, margin), panel_w, panel_h}
+}
+
+simulation_controller_ui_focus_deck :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
+	state := simulation_controller_ui_state(ui)
+	if state == nil {return}
+	tabs := simulation_controller_ui_tabs(ui.mode)
+	simulation_controller_ui_clamp(state, len(tabs))
+	app_ui_set_simulation_chrome_visible(ui, true)
+	state.focused_index = state.active_index
+	region := simulation_controller_ui_region_id(gui, "deck")
+	fallback := uifw.gui_make_id(gui, fmt.tprintf("simulation_deck_%d", state.focused_index))
+	gui.focused = uifw.gui_controller_focus_enter_region(&state.focus, region, uifw.GUI_ID_NONE, fallback)
+}
+
+simulation_controller_ui_update_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) -> bool {
+	if !simulation_controller_ui_enabled(ui) {return false}
+	state := simulation_controller_ui_state(ui)
+	tabs := simulation_controller_ui_tabs(ui.mode)
+	simulation_controller_ui_clamp(state, len(tabs))
+	state.focus.remember_focus = ui.settings.remember_controller_focus
+	consumed := false
+	if state.focus.phase == .Unfocused && (gui.input.focus_next || gui.input.focus_prev) {
+		simulation_controller_ui_focus_deck(ui, gui)
+		gui.input.focus_next = false; gui.input.focus_prev = false
+	}
+	if app_ui_control_deck_pressed(ui.frame_actions.control_deck, gui.input.key_space || gui.input.key_space_pressed) ||
+		ui.frame_actions.toggle_ui.pressed || gui.input.toggle_ui {
+		simulation_controller_ui_focus_deck(ui, gui)
+		gui.input.toggle_ui = false
+		consumed = true
+	}
+	if state.focus.phase != .Unfocused {
+		if gui.input.back && gui.focus_edit_id == uifw.GUI_ID_NONE && gui.text_edit_id == uifw.GUI_ID_NONE && gui.open_panel == uifw.GUI_ID_NONE {
+			if state.focus.phase == .Active_Control {
+				uifw.gui_controller_focus_deactivate(&state.focus)
+			} else if state.focus.phase == .Child_Region {
+				state.panel_open = false
+				uifw.gui_controller_focus_leave_region(&state.focus)
+				gui.focused = uifw.gui_make_id(gui, fmt.tprintf("simulation_deck_%d", state.focused_index))
+			} else {
+				state.panel_open = false
+				uifw.gui_controller_focus_leave_region(&state.focus)
+				gui.focused = uifw.GUI_ID_NONE
+			}
+			gui.input.back = false
+		}
+		deck_focused := state.focus.phase == .Region && state.deck_visible &&
+			gui.focused == uifw.gui_make_id(gui, fmt.tprintf("simulation_deck_%d", state.focused_index))
+		if deck_focused {
+			if gui.input.nav_pressed_x > 0 || gui.input.focus_next {
+				state.focused_index = (state.focused_index + 1) % len(tabs)
+				gui.input.nav_pressed_x = 0; gui.input.focus_next = false
+			} else if gui.input.nav_pressed_x < 0 || gui.input.focus_prev {
+				state.focused_index = (state.focused_index - 1 + len(tabs)) % len(tabs)
+				gui.input.nav_pressed_x = 0; gui.input.focus_prev = false
+			}
+			gui.focused = uifw.gui_make_id(gui, fmt.tprintf("simulation_deck_%d", state.focused_index))
+			if gui.input.accept {
+				if state.active_index != state.focused_index {state.panel_scroll = 0}
+				state.active_index = state.focused_index; state.panel_open = true
+				section := simulation_controller_ui_section(ui.mode, state.active_index)
+				panel_region := simulation_controller_ui_panel_region_id(gui, section)
+				_ = uifw.gui_controller_focus_enter_region(&state.focus, panel_region, simulation_controller_ui_region_id(gui, "deck"), uifw.GUI_ID_NONE)
+				state.pending_panel_focus = true
+			}
+		} else if state.focus.phase == .Child_Region && gui.input.accept && gui.focused != uifw.GUI_ID_NONE {
+			uifw.gui_controller_focus_activate(&state.focus, gui.focused)
+		}
+	}
+	return consumed
+}
+
+simulation_controller_ui_draw_deck :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, rect: uifw.Rect) {
+	state := simulation_controller_ui_state(ui)
+	tabs := simulation_controller_ui_tabs(ui.mode)
+	uifw.gui_spatial_group_begin(gui, "simulation_controller_deck")
+	defer uifw.gui_spatial_group_end(gui)
+	uifw.gui_shadow(gui, rect, 8, {0, 6}, 18, {0, 0, 0, 0.36})
+	uifw.gui_round_rect(gui, rect, 8, {0.025, 0.035, 0.05, 0.52})
+	glass := uifw.gui_default_glass_style(gui, 8)
+	glass.tint = {0.06, 0.08, 0.10, 0.68}
+	glass.roughness = 0.58
+	glass.thickness = max(gui.style.rhythm * 0.20, f32(8))
+	glass.bevel = max(gui.style.border_width * 6, f32(6))
+	glass.border = 0.32
+	uifw.gui_refractive_glass_rect(gui, rect, glass)
+	uifw.gui_round_stroke(gui, rect, 8, {1, 1, 1, 0.16}, gui.style.border_width)
+	gap := gui.style.spacing
+	hint_h := max(gui.style.small_line_height, gui.style.body_line_height * 0.72)
+	hint_rect := uifw.Rect{rect.x + gap * 1.5, rect.y + rect.h - gap - hint_h, max(rect.w - gap * 3, 1), hint_h}
+	tab_w := max((rect.w - gap * f32(len(tabs) + 1)) / f32(len(tabs)), 1)
+	tab_h := max(hint_rect.y - rect.y - gap * 2, 1)
+	for label, i in tabs {
+		tab := uifw.Rect{rect.x + gap + f32(i) * (tab_w + gap), rect.y + gap, tab_w, tab_h}
+		id := uifw.gui_make_id(gui, fmt.tprintf("simulation_deck_%d", i))
+		control := uifw.gui_control(gui, id, tab, true)
+		if control.focused {state.focused_index = i}
+		if control.activated || (control.hovered && gui.active == id && gui.input.mouse_released) {
+			if state.active_index != i {state.panel_scroll = 0}
+			state.focused_index = i; state.active_index = i; state.panel_open = true; state.deck_visible = true
+			simulation_controller_ui_focus_deck(ui, gui)
+		}
+		selected := state.panel_open && state.active_index == i
+		fill := selected ? uifw.Color{0.28, 0.30, 0.62, 0.78} : uifw.Color{1, 1, 1, 0.08}
+		deck_focused := state.focus.phase == .Region && (control.focused || i == state.focused_index)
+		if control.hovered || deck_focused {
+			fill = selected ? uifw.Color{0.34, 0.36, 0.72, 0.86} : uifw.Color{1, 1, 1, 0.16}
+		}
+		uifw.gui_round_rect(gui, tab, 6, fill)
+		uifw.gui_round_stroke(gui, tab, 6, selected ? uifw.gui_apply_opacity(gui.style.accent, 0.62) : uifw.Color{1, 1, 1, 0.12}, selected ? max(gui.style.border_width * 1.5, 1.5) : gui.style.border_width)
+		if deck_focused {uifw.gui_focus_ring(gui, tab)}
+		content := uifw.gui_inset(tab, max(gui.style.spacing_1, gui.style.border_width * 2))
+		label_h := min(gui.style.body_line_height, max(content.h * 0.34, gui.style.small_line_height))
+		badge_limit := max(content.h - label_h - gui.style.spacing_1, 1)
+		badge_size := min(min(slime_controller_ui_key_badge_size(gui), badge_limit), max(content.w, 1))
+		badge := uifw.Rect{content.x + max((content.w - badge_size) * 0.5, 0), content.y, badge_size, badge_size}
+		label_y := badge.y + badge.h + gui.style.spacing_1
+		label_rect := uifw.Rect{content.x, label_y, content.w, max(content.y + content.h - label_y, 1)}
+		scale := slime_controller_ui_fit_text_scale(gui, label, SLIME_CONTROLLER_UI_DECK_LABEL_SCALE, label_rect.w)
+		uifw.gui_scissor_begin(gui, tab)
+		slime_controller_ui_draw_icon_badge_index(gui, badge, simulation_controller_ui_tab_icon_index(label), selected || deck_focused)
+		uifw.gui_text_aligned_scaled(gui, label_rect, label, gui.style.text, .Center, scale)
+		uifw.gui_scissor_end(gui)
+	}
+	hint := simulation_controller_ui_context_hint(state, gui.input.active_device)
+	hint_scale := slime_controller_ui_fit_text_scale(gui, hint, SLIME_CONTROLLER_UI_HINT_SCALE, hint_rect.w)
+	uifw.gui_text_aligned_scaled(gui, hint_rect, hint, gui.style.text_muted, .Center, hint_scale)
+}
+
+simulation_controller_ui_context_hint :: proc(state: ^Simulation_Controller_Ui_State, device: uifw.Input_Device_Kind) -> string {
+	controller := device == .Controller
+	switch state.focus.phase {
+	case .Region:
+		return controller ? "D-pad / shoulders: browse  |  Accept: open  |  Back: close" : "Arrows / Tab: browse  |  Enter: open  |  Esc: close"
+	case .Child_Region:
+		return controller ? "D-pad: navigate  |  Accept: edit  |  Back: sections" : "Arrows / Tab: navigate  |  Enter: edit  |  Esc: sections"
+	case .Active_Control:
+		return controller ? "D-pad: adjust  |  Light stick: fine  |  Accept: commit  |  Back: cancel" : "Arrows: adjust  |  Shift: fine  |  Enter: commit  |  Esc: cancel"
+	case .Unfocused:
+		return controller ? "Shoulders: focus controls" : "Tab: focus controls  |  Click: open section"
+	}
+	return ""
+}
+
+simulation_controller_ui_draw_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, gray: ^Gray_Scott_Simulation, particle: ^Particle_Life_Simulation, remaining: ^Remaining_Sim_State, rect: uifw.Rect, worker: ^Render_Worker_State) {
+	state := simulation_controller_ui_state(ui)
+	section := simulation_controller_ui_section(ui.mode, state.active_index)
+	uifw.gui_push_id(gui, fmt.tprintf("simulation_controller_section_%d", section))
+	defer uifw.gui_pop_id(gui)
+	panel_region := simulation_controller_ui_region_id(gui, "panel")
+	first := gui.spatial_item_count
+	previous := gui.controller_explicit_activation
+	gui.controller_explicit_activation = state.focus.phase == .Child_Region || state.focus.phase == .Active_Control
+	defer gui.controller_explicit_activation = previous
+	uifw.gui_spatial_group_begin(gui, "simulation_controller_panel")
+	defer uifw.gui_spatial_group_end(gui)
+	#partial switch ui.mode {
+	case .Gray_Scott:
+		_ = gray_scott_draw_controls(gray, gui, rect, &state.panel_scroll, worker, &ui.color_scheme_editor, section)
+	case .Particle_Life:
+		particle_life_draw_controls(particle, gui, rect, &state.panel_scroll, worker, &ui.color_scheme_editor, section)
+	case .Flow_Field, .Pellets, .Voronoi_CA, .Moire, .Vectors, .Primordial:
+		remaining_sim_draw_controls(remaining, gui, remaining_sim_kind_from_app_mode(ui.mode), rect, &ui.color_scheme_editor, worker, section, &state.panel_scroll)
+	case:
+	}
+	if state.pending_panel_focus {
+		fallback := uifw.GUI_ID_NONE
+		restored := uifw.GUI_ID_NONE
+		for i in first ..< gui.spatial_item_count {
+			item := gui.spatial_items[i]
+			if !item.focusable || item.group != panel_region {continue}
+			if fallback == uifw.GUI_ID_NONE {fallback = item.id}
+			candidate := uifw.gui_controller_focus_restore(&state.focus, panel_region, fallback)
+			if item.id == candidate {restored = item.id; break}
+		}
+		if restored == uifw.GUI_ID_NONE {restored = fallback}
+		if restored != uifw.GUI_ID_NONE {gui.focused = restored; gui.focus_moved = true}
+		state.pending_panel_focus = false
+	}
+	if state.focus.phase == .Active_Control &&
+		gui.focus_edit_id == uifw.GUI_ID_NONE &&
+		gui.text_edit_id == uifw.GUI_ID_NONE &&
+		gui.open_panel == uifw.GUI_ID_NONE &&
+		gui.controller_armed_id == uifw.GUI_ID_NONE {
+		uifw.gui_controller_focus_deactivate(&state.focus)
+	}
+}
+
+simulation_controller_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, gray: ^Gray_Scott_Simulation = nil, particle: ^Particle_Life_Simulation = nil, remaining: ^Remaining_Sim_State = nil, width, height: f32, worker: ^Render_Worker_State) {
+	if !simulation_controller_ui_enabled(ui) {return}
+	state := simulation_controller_ui_state(ui)
+	tabs := simulation_controller_ui_tabs(ui.mode)
+	simulation_controller_ui_clamp(state, len(tabs))
+	deck := simulation_controller_ui_deck_rect(gui, width, height, len(tabs))
+	if ui.simulation_shell.controls_visible && state.panel_open {simulation_controller_ui_draw_panel(ui, gui, gray, particle, remaining, simulation_controller_ui_panel_rect(gui, width, height, deck), worker)}
+	if ui.simulation_shell.controls_visible {simulation_controller_ui_draw_deck(ui, gui, deck)}
+	if remaining != nil {
+		kind := remaining_sim_kind_from_app_mode(ui.mode)
+		remaining_sim_draw_color_scheme_modal(gui, &ui.color_scheme_editor, kind, remaining)
+		preset_save_dialog_draw(gui, &remaining.preset_ui, worker, remaining_sim_directory(kind))
+	}
+	if gray != nil {_ = color_scheme_editor_draw_modal(gui, &ui.color_scheme_editor, &gray.settings.color_scheme); preset_save_dialog_draw(gui, &gray.runtime.preset_fieldset, worker, "gray_scott")}
+	if particle != nil {_ = color_scheme_editor_draw_modal(gui, &ui.color_scheme_editor, &particle.settings.color_scheme); preset_save_dialog_draw(gui, &particle.runtime.preset_ui, worker, "particle_life")}
+}
+
+simulation_controller_ui_end_frame :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
+	state := simulation_controller_ui_state(ui)
+	if state == nil || (state.focus.phase != .Child_Region && state.focus.phase != .Active_Control) {return}
+	section := simulation_controller_ui_section(ui.mode, state.active_index)
+	region := simulation_controller_ui_panel_region_id(gui, section)
+	for item in gui.spatial_items[:gui.spatial_item_count] {
+		if item.id == gui.focused && item.focusable && item.group == region {
+			uifw.gui_controller_focus_remember(&state.focus, region, item.id)
+			return
+		}
+	}
+}

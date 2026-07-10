@@ -30,6 +30,7 @@ Remaining_Sim_State :: struct {
 	cursor_pixel: [2]f32,
 	cursor_active: u32,
 	cursor_mode: u32,
+	camera: Camera_Control_State,
 	cursor_size: f32,
 	cursor_strength: f32,
 	preset_ui: Preset_Fieldset_State,
@@ -41,6 +42,8 @@ Remaining_Sim_State :: struct {
 	slime_position_image_dialog_requested: bool,
 	slime_reset_requested: bool,
 	slime_clear_trails_requested: bool,
+	slime_randomize_undo: Slime_Randomize_Undo,
+	slime_randomize_undo_available: bool,
 	moire: Moire_Settings,
 	vectors: Vectors_Settings,
 	primordial: Primordial_Settings,
@@ -48,6 +51,30 @@ Remaining_Sim_State :: struct {
 	pellets: Pellets_Settings,
 	flow: Flow_Settings,
 	slime: Slime_Settings,
+	reset_undo: Remaining_Sim_Reset_Undo,
+}
+
+Remaining_Sim_Reset_Undo :: struct {
+	available: bool,
+	paused: bool,
+	time: f32,
+	intensity: f32,
+	scale: f32,
+	speed: f32,
+	density: f32,
+	camera: Camera_Control_State,
+	cursor_size: f32,
+	cursor_strength: f32,
+	builtin_preset_index: int,
+	moire: Moire_Settings,
+	vectors: Vectors_Settings,
+	primordial: Primordial_Settings,
+	voronoi: Voronoi_Settings,
+	pellets: Pellets_Settings,
+	flow: Flow_Settings,
+	slime: Slime_Settings,
+	slime_randomize_undo: Slime_Randomize_Undo,
+	slime_randomize_undo_available: bool,
 }
 
 Moire_Generator_Type :: enum int {
@@ -514,6 +541,19 @@ Slime_Settings :: struct {
 	trail_filtering_index: int,
 }
 
+Slime_Randomize_Undo :: struct {
+	agent_jitter: f32,
+	agent_sensor_angle: f32,
+	agent_sensor_distance: f32,
+	agent_speed_min: f32,
+	agent_speed_max: f32,
+	agent_turn_rate: f32,
+	pheromone_decay_rate: f32,
+	pheromone_deposition_rate: f32,
+	pheromone_diffusion_rate: f32,
+	random_seed: u32,
+}
+
 moire_settings_default :: proc() -> Moire_Settings {
 	settings: Moire_Settings
 	color_scheme_name_set(&settings.color_scheme, "ZELDA_Fordite")
@@ -920,6 +960,66 @@ remaining_sim_init :: proc(sim: ^Remaining_Sim_State) {
 		flow = flow_settings_default(),
 		slime = slime_settings_default(),
 	}
+	camera_controls_init(&sim.camera)
+}
+
+remaining_sim_reset_with_undo :: proc(sim: ^Remaining_Sim_State) {
+	if sim == nil {
+		return
+	}
+	undo := Remaining_Sim_Reset_Undo {
+		available = true,
+		paused = sim.paused,
+		time = sim.time,
+		intensity = sim.intensity,
+		scale = sim.scale,
+		speed = sim.speed,
+		density = sim.density,
+		camera = sim.camera,
+		cursor_size = sim.cursor_size,
+		cursor_strength = sim.cursor_strength,
+		builtin_preset_index = sim.builtin_preset_index,
+		moire = sim.moire,
+		vectors = sim.vectors,
+		primordial = sim.primordial,
+		voronoi = sim.voronoi,
+		pellets = sim.pellets,
+		flow = sim.flow,
+		slime = sim.slime,
+		slime_randomize_undo = sim.slime_randomize_undo,
+		slime_randomize_undo_available = sim.slime_randomize_undo_available,
+	}
+	remaining_sim_init(sim)
+	sim.reset_undo = undo
+}
+
+remaining_sim_undo_reset :: proc(sim: ^Remaining_Sim_State) -> bool {
+	if sim == nil || !sim.reset_undo.available {
+		return false
+	}
+	undo := sim.reset_undo
+	sim.paused = undo.paused
+	sim.time = undo.time
+	sim.intensity = undo.intensity
+	sim.scale = undo.scale
+	sim.speed = undo.speed
+	sim.density = undo.density
+	sim.camera = undo.camera
+	sim.cursor_size = undo.cursor_size
+	sim.cursor_strength = undo.cursor_strength
+	sim.builtin_preset_index = undo.builtin_preset_index
+	sim.moire = undo.moire
+	sim.vectors = undo.vectors
+	sim.primordial = undo.primordial
+	sim.voronoi = undo.voronoi
+	sim.pellets = undo.pellets
+	sim.flow = undo.flow
+	sim.slime = undo.slime
+	sim.slime_randomize_undo = undo.slime_randomize_undo
+	sim.slime_randomize_undo_available = undo.slime_randomize_undo_available
+	sim.reset_undo.available = false
+	sim.slime_reset_requested = true
+	return true
 }
 
 slime_request_reset :: proc(sim: ^Remaining_Sim_State) {
@@ -962,6 +1062,19 @@ slime_randomize_settings :: proc(sim: ^Remaining_Sim_State) {
 	if sim == nil {
 		return
 	}
+	sim.slime_randomize_undo = {
+		agent_jitter = sim.slime.agent_jitter,
+		agent_sensor_angle = sim.slime.agent_sensor_angle,
+		agent_sensor_distance = sim.slime.agent_sensor_distance,
+		agent_speed_min = sim.slime.agent_speed_min,
+		agent_speed_max = sim.slime.agent_speed_max,
+		agent_turn_rate = sim.slime.agent_turn_rate,
+		pheromone_decay_rate = sim.slime.pheromone_decay_rate,
+		pheromone_deposition_rate = sim.slime.pheromone_deposition_rate,
+		pheromone_diffusion_rate = sim.slime.pheromone_diffusion_rate,
+		random_seed = sim.slime.random_seed,
+	}
+	sim.slime_randomize_undo_available = true
 	settings := &sim.slime
 	seed := settings.random_seed
 	if seed == 0 {
@@ -981,11 +1094,34 @@ slime_randomize_settings :: proc(sim: ^Remaining_Sim_State) {
 	slime_request_reset(sim)
 }
 
+slime_undo_randomize_settings :: proc(sim: ^Remaining_Sim_State) -> bool {
+	if sim == nil || !sim.slime_randomize_undo_available {
+		return false
+	}
+	undo := sim.slime_randomize_undo
+	sim.slime.agent_jitter = undo.agent_jitter
+	sim.slime.agent_sensor_angle = undo.agent_sensor_angle
+	sim.slime.agent_sensor_distance = undo.agent_sensor_distance
+	sim.slime.agent_speed_min = undo.agent_speed_min
+	sim.slime.agent_speed_max = undo.agent_speed_max
+	sim.slime.agent_turn_rate = undo.agent_turn_rate
+	sim.slime.pheromone_decay_rate = undo.pheromone_decay_rate
+	sim.slime.pheromone_deposition_rate = undo.pheromone_deposition_rate
+	sim.slime.pheromone_diffusion_rate = undo.pheromone_diffusion_rate
+	sim.slime.random_seed = undo.random_seed
+	sim.slime_randomize_undo_available = false
+	slime_request_reset(sim)
+	return true
+}
+
 remaining_sim_apply_frame_input :: proc(sim: ^Remaining_Sim_State, input: Ui_Frame_Input) {
 	remaining_sim_apply_frame_input_for_kind(sim, .Flow_Field, input)
 }
 
 remaining_sim_apply_frame_input_for_kind :: proc(sim: ^Remaining_Sim_State, kind: Remaining_Sim_Kind, input: Ui_Frame_Input) {
+	if kind == .Slime_Mold {
+		camera_controls_apply_input(&sim.camera, input)
+	}
 	was_cursor_active := sim.cursor_active
 	previous_cursor_velocity := sim.cursor_world_velocity
 	sim.cursor_active = 0
@@ -995,6 +1131,9 @@ remaining_sim_apply_frame_input_for_kind :: proc(sim: ^Remaining_Sim_State, kind
 		return
 	}
 	world := remaining_sim_screen_to_world(input.mouse_pos, input.window_width, input.window_height)
+	if kind == .Slime_Mold {
+		world = camera_controls_screen_to_world(&sim.camera, input.mouse_pos, input.window_width, input.window_height)
+	}
 	if kind == .Pellets {
 		world[1] = -world[1]
 	}
@@ -1008,7 +1147,10 @@ remaining_sim_apply_frame_input_for_kind :: proc(sim: ^Remaining_Sim_State, kind
 	sim.cursor_world_prev = world
 	sim.cursor_pixel = {input.mouse_pos.x, input.mouse_pos.y}
 	if kind == .Slime_Mold {
-		sim.cursor_pixel[1] = max(f32(input.window_height) - input.mouse_pos.y, 0)
+		sim.cursor_pixel = {
+			(world[0] + 1.0) * 0.5 * f32(input.window_width),
+			(world[1] + 1.0) * 0.5 * f32(input.window_height),
+		}
 	}
 	if input.mouse_down {
 		sim.cursor_active = 1
@@ -1306,10 +1448,10 @@ remaining_sim_draw_vectors :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Con
 			py := (f32(y) + 0.5) / f32(rows) * height
 				v := noise_sample_2d(&settings.noise, f32(x) / f32(cols), f32(y) / f32(rows), sim.time)
 			angle := v * 3.14159
-			len := max(settings.line_length, 0.001) * min(width, height) * 1.8
+			len := max(settings.line_length, 0.001) * min(width, height) * (0.5 + math.clamp(v, 0, 1) * 0.5)
 			d := uifw.Vec2{math.cos(angle) * len, math.sin(angle) * len}
 			line_width := max(settings.line_width * min(width, height), 1)
-			uifw.gui_line(gui, {px - d.x, py - d.y}, {px + d.x, py + d.y}, {0.42, 0.93, 0.84, 0.55 * sim.intensity}, line_width)
+			uifw.gui_line(gui, {px, py}, {px + d.x, py + d.y}, {0.42, 0.93, 0.84, 0.55 * sim.intensity}, line_width)
 		}
 	}
 }
@@ -1411,14 +1553,115 @@ remaining_sim_controls_content_height :: proc(sim: ^Remaining_Sim_State, gui: ^u
 	height += remaining_sim_scroll_heading_height(gui) * 7
 	height += remaining_sim_scroll_row_height(gui, 22)
 	height += remaining_sim_scroll_spacer_height(gui, 8)
+	if sim.reset_undo.available {
+		height += gui.style.row_height + gui.style.spacing
+	}
 	return height
 }
 
-remaining_sim_draw_controls :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, panel: uifw.Rect, color_editor: ^Color_Scheme_Editor_State, worker: ^Render_Worker_State = nil) {
+remaining_sim_controller_section_content_height :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, section: int, content_width: f32) -> f32 {
+	row := gui.style.row_height + gui.style.spacing
+	heading := remaining_sim_scroll_heading_height(gui)
+	spacer := remaining_sim_scroll_spacer_height(gui, 8)
+	if section == CONTROLLER_SECTION_PRESETS || section == 1 {
+		wrap_width := max(content_width - gui.style.panel_padding * 2 - gui.style.spacing_1, gui.style.body_char_width)
+		lines := uifw.gui_wrap_line_count(gui, remaining_sim_description(kind), wrap_width)
+		action_rows := section == CONTROLLER_SECTION_PRESETS ? 1 + (sim.reset_undo.available ? 1 : 0) : 0
+		return heading * f32(2 + (section == CONTROLLER_SECTION_PRESETS ? 1 : 0)) +
+			row * f32(preset_fieldset_content_rows(&sim.preset_ui) + action_rows) +
+			f32(lines) * gui.style.body_line_height + spacer * 2
+	}
+	if section == CONTROLLER_SECTION_LOOK || section == 2 {
+		rows := 8
+		#partial switch kind {
+		case .Moire:
+			rows = sim.moire.image_mode_enabled ? 13 : 3
+		case .Vectors:
+			rows = 3
+		case .Flow_Field:
+			rows = 8
+		case .Pellets:
+			rows = 10
+			if sim.pellets.trails_enabled {rows += 1}
+		case .Voronoi_CA:
+			rows = 9
+			if sim.voronoi.borders_enabled {rows += 1}
+		case .Primordial:
+			rows = 12
+			if sim.primordial.traces_enabled {rows += 1}
+		case:
+		}
+		return heading * 2 + row * f32(rows) + spacer
+	}
+
+	#partial switch kind {
+	case .Flow_Field:
+		switch section {
+		case 3: return heading + row * 2 + uifw.gui_slider_height(gui)
+		case 5:
+			height := heading + row * 2
+			if sim.flow.vector_field_type == .Noise {height += noise_settings_controls_content_height(gui, &sim.flow.noise)}
+			if sim.flow.vector_field_type == .Image {height += row * 9}
+			return height
+		case 6: return heading + row * 9
+		case 7: return heading + row * 5
+		case:
+		}
+	case .Pellets:
+		switch section {
+		case 3: return heading + shared_two_axis_pad_height(gui) + row * 2
+		case 5: return heading + row * 6
+		case 6: return heading + row * 5
+		case:
+		}
+	case .Voronoi_CA:
+		if section == 5 {return heading + row * 5}
+	case .Moire:
+		switch section {
+		case MOIRE_SECTION_PATTERN:
+			rows := 6
+			if sim.moire.generator_type == .Radial {rows += 4}
+			return heading * f32(sim.moire.generator_type == .Radial ? 3 : 2) + row * f32(rows) + shared_two_axis_pad_height(gui) * 2 + spacer * 2
+		case 7: return heading + row * 4
+		case:
+		}
+	case .Vectors:
+		if section == 3 {
+			height := heading + row * 5
+			if sim.vectors.vector_field_type == .Noise {height += noise_settings_controls_content_height(gui, &sim.vectors.noise)}
+			if sim.vectors.vector_field_type == .Image {height += row * 9}
+			return height
+		}
+	case .Primordial:
+		switch section {
+		case 3: return heading + shared_two_axis_pad_height(gui) + row * 2
+		case 5: return heading + row * 3
+		case 6: return heading + row * 4 + shared_two_axis_pad_height(gui)
+		case:
+		}
+	case:
+	}
+	return remaining_sim_controls_specific_content_height(kind, gui)
+}
+
+remaining_sim_draw_controls :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, panel: uifw.Rect, color_editor: ^Color_Scheme_Editor_State, worker: ^Render_Worker_State = nil, section := -1, panel_scroll: ^f32 = nil) {
 	uifw.gui_panel_begin(gui, panel)
 	viewport := uifw.gui_next_rect(gui, height = max(panel.h - gui.style.panel_padding * 2, 0))
 	content_height := remaining_sim_controls_content_height(sim, gui, kind, viewport.w)
-	uifw.gui_scroll_begin(gui, viewport, content_height, &sim.scroll)
+	if section >= 0 {
+		content_height = remaining_sim_controller_section_content_height(sim, gui, kind, section, viewport.w)
+	}
+	active_scroll := panel_scroll
+	if active_scroll == nil {
+		active_scroll = &sim.scroll
+	}
+	uifw.gui_scroll_begin(gui, viewport, content_height, active_scroll)
+	if section >= 0 {
+		remaining_sim_draw_controller_section(sim, gui, kind, color_editor, worker, section)
+		uifw.gui_scroll_end(gui)
+		uifw.gui_panel_end(gui)
+		return
+	}
 
 	uifw.gui_heading(gui, "About this simulation")
 	uifw.gui_text_block(gui, remaining_sim_description(kind), max(viewport.w - gui.style.panel_padding * 2, 1), gui.style.text_muted)
@@ -1456,6 +1699,108 @@ remaining_sim_draw_controls :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Co
 	preset_save_dialog_draw(gui, &sim.preset_ui, worker, directory)
 }
 
+remaining_sim_draw_controller_section :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, color_editor: ^Color_Scheme_Editor_State, worker: ^Render_Worker_State, section: int) {
+	if section == 0 {
+		uifw.gui_heading(gui, "About this simulation")
+		uifw.gui_text_block(gui, remaining_sim_description(kind), gui.content_width, gui.style.text_muted)
+		return
+	}
+	if section == 1 {
+		remaining_sim_draw_presets_section(sim, gui, kind, worker)
+		uifw.gui_spacer(gui, 8)
+		uifw.gui_heading(gui, "About this simulation")
+		uifw.gui_text_block(gui, remaining_sim_description(kind), gui.content_width, gui.style.text_muted)
+		return
+	}
+	if section == CONTROLLER_SECTION_PRESETS {
+		remaining_sim_draw_presets_section(sim, gui, kind, worker)
+		uifw.gui_spacer(gui, 8)
+		uifw.gui_heading(gui, "Start Over")
+		remaining_sim_draw_reset_action(sim, gui, remaining_sim_reset_label(kind))
+		uifw.gui_spacer(gui, 8)
+		uifw.gui_heading(gui, "About this simulation")
+		uifw.gui_text_block(gui, remaining_sim_description(kind), gui.content_width, gui.style.text_muted)
+		return
+	}
+	if section == CONTROLLER_SECTION_LOOK {
+		#partial switch kind {
+		case .Moire:
+			remaining_sim_draw_moire_display_settings(sim, gui, color_editor, worker)
+		case .Vectors:
+			remaining_sim_draw_vectors_color(sim, gui, color_editor)
+		case .Flow_Field, .Pellets, .Voronoi_CA, .Primordial:
+			remaining_sim_draw_display_settings(sim, gui, kind, color_editor)
+			uifw.gui_spacer(gui, 8)
+			remaining_sim_draw_post_processing(sim, gui, kind)
+		case:
+		}
+		return
+	}
+	#partial switch kind {
+	case .Flow_Field:
+		switch section {
+		case 2: remaining_sim_draw_display_settings(sim, gui, kind, color_editor); remaining_sim_draw_post_processing(sim, gui, kind)
+		case 3: remaining_sim_draw_interaction_controls(sim, gui, kind, "Brush")
+		case 4: uifw.gui_heading(gui, "Settings"); remaining_sim_draw_settings_actions(sim, gui, "Reset Simulation")
+		case 5: remaining_sim_draw_flow_settings(sim, gui, worker, 0)
+		case 6: remaining_sim_draw_flow_settings(sim, gui, worker, 1)
+		case 7: remaining_sim_draw_flow_settings(sim, gui, worker, 2)
+		case:
+		}
+	case .Pellets:
+		switch section {
+		case 2: remaining_sim_draw_display_settings(sim, gui, kind, color_editor); remaining_sim_draw_post_processing(sim, gui, kind)
+		case 3: remaining_sim_draw_interaction_controls(sim, gui, kind, "Brush")
+		case 4: uifw.gui_heading(gui, "Settings"); remaining_sim_draw_settings_actions(sim, gui, "Reset Simulation")
+		case 5: remaining_sim_draw_pellets_settings(sim, gui, 0)
+		case 6: remaining_sim_draw_pellets_settings(sim, gui, 1)
+		case:
+		}
+	case .Voronoi_CA:
+		switch section {
+		case 2: remaining_sim_draw_display_settings(sim, gui, kind, color_editor); remaining_sim_draw_post_processing(sim, gui, kind)
+		case 3: remaining_sim_draw_interaction_controls(sim, gui, kind, "Brush")
+		case 4: uifw.gui_heading(gui, "Settings"); remaining_sim_draw_settings_actions(sim, gui, "Reset Simulation")
+		case 5: remaining_sim_draw_voronoi_settings(sim, gui, "Sites")
+		case:
+		}
+	case .Primordial:
+		switch section {
+		case 2: remaining_sim_draw_display_settings(sim, gui, kind, color_editor); remaining_sim_draw_post_processing(sim, gui, kind)
+		case 3: remaining_sim_draw_interaction_controls(sim, gui, kind, "Brush")
+		case 4: uifw.gui_heading(gui, "Settings"); remaining_sim_draw_settings_actions(sim, gui, "Reset Simulation")
+		case 5: remaining_sim_draw_primordial_settings(sim, gui, 0)
+		case 6: remaining_sim_draw_primordial_settings(sim, gui, 1)
+		case:
+		}
+	case .Moire:
+		switch section {
+		case 2: remaining_sim_draw_moire_display_settings(sim, gui, color_editor, worker)
+		case 3: uifw.gui_heading(gui, "Controls"); uifw.gui_label(gui, "Mouse wheel: Zoom | Drag: Pan camera")
+		case 4: uifw.gui_heading(gui, "Actions"); remaining_sim_draw_settings_actions(sim, gui, "Reset Moire Settings")
+		case 5: remaining_sim_draw_moire_animation(sim, gui)
+		case 6: remaining_sim_draw_moire_patterns(sim, gui); if sim.moire.generator_type == .Radial {remaining_sim_draw_moire_radial(sim, gui)}
+		case 7: remaining_sim_draw_moire_advection(sim, gui)
+		case MOIRE_SECTION_PATTERN:
+			remaining_sim_draw_moire_patterns(sim, gui)
+			if sim.moire.generator_type == .Radial {
+				uifw.gui_spacer(gui, 8)
+				remaining_sim_draw_moire_radial(sim, gui)
+			}
+			uifw.gui_spacer(gui, 8)
+			remaining_sim_draw_moire_animation(sim, gui)
+		case:
+		}
+	case .Vectors:
+		switch section {
+		case 2: remaining_sim_draw_vectors_color(sim, gui, color_editor)
+		case 3: remaining_sim_draw_vectors_field(sim, gui, worker)
+		case:
+		}
+	case:
+	}
+}
+
 remaining_sim_draw_presets_section :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, worker: ^Render_Worker_State = nil) {
 	uifw.gui_heading(gui, "Presets")
 	builtin_names := remaining_sim_builtin_preset_names(kind)
@@ -1469,6 +1814,29 @@ remaining_sim_draw_presets_section :: proc(sim: ^Remaining_Sim_State, gui: ^uifw
 		sim.builtin_preset_index,
 		Preset_Fieldset_Builtin_Context {kind = .Remaining, remaining = sim, remaining_kind = kind},
 	)
+}
+
+remaining_sim_reset_label :: proc(kind: Remaining_Sim_Kind) -> string {
+	#partial switch kind {
+	case .Moire:
+		return "Reset Moire Settings"
+	case .Vectors:
+		return "Reset Vector Field"
+	case:
+		return "Reset Simulation"
+	}
+}
+
+remaining_sim_draw_reset_action :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, label: string) {
+	if uifw.gui_button(gui, label, "reset") {
+		remaining_sim_reset_with_undo(sim)
+		uifw.gui_notice(gui, "Simulation returned to defaults. Restore Settings Before Reset is available here.")
+	}
+	if sim.reset_undo.available && uifw.gui_button(gui, "Restore Settings Before Reset", "undo_reset") {
+		if remaining_sim_undo_reset(sim) {
+			uifw.gui_notice(gui, "Settings from before reset restored.")
+		}
+	}
 }
 
 remaining_sim_draw_common_sim_menu :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, color_editor: ^Color_Scheme_Editor_State, worker: ^Render_Worker_State = nil) {
@@ -1519,9 +1887,7 @@ remaining_sim_draw_post_processing :: proc(sim: ^Remaining_Sim_State, gui: ^uifw
 
 remaining_sim_draw_settings_actions :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, reset_label: string) {
 	_ = uifw.gui_toggle(gui, fmt.tprintf("Paused: %v", sim.paused), "paused", &sim.paused)
-	if uifw.gui_button(gui, reset_label, "reset") {
-		remaining_sim_init(sim)
-	}
+	remaining_sim_draw_reset_action(sim, gui, reset_label)
 }
 
 remaining_sim_draw_display_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, color_editor: ^Color_Scheme_Editor_State) {
@@ -1590,28 +1956,29 @@ remaining_sim_draw_display_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 	}
 }
 
-remaining_sim_draw_interaction_controls :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind) {
+remaining_sim_draw_interaction_controls :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, heading: string = "") {
 	options := Controls_Panel_Options {
+		heading = heading,
 		mouse_interaction_text = "",
 		cursor_settings_title = "",
 		cursor = shared_default_cursor_config_options(),
 	}
 	#partial switch kind {
 	case .Slime_Mold:
-		options.mouse_interaction_text = "Left click: Attract agents | Right click: Repel agents"
+		options.mouse_interaction_text = gui.input.active_device == .Controller ? "Primary: attract agents | Secondary: repel agents" : "Left click: attract agents | Right click: repel agents"
 		options.cursor.size_min = 0.01
 		options.cursor.size_max = 1.0
 		options.cursor.strength_max = 50.0
 	case .Flow_Field:
-		options.mouse_interaction_text = "Left click: Spawn particles | Right click: Destroy particles"
+		options.mouse_interaction_text = gui.input.active_device == .Controller ? "Primary: spawn particles | Secondary: remove particles" : "Left click: spawn particles | Right click: remove particles"
 		options.cursor.show_strength = false
 	case .Pellets:
-		options.mouse_interaction_text = "Left click: Attract particles"
+		options.mouse_interaction_text = gui.input.active_device == .Controller ? "Primary: attract particles" : "Left click: attract particles"
 	case .Voronoi_CA:
 		options.cursor_settings_title = "Cursor Settings"
 		options.cursor.strength_step = 0.01
 	case .Primordial:
-		options.mouse_interaction_text = "Mouse: Fling particles | Scroll: Zoom"
+		options.mouse_interaction_text = gui.input.active_device == .Controller ? "Primary: fling particles | Triggers: zoom" : "Drag: fling particles | Scroll: zoom"
 	case:
 		options.mouse_interaction_text = "Mouse interaction"
 	}
@@ -1726,11 +2093,15 @@ remaining_sim_draw_moire_patterns :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.
 	}
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Base Frequency: %.2f", settings.base_freq), "base_freq", &settings.base_freq, 0.1, 0.1, 80)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Moire Amount: %.2f", settings.moire_amount), "moire_amount", &settings.moire_amount, 0.01, 0, 2)
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Rotation: %.2f", settings.moire_rotation), "moire_rotation", &settings.moire_rotation, 0.01, -6.28318, 6.28318)
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Scale: %.2f", settings.moire_scale), "moire_scale", &settings.moire_scale, 0.01, 0.1, 4)
+	rotation_two_degrees := settings.moire_rotation * 180 / math.PI
+	if shared_two_axis_pad_f32(gui, "Second Layer Transform", "moire_layer_two", "Rotation °", "Scale", &rotation_two_degrees, &settings.moire_scale, -360, 360, 0.1, 4) {
+		settings.moire_rotation = rotation_two_degrees * math.PI / 180
+	}
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Interference: %.2f", settings.moire_interference), "moire_interference", &settings.moire_interference, 0.01, 0, 1)
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Rotation 3: %.2f", settings.moire_rotation3), "moire_rotation3", &settings.moire_rotation3, 0.01, -6.28318, 6.28318)
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Scale 3: %.2f", settings.moire_scale3), "moire_scale3", &settings.moire_scale3, 0.01, 0.1, 4)
+	rotation_three_degrees := settings.moire_rotation3 * 180 / math.PI
+	if shared_two_axis_pad_f32(gui, "Third Layer Transform", "moire_layer_three", "Rotation °", "Scale", &rotation_three_degrees, &settings.moire_scale3, -360, 360, 0.1, 4) {
+		settings.moire_rotation3 = rotation_three_degrees * math.PI / 180
+	}
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Weight 3: %.2f", settings.moire_weight3), "moire_weight3", &settings.moire_weight3, 0.01, 0, 1)
 }
 
@@ -1748,6 +2119,7 @@ remaining_sim_draw_moire_advection :: proc(sim: ^Remaining_Sim_State, gui: ^uifw
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Advect Strength: %.2f", settings.advect_strength), "advect_strength", &settings.advect_strength, 0.01, 0, 2)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Advect Speed: %.2f", settings.advect_speed), "advect_speed", &settings.advect_speed, 0.01, 0, 5)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Curl: %.2f", settings.curl), "curl", &settings.curl, 0.01, 0, 2)
+	shared_control_explanation(gui, "curl", "Curl controls how strongly the flow bends into swirls and rolling eddies.")
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Decay: %.2f", settings.decay), "decay", &settings.decay, 0.001, 0.8, 1)
 }
 
@@ -1807,14 +2179,21 @@ remaining_sim_draw_vectors_field :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Line Length: %.3f", settings.line_length), "line_length", &settings.line_length, 0.001, 0.005, 1)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Line Width: %.3f", settings.line_width), "line_width", &settings.line_width, 0.001, 0.001, 1)
 	if uifw.gui_button(gui, "Reset", "vectors_reset") {
-		remaining_sim_init(sim)
+		remaining_sim_reset_with_undo(sim)
+		uifw.gui_notice(gui, "Vector field returned to defaults. Restore Settings Before Reset is available here.")
+	}
+	if sim.reset_undo.available && uifw.gui_button(gui, "Restore Settings Before Reset", "vectors_undo_reset") {
+		if remaining_sim_undo_reset(sim) {
+			uifw.gui_notice(gui, "Vector settings from before reset restored.")
+		}
 	}
 }
 
-remaining_sim_draw_primordial_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context) {
+remaining_sim_draw_primordial_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, subsection := -1) {
 	settings := &sim.primordial
+	if subsection < 0 || subsection == 0 {
 	uifw.gui_spacer(gui, 8)
-	uifw.gui_heading(gui, "Particle Configuration")
+	uifw.gui_heading(gui, subsection == 0 ? "Population" : "Particle Configuration")
 	if uifw.gui_selector(gui, fmt.tprintf("Position Generator: %s", PRIMORDIAL_POSITION_GENERATOR_NAMES[settings.position_generator_index]), "primordial_position_generator", &settings.position_generator_index, PRIMORDIAL_POSITION_GENERATOR_NAMES[:]) {
 		settings.position_generator = u32(settings.position_generator_index)
 	}
@@ -1826,26 +2205,31 @@ remaining_sim_draw_primordial_settings :: proc(sim: ^Remaining_Sim_State, gui: ^
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Random Seed: %d", settings.random_seed), "primordial_seed", &seed, 1, 0, 4294967295) {
 		settings.random_seed = u32(seed)
 	}
+	}
+	if subsection < 0 || subsection == 1 {
 	uifw.gui_spacer(gui, 8)
-	uifw.gui_heading(gui, "Physics Parameters")
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Alpha: %.1f deg", settings.alpha), "alpha", &settings.alpha, 1, -180, 180)
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Beta: %.2f", settings.beta), "beta", &settings.beta, 0.1, -60, 60)
+	uifw.gui_heading(gui, subsection == 1 ? "Motion" : "Physics Parameters")
+	_ = shared_two_axis_pad_f32(gui, "Rotation Response", "primordial_rotation", "Alpha", "Beta", &settings.alpha, &settings.beta, -180, 180, -60, 60)
+	shared_control_explanation(gui, "primordial_rotation", "Alpha and Beta are the two rotation-response angles. Together they decide how particles turn around neighbors.")
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Velocity: %.2f", settings.velocity), "velocity", &settings.velocity, 0.01, 0.01, 2)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Radius: %.3f", settings.radius), "radius", &settings.radius, 0.001, 0.001, 0.5)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Time Step: %.3f", settings.dt), "primordial_dt", &settings.dt, 0.001, 0, 0.25)
+	shared_control_explanation(gui, "primordial_dt", "Time Step is how much simulated time moves forward per update. Higher is faster but less precise.")
 	_ = uifw.gui_toggle(gui, fmt.tprintf("Wrap Edges: %v", settings.wrap_edges), "wrap_edges", &settings.wrap_edges)
+	}
 }
 
-remaining_sim_draw_voronoi_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context) {
+remaining_sim_draw_voronoi_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, heading := "Voronoi Parameters") {
 	settings := &sim.voronoi
 	uifw.gui_spacer(gui, 8)
-	uifw.gui_heading(gui, "Voronoi Parameters")
+	uifw.gui_heading(gui, heading)
 	point_count := f32(settings.point_count)
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Points: %d", settings.point_count), "voronoi_points", &point_count, 100, 32, 20000) {
 		settings.point_count = u32(point_count)
 	}
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Drift: %.2f", settings.drift), "voronoi_drift", &settings.drift, 0.01, 0, 4)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Brownian Speed: %.1f", settings.brownian_speed), "voronoi_brownian_speed", &settings.brownian_speed, 1, 0, 500)
+	shared_control_explanation(gui, "voronoi_brownian_speed", "Brownian Speed adds random wandering to the sites that shape the Voronoi cells.")
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Time Scale: %.2f", settings.time_scale), "voronoi_time_scale", &settings.time_scale, 0.01, 0, 10)
 	seed := f32(settings.random_seed)
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Random Seed: %d", settings.random_seed), "random_seed", &seed, 1, 0, 4294967295) {
@@ -1853,8 +2237,9 @@ remaining_sim_draw_voronoi_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 	}
 }
 
-remaining_sim_draw_pellets_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context) {
+remaining_sim_draw_pellets_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, subsection := -1) {
 	settings := &sim.pellets
+	if subsection < 0 || subsection == 0 {
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, "Particle")
 	count := f32(settings.particle_count)
@@ -1867,19 +2252,23 @@ remaining_sim_draw_pellets_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 	}
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Particle Size: %.3f", settings.particle_size), "particle_size", &settings.particle_size, 0.001, 0.001, 0.1)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Collision Damping: %.2f", settings.collision_damping), "collision_damping", &settings.collision_damping, 0.01, 0, 1)
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Initial Velocity Min: %.3f", settings.initial_velocity_min), "velocity_min", &settings.initial_velocity_min, 0.01, 0, 2)
-	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Initial Velocity Max: %.3f", settings.initial_velocity_max), "velocity_max", &settings.initial_velocity_max, 0.01, 0, 2)
+	_ = shared_range_slider_f32(gui, "Initial Velocity", "pellets_initial_velocity", &settings.initial_velocity_min, &settings.initial_velocity_max, 0, 2)
+	}
+	if subsection < 0 || subsection == 1 {
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, "Physics")
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Gravity Constant: %.7f", settings.gravitational_constant), "gravity_constant", &settings.gravitational_constant, 0.0000001, 0, 0.1)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Energy Damping: %.2f", settings.energy_damping), "energy_damping", &settings.energy_damping, 0.01, 0, 1)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Gravity Softening: %.3f", settings.gravity_softening), "gravity_softening", &settings.gravity_softening, 0.001, 0.0001, 0.1)
+	shared_control_explanation(gui, "gravity_softening", "Gravity Softening prevents gravity from becoming extreme when pellets get very close.")
 	_ = uifw.gui_toggle(gui, fmt.tprintf("Density Damping: %v", settings.density_damping_enabled), "density_damping", &settings.density_damping_enabled)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Overlap Resolution: %.2f", settings.overlap_resolution_strength), "overlap_resolution", &settings.overlap_resolution_strength, 0.01, 0, 1)
+	}
 }
 
-remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, worker: ^Render_Worker_State = nil) {
+remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, worker: ^Render_Worker_State = nil, subsection := -1) {
 	settings := &sim.flow
+	if subsection < 0 || subsection == 0 {
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, "Flow Field")
 	if uifw.gui_selector(gui, fmt.tprintf("Vector Field: %s", VECTOR_FIELD_TYPE_NAMES[settings.vector_field_index]), "flow_vector_field", &settings.vector_field_index, VECTOR_FIELD_TYPE_NAMES[:]) {
@@ -1929,6 +2318,8 @@ remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 			remaining_sim_enqueue_image_command(worker, .Clear_Flow_Image)
 		}
 	}
+	}
+	if subsection < 0 || subsection == 1 {
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, "Particles")
 	if uifw.gui_selector(gui, fmt.tprintf("Shape: %s", FLOW_PARTICLE_SHAPE_NAMES[settings.shape_index]), "flow_shape", &settings.shape_index, FLOW_PARTICLE_SHAPE_NAMES[:]) {
@@ -1955,6 +2346,8 @@ remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Brush Spawn Rate: %d", settings.brush_spawn_rate), "flow_brush_rate", &brush_rate, 10, 0, 100000) {
 		settings.brush_spawn_rate = u32(brush_rate)
 	}
+	}
+	if subsection < 0 || subsection == 2 {
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, "Trails")
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Decay: %.2f", settings.trail_decay_rate), "trail_decay", &settings.trail_decay_rate, 0.01, 0, 10)
@@ -1963,6 +2356,7 @@ remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Wash Out: %.2f", settings.trail_wash_out_rate), "trail_wash_out", &settings.trail_wash_out_rate, 0.01, 0, 10)
 	if uifw.gui_selector(gui, fmt.tprintf("Filtering: %s", FLOW_TRAIL_MAP_FILTERING_NAMES[settings.trail_filtering_index]), "flow_trail_filtering", &settings.trail_filtering_index, FLOW_TRAIL_MAP_FILTERING_NAMES[:]) {
 		settings.trail_map_filtering = Flow_Trail_Map_Filtering(settings.trail_filtering_index)
+	}
 	}
 }
 

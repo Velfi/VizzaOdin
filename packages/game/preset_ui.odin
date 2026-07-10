@@ -12,6 +12,7 @@ Preset_Fieldset_State :: struct {
 	query_buffer: [64]u8,
 	save_open: bool,
 	save_open_frame: u64,
+	save_invoker_focus: uifw.Gui_Id,
 	save_name: [MAX_PRESET_NAME]u8,
 	save_name_len: int,
 	initialized: bool,
@@ -67,6 +68,7 @@ preset_fieldset_draw :: proc(
 	if uifw.gui_button(ctx, "Save Current Settings", "save_current_settings") {
 		state.save_open = true
 		state.save_open_frame = ctx.frame_index
+		state.save_invoker_focus = ctx.focused
 		state.save_name_len = 0
 	}
 }
@@ -77,19 +79,23 @@ preset_fieldset_draw_selector :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fie
 	left := uifw.Rect{row.x, row.y, arrow_w, row.h}
 	right := uifw.Rect{row.x + row.w - arrow_w, row.y, arrow_w, row.h}
 	center := uifw.Rect{row.x + arrow_w, row.y, max(row.w - arrow_w * 2, 0), row.h}
+	combo_id := uifw.gui_make_id(ctx, "preset_select")
 	changed := false
 
-	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "preset_previous"), left, -1, true) {
+	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "preset_previous"), left, -1, true, false) {
+		ctx.focused = combo_id
 		state.selected_index = (state.selected_index - 1 + len(presets)) % len(presets)
 		changed = true
 	}
 	uifw.gui_tooltip(ctx, left, "Previous preset")
 
-	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "preset_next"), right, 1, true) {
+	if uifw.gui_stepper_button_at(ctx, uifw.gui_make_id(ctx, "preset_next"), right, 1, true, false) {
+		ctx.focused = combo_id
 		state.selected_index = (state.selected_index + 1) % len(presets)
 		changed = true
 	}
 	uifw.gui_tooltip(ctx, right, "Next preset")
+	changed = uifw.gui_combobox_cycle_focused(ctx, combo_id, &state.selected_index, len(presets)) || changed
 
 	uifw.gui_layout_begin(ctx, center, .Column, 0, center.h)
 	changed = uifw.gui_combobox(ctx, "Select preset...", "preset_select", &state.selected_index, presets, state.query_buffer[:]) || changed
@@ -222,16 +228,43 @@ preset_save_dialog_draw :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fieldset_
 	uifw.gui_overlay_input_begin(ctx, overlay)
 	if ctx.frame_index > state.save_open_frame && ctx.input.mouse_released && !uifw.gui_contains(dialog, ctx.input.mouse_pos) {
 		preset_save_dialog_close(state)
-		uifw.gui_overlay_input_end(ctx)
+		preset_save_dialog_restore_focus(ctx, state)
+		uifw.gui_overlay_input_cancel(ctx)
 		uifw.gui_pop_id(ctx)
 		return
 	}
-	if ctx.frame_index > state.save_open_frame && ctx.input.key_escape {
+	if ctx.frame_index > state.save_open_frame && ctx.input.back {
 		preset_save_dialog_close(state)
-		uifw.gui_overlay_input_end(ctx)
+		preset_save_dialog_restore_focus(ctx, state)
+		uifw.gui_overlay_input_cancel(ctx)
 		uifw.gui_pop_id(ctx)
 		return
 	}
+	if ctx.frame_index == state.save_open_frame {
+		// The action that opened the modal belongs to the covered panel. Do not
+		// let that same press also activate the first modal control.
+		ctx.input.mouse_pressed = false
+		ctx.input.mouse_released = false
+		ctx.input.nav_pressed_x = 0
+		ctx.input.nav_pressed_y = 0
+		ctx.input.accept = false
+		ctx.input.back = false
+		ctx.input.focus_next = false
+		ctx.input.focus_prev = false
+		ctx.input.primary_pressed = false
+		ctx.input.primary_released = false
+		ctx.input.secondary_pressed = false
+		ctx.input.secondary_released = false
+		ctx.input.key_tab = false
+		ctx.input.key_enter = false
+		ctx.input.key_escape = false
+	}
+	uifw.gui_spatial_group_begin(ctx, "preset_modal_focus_scope")
+	defer uifw.gui_spatial_group_end(ctx)
+	uifw.gui_focus_scope_trap_current(ctx)
+	previous_explicit_activation := ctx.controller_explicit_activation
+	ctx.controller_explicit_activation = previous_explicit_activation || ctx.input.active_device == .Controller
+	defer ctx.controller_explicit_activation = previous_explicit_activation
 
 	uifw.gui_panel_begin(ctx, dialog)
 	uifw.gui_heading(ctx, "Save Preset")
@@ -239,8 +272,10 @@ preset_save_dialog_draw :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fieldset_
 	_ = uifw.gui_text_input(ctx, "Enter preset name...", "preset_save_name", state.save_name[:], &state.save_name_len)
 	if ctx.input.key_enter && preset_save_dialog_has_name(state) {
 		preset_save_dialog_commit(state, worker, simulation_directory)
+		preset_save_dialog_restore_focus(ctx, state)
+		uifw.gui_focus_scope_release(ctx)
 		uifw.gui_panel_end(ctx)
-		uifw.gui_overlay_input_end(ctx)
+		uifw.gui_overlay_input_cancel(ctx)
 		uifw.gui_pop_id(ctx)
 		return
 	}
@@ -253,12 +288,20 @@ preset_save_dialog_draw :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fieldset_
 	save_enabled := preset_save_dialog_has_name(state)
 	if uifw.gui_button_at(ctx, uifw.gui_make_id(ctx, "preset_save_confirm"), save_rect, "Save", save_enabled) && save_enabled {
 		preset_save_dialog_commit(state, worker, simulation_directory)
+		preset_save_dialog_restore_focus(ctx, state)
+		uifw.gui_focus_scope_release(ctx)
 	}
 	if uifw.gui_button_at(ctx, uifw.gui_make_id(ctx, "preset_save_cancel"), cancel_rect, "Cancel", true) {
 		preset_save_dialog_close(state)
+		preset_save_dialog_restore_focus(ctx, state)
+		uifw.gui_focus_scope_release(ctx)
 	}
 	uifw.gui_panel_end(ctx)
-	uifw.gui_overlay_input_end(ctx)
+	if state.save_open {
+		uifw.gui_overlay_input_end(ctx)
+	} else {
+		uifw.gui_overlay_input_cancel(ctx)
+	}
 	uifw.gui_pop_id(ctx)
 }
 
@@ -282,6 +325,13 @@ preset_save_dialog_close :: proc(state: ^Preset_Fieldset_State) {
 	state.save_open = false
 	state.save_open_frame = 0
 	state.save_name_len = 0
+}
+
+preset_save_dialog_restore_focus :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fieldset_State) {
+	if ctx != nil && state.save_invoker_focus != uifw.GUI_ID_NONE {
+		ctx.focused = state.save_invoker_focus
+	}
+	state.save_invoker_focus = uifw.GUI_ID_NONE
 }
 
 preset_name_accepts_char :: proc(ch: rune) -> bool {

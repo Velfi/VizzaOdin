@@ -131,7 +131,7 @@ camera_controls_pan_screen_delta :: proc(camera: ^Camera_Control_State, mouse_de
 
 camera_controls_apply_input :: proc(camera: ^Camera_Control_State, input: Ui_Frame_Input) {
 	camera_controls_sync(camera)
-	if input.key_c {
+	if input.key_c || input.camera_reset {
 		camera_controls_reset(camera)
 		return
 	}
@@ -140,11 +140,16 @@ camera_controls_apply_input :: proc(camera: ^Camera_Control_State, input: Ui_Fra
 	if sensitivity <= 0 {
 		sensitivity = 1
 	}
+	controller_sensitivity := input.controller_camera_sensitivity
+	if controller_sensitivity <= 0 {
+		// Compatibility for callers created before controller tuning was split.
+		controller_sensitivity = sensitivity
+	}
 	if input.wheel_delta != 0 {
 		camera_controls_zoom_to_cursor(camera, input.wheel_delta * CAMERA_WHEEL_DELTA_SCALE, sensitivity, input.mouse_pos, input.window_width, input.window_height)
 	}
 	if input.controller_zoom != 0 {
-		camera_controls_zoom_center(camera, input.controller_zoom * CAMERA_KEY_ZOOM_DELTA, sensitivity)
+		camera_controls_zoom_center(camera, input.controller_zoom * CAMERA_KEY_ZOOM_DELTA, controller_sensitivity)
 	}
 	if input.mouse_down && input.mouse_button == 2 {
 		camera_controls_pan_screen_delta(camera, input.mouse_delta, input.window_width, input.window_height)
@@ -164,7 +169,9 @@ camera_controls_apply_input :: proc(camera: ^Camera_Control_State, input: Ui_Fra
 		camera_controls_pan(camera, 0, -pan_units, sensitivity)
 	}
 	if input.controller_left.x != 0 || input.controller_left.y != 0 {
-		camera_controls_pan(camera, input.controller_left.x * pan_units, -input.controller_left.y * pan_units, sensitivity)
+		controller_y := input.controller_left.y
+		if input.controller_camera_invert_y {controller_y = -controller_y}
+		camera_controls_pan(camera, input.controller_left.x * pan_units, controller_y * pan_units, controller_sensitivity)
 	}
 	if input.key_q {
 		camera_controls_zoom_center(camera, -CAMERA_KEY_ZOOM_DELTA, sensitivity)

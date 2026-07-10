@@ -6,6 +6,7 @@ import engine "../engine"
 import "base:runtime"
 import "core:c"
 import "core:fmt"
+import "core:sync"
 import "core:time"
 import sdl "vendor:sdl3"
 
@@ -31,22 +32,53 @@ App_State :: struct {
 	last_mouse_keyboard_input_sequence: u64,
 	last_controller_input_sequence: u64,
 	active_device: uifw.Input_Device_Kind,
+	action_resolver: Input_Action_Resolver,
+	keyboard_action_released: Input_Action_Release_Pulses,
+	controller_action_released: Input_Action_Release_Pulses,
+	keyboard_accept_down: bool,
+	keyboard_back_down: bool,
+	keyboard_pause_down: bool,
+	keyboard_pause_pressed: bool,
+	keyboard_help_down: bool,
+	keyboard_help_pressed: bool,
+	keyboard_toggle_ui_down: bool,
+	keyboard_toggle_ui_pressed: bool,
+	keyboard_tab_down: bool,
+	keyboard_tab_shifted: bool,
+	keyboard_tab_repeated: bool,
+	keyboard_nav_pressed_x: f32,
+	keyboard_nav_pressed_y: f32,
+	keyboard_camera_reset_pressed: bool,
 	virtual_cursor_pos: uifw.Vec2,
 	virtual_cursor_initialized: bool,
 	ui_system_cursor_hidden: bool,
 	system_cursor_transparent: bool,
+	text_input_active: bool,
 	transparent_cursor: ^sdl.Cursor,
 	controller_connected_this_frame: bool,
 	controller_disconnected_this_frame: bool,
 	controller_dpad_x: f32,
 	controller_dpad_y: f32,
+	controller_nav_pressed_x: f32,
+	controller_nav_pressed_y: f32,
 	controller_accept_down: bool,
 	controller_back_down: bool,
 	controller_pause_down: bool,
+	controller_pause_pressed: bool,
+	controller_help_down: bool,
+	controller_help_pressed: bool,
+	controller_north_down: bool,
+	controller_start_down: bool,
+	controller_view_down: bool,
 	controller_toggle_ui_down: bool,
+	controller_toggle_ui_pressed: bool,
 	controller_focus_next_down: bool,
 	controller_focus_prev_down: bool,
+	controller_left_shoulder_down: bool,
+	controller_right_shoulder_down: bool,
 	controller_secondary_button_down: bool,
+	controller_camera_reset_pressed: bool,
+	controller_camera_reset_down: bool,
 	controller_left: uifw.Vec2,
 	controller_right: uifw.Vec2,
 	controller_left_trigger: f32,
@@ -55,8 +87,8 @@ App_State :: struct {
 	controller_right_trigger_down: bool,
 	controller_left_trigger_prev_down: bool,
 	controller_right_trigger_prev_down: bool,
-	controller_nav_prev_x: f32,
-	controller_nav_prev_y: f32,
+	controller_left_trigger_event_down: bool,
+	controller_right_trigger_event_down: bool,
 	gamepad: ^sdl.Gamepad,
 	gamepad_id: sdl.JoystickID,
 	theme_preview: bool,
@@ -80,6 +112,34 @@ INPUT_MOUSE_MOVE_THRESHOLD :: f32(2.0)
 INPUT_CONTROLLER_DEADZONE :: f32(0.25)
 INPUT_CONTROLLER_TRIGGER_THRESHOLD :: f32(0.30)
 INPUT_CONTROLLER_CURSOR_SPEED :: f32(0.72)
+
+app_controller_deadzone :: proc(app: ^App_State) -> f32 {
+	if app != nil && app.settings.controller_deadzone > 0 {
+		return min(max(app.settings.controller_deadzone, 0.05), 0.60)
+	}
+	return INPUT_CONTROLLER_DEADZONE
+}
+
+app_controller_cursor_speed :: proc(app: ^App_State) -> f32 {
+	if app != nil && app.settings.controller_cursor_speed > 0 {
+		return min(max(app.settings.controller_cursor_speed, 0.20), 2.0)
+	}
+	return INPUT_CONTROLLER_CURSOR_SPEED
+}
+
+app_navigation_repeat_delay :: proc(app: ^App_State) -> f32 {
+	if app != nil && app.settings.navigation_repeat_delay_ms > 0 {
+		return f32(min(max(app.settings.navigation_repeat_delay_ms, 150), 1000)) / 1000.0
+	}
+	return INPUT_ACTION_REPEAT_DELAY
+}
+
+app_navigation_repeat_interval :: proc(app: ^App_State) -> f32 {
+	if app != nil && app.settings.navigation_repeat_interval_ms > 0 {
+		return f32(min(max(app.settings.navigation_repeat_interval_ms, 30), 300)) / 1000.0
+	}
+	return INPUT_ACTION_REPEAT_INTERVAL
+}
 
 NUTRIENT_IMAGE_FILTER_NAME :: cstring("Images")
 NUTRIENT_IMAGE_FILTER_PATTERN :: cstring(IMAGE_FILE_FILTER_PATTERN)
@@ -129,15 +189,14 @@ app_run :: proc(config: App_Run_Config = {}) -> int {
 	if app.settings.window_maximized {
 		sdl.MaximizeWindow(app.window)
 	}
-	if !sdl.StartTextInput(app.window) {
-		engine.log_error("SDL text input start failed: ", sdl.GetError())
-	}
 	defer sdl.DestroyWindow(app.window)
 	app.transparent_cursor = app_create_transparent_cursor()
 	defer app_destroy_transparent_cursor(app)
 	defer {
 		app_set_system_cursor_transparent(app, false)
-		_ = sdl.StopTextInput(app.window)
+		if app.text_input_active {
+			_ = sdl.StopTextInput(app.window)
+		}
 	}
 	initial_w, initial_h: c.int
 	initial_px_w, initial_px_h: c.int
@@ -197,8 +256,34 @@ app_loop_tick :: proc(app: ^App_State) {
 	app_video_recording_process_pending_start(app)
 	app_send_frame(app)
 	frame_processor_pump(app)
+	app_sync_text_input_active(app)
 	app_drain_render_messages(app)
 	app_apply_frame_pacing(app, frame_start)
+}
+
+app_set_text_input_active :: proc(app: ^App_State, active: bool) {
+	if app == nil || app.window == nil || app.text_input_active == active {
+		return
+	}
+	if active {
+		if !sdl.StartTextInput(app.window) {
+			engine.log_error("SDL text input start failed: ", sdl.GetError())
+			return
+		}
+	} else if !sdl.StopTextInput(app.window) {
+		engine.log_error("SDL text input stop failed: ", sdl.GetError())
+		return
+	}
+	app.text_input_active = active
+}
+
+app_sync_text_input_active :: proc(app: ^App_State) {
+	if app == nil {
+		return
+	}
+	// This is a latest-state handoff rather than a queued event: UI correctness
+	// must not depend on the lossy render-statistics queue having spare capacity.
+	app_set_text_input_active(app, sync.atomic_load(&app.render_worker.text_input_requested))
 }
 
 app_poll_events :: proc(app: ^App_State) {
@@ -219,6 +304,7 @@ app_poll_events :: proc(app: ^App_State) {
 	app.input.key_delete = false
 	app.input.key_home = false
 	app.input.key_end = false
+	app.input.key_f1 = false
 	app.input.key_slash = false
 	app.input.key_space = false
 	app.input.key_space_pressed = false
@@ -227,12 +313,29 @@ app_poll_events :: proc(app: ^App_State) {
 	app.input.back = false
 	app.input.pause = false
 	app.input.toggle_ui = false
+	app.keyboard_pause_pressed = false
+	app.keyboard_help_pressed = false
+	app.keyboard_toggle_ui_pressed = false
+	app.controller_pause_pressed = false
+	app.controller_help_pressed = false
+	app.controller_toggle_ui_pressed = false
 	app.input.focus_next = false
 	app.input.focus_prev = false
 	app.input.primary_pressed = false
 	app.input.primary_released = false
 	app.input.secondary_pressed = false
 	app.input.secondary_released = false
+	app.keyboard_tab_repeated = false
+	app.keyboard_action_released = {}
+	app.controller_action_released = {}
+	app.keyboard_nav_pressed_x = 0
+	app.keyboard_nav_pressed_y = 0
+	app.keyboard_camera_reset_pressed = false
+	app.controller_nav_pressed_x = 0
+	app.controller_nav_pressed_y = 0
+	app.controller_camera_reset_pressed = false
+	app.controller_left_trigger_event_down = app.controller_left_trigger_down
+	app.controller_right_trigger_event_down = app.controller_right_trigger_down
 	app.input.controller_connected = false
 	app.input.controller_disconnected = false
 	app.controller_connected_this_frame = false
@@ -278,7 +381,7 @@ app_poll_events :: proc(app: ^App_State) {
 				app_reveal_hidden_system_cursor_from_mouse_input(app)
 			}
 		case .KEY_DOWN:
-			app_apply_key_event(app, event.key.key, event.key.scancode, true)
+			app_apply_key_event(app, event.key.key, event.key.scancode, true, event.key.repeat)
 			app_mark_mouse_keyboard_input(app)
 		case .KEY_UP:
 			app_apply_key_event(app, event.key.key, event.key.scancode, false)
@@ -294,7 +397,11 @@ app_poll_events :: proc(app: ^App_State) {
 				app_close_gamepad(app)
 			}
 		case .GAMEPAD_AXIS_MOTION:
-			app_mark_controller_input(app)
+			axis := cast(sdl.GamepadAxis)event.gaxis.axis
+			app_note_gamepad_axis_event(app, axis, event.gaxis.value)
+			if app_gamepad_axis_event_is_meaningful(app, axis) {
+				app_mark_controller_input(app)
+			}
 		case .GAMEPAD_BUTTON_DOWN:
 			app_apply_gamepad_button(app, cast(sdl.GamepadButton)event.gbutton.button, true)
 			app_mark_controller_input(app)
@@ -340,13 +447,104 @@ app_key_matches :: proc(key: sdl.Keycode, scancode: sdl.Scancode, expected_key: 
 	return key == expected_key || scancode == expected_scancode
 }
 
-app_apply_key_event :: proc(app: ^App_State, key: sdl.Keycode, scancode: sdl.Scancode, down: bool) {
+app_key_is_confirm :: proc(key: sdl.Keycode, scancode: sdl.Scancode) -> bool {
+	return key == sdl.K_RETURN || key == sdl.K_KP_ENTER || scancode == .RETURN || scancode == .KP_ENTER
+}
+
+app_key_is_non_repeating_action :: proc(key: sdl.Keycode, scancode: sdl.Scancode) -> bool {
+	return app_key_is_confirm(key, scancode) ||
+		app_key_matches(key, scancode, sdl.K_ESCAPE, .ESCAPE) ||
+		app_key_matches(key, scancode, sdl.K_SLASH, .SLASH)
+}
+
+app_keyboard_uses_letter_shortcuts :: proc(settings: App_Settings) -> bool {
+	return settings.keyboard_shortcut_profile == "Letter Shortcuts"
+}
+
+app_key_matches_shortcut :: proc(binding: Keyboard_Shortcut_Key, key: sdl.Keycode, scancode: sdl.Scancode) -> bool {
+	switch binding {
+	case .Space: return app_key_matches(key, scancode, sdl.K_SPACE, .SPACE)
+	case .Slash: return app_key_matches(key, scancode, sdl.K_SLASH, .SLASH)
+	case .F1: return app_key_matches(key, scancode, sdl.K_F1, .F1)
+	case .P: return app_key_matches(key, scancode, sdl.K_P, .P)
+	case .U: return app_key_matches(key, scancode, sdl.K_U, .U)
+	case .H: return app_key_matches(key, scancode, sdl.K_H, .H)
+	}
+	return false
+}
+
+app_key_matches_pause_shortcut :: proc(settings: App_Settings, key: sdl.Keycode, scancode: sdl.Scancode) -> bool {
+	return app_key_matches_shortcut(settings_effective_keyboard_binding(settings, .Pause), key, scancode)
+}
+
+app_key_matches_toggle_ui_shortcut :: proc(settings: App_Settings, key: sdl.Keycode, scancode: sdl.Scancode) -> bool {
+	return app_key_matches_shortcut(settings_effective_keyboard_binding(settings, .Toggle_Ui), key, scancode)
+}
+
+app_key_matches_help_shortcut :: proc(settings: App_Settings, key: sdl.Keycode, scancode: sdl.Scancode) -> bool {
+	return app_key_matches_shortcut(settings_effective_keyboard_binding(settings, .Help), key, scancode)
+}
+
+app_apply_key_event :: proc(app: ^App_State, key: sdl.Keycode, scancode: sdl.Scancode, down: bool, is_repeat := false) {
+	// Confirm, Back, and UI toggle are single actions. SDL key repeats must not
+	// re-open a screen or pop another focus scope while the key is still held.
+	if down && is_repeat && app_key_is_non_repeating_action(key, scancode) {
+		return
+	}
+	if app_key_matches_pause_shortcut(app.settings, key, scancode) {
+		if down && is_repeat {return}
+		if !down && app.keyboard_pause_down {app.keyboard_action_released.pause = true}
+		app.keyboard_pause_down = down
+		if down {
+			app.keyboard_pause_pressed = true
+			app.input.pause = true
+		}
+		if !app_key_matches(key, scancode, sdl.K_SPACE, .SPACE) {return}
+	}
+	if app_key_matches_toggle_ui_shortcut(app.settings, key, scancode) {
+		if down && is_repeat {return}
+		if !down && app.keyboard_toggle_ui_down {app.keyboard_action_released.toggle_ui = true}
+		app.keyboard_toggle_ui_down = down
+		if down {
+			app.keyboard_toggle_ui_pressed = true
+			app.input.toggle_ui = true
+		}
+		if !app_key_matches(key, scancode, sdl.K_SLASH, .SLASH) {return}
+	}
+	if app_key_matches_help_shortcut(app.settings, key, scancode) {
+		if down && is_repeat {return}
+		if !down && app.keyboard_help_down {app.keyboard_action_released.help = true}
+		app.keyboard_help_down = down
+		if down {
+			app.keyboard_help_pressed = true
+			app.input.key_f1 = true
+		}
+		return
+	}
 	if app_key_matches(key, scancode, sdl.K_TAB, .TAB) {
-		app.input.key_tab = down
-	} else if key == sdl.K_RETURN || key == sdl.K_KP_ENTER || scancode == .RETURN || scancode == .KP_ENTER {
-		app.input.key_enter = down
+		if down && !app.keyboard_tab_down {
+			app.input.key_tab = true
+			app.keyboard_tab_shifted = app.input.key_shift
+		} else if down && is_repeat {
+			app.input.key_tab = true
+			app.keyboard_tab_repeated = true
+		}
+		if !down && app.keyboard_tab_down {
+			if app.keyboard_tab_shifted {
+				app.keyboard_action_released.focus_prev = true
+			} else {
+				app.keyboard_action_released.focus_next = true
+			}
+		}
+		app.keyboard_tab_down = down
+	} else if app_key_is_confirm(key, scancode) {
+		if !down && app.keyboard_accept_down {app.keyboard_action_released.accept = true}
+		app.keyboard_accept_down = down
+		if down {app.input.key_enter = true}
 	} else if app_key_matches(key, scancode, sdl.K_ESCAPE, .ESCAPE) {
-		app.input.key_escape = down
+		if !down && app.keyboard_back_down {app.keyboard_action_released.back = true}
+		app.keyboard_back_down = down
+		if down {app.input.key_escape = true}
 	} else if app_key_matches(key, scancode, sdl.K_BACKSPACE, .BACKSPACE) {
 		app.input.key_backspace = down
 	} else if app_key_matches(key, scancode, sdl.K_DELETE, .DELETE) {
@@ -356,12 +554,16 @@ app_apply_key_event :: proc(app: ^App_State, key: sdl.Keycode, scancode: sdl.Sca
 	} else if app_key_matches(key, scancode, sdl.K_END, .END) {
 		app.input.key_end = down
 	} else if app_key_matches(key, scancode, sdl.K_LEFT, .LEFT) {
+		if down && !is_repeat {app.keyboard_nav_pressed_x = -1}
 		app.input.key_left = down
 	} else if app_key_matches(key, scancode, sdl.K_RIGHT, .RIGHT) {
+		if down && !is_repeat {app.keyboard_nav_pressed_x = 1}
 		app.input.key_right = down
 	} else if app_key_matches(key, scancode, sdl.K_UP, .UP) {
+		if down && !is_repeat {app.keyboard_nav_pressed_y = -1}
 		app.input.key_up = down
 	} else if app_key_matches(key, scancode, sdl.K_DOWN, .DOWN) {
+		if down && !is_repeat {app.keyboard_nav_pressed_y = 1}
 		app.input.key_down = down
 	} else if app_key_matches(key, scancode, sdl.K_W, .W) {
 		app.input.key_w = down
@@ -383,15 +585,19 @@ app_apply_key_event :: proc(app: ^App_State, key: sdl.Keycode, scancode: sdl.Sca
 			app_read_clipboard_paste(app)
 		}
 	} else if app_key_matches(key, scancode, sdl.K_C, .C) {
+		if down && !is_repeat {app.keyboard_camera_reset_pressed = true}
+		if !down && app.input.key_c {app.keyboard_action_released.camera_reset = true}
 		app.input.key_c = down
 	} else if app_key_matches(key, scancode, sdl.K_SLASH, .SLASH) {
-		app.input.key_slash = down
+		if down {app.input.key_slash = true}
 	} else if app_key_matches(key, scancode, sdl.K_SPACE, .SPACE) {
 		if down && !app.input.key_space_down {
 			app.input.key_space = true
 			app.input.key_space_pressed = true
 		} else if !down && app.input.key_space_down {
 			app.input.key_space_released = true
+			app.keyboard_action_released.pause = true
+			app.keyboard_action_released.control_deck = true
 		}
 		app.input.key_space_down = down
 	} else if key == sdl.K_LSHIFT || key == sdl.K_RSHIFT || scancode == .LSHIFT || scancode == .RSHIFT {
@@ -438,53 +644,240 @@ app_close_gamepad :: proc(app: ^App_State) {
 	app.gamepad = nil
 	app.gamepad_id = 0
 	app.controller_disconnected_this_frame = true
+	app.controller_action_released.primary = app.controller_action_released.primary || app_controller_primary_trigger_down(app)
+	app.controller_action_released.secondary = app.controller_action_released.secondary || app_controller_secondary_down(app)
 	app.controller_left = {}
 	app.controller_right = {}
 	app.controller_left_trigger = 0
 	app.controller_right_trigger = 0
 	app.controller_left_trigger_down = false
 	app.controller_right_trigger_down = false
+	app.controller_left_trigger_event_down = false
+	app.controller_right_trigger_event_down = false
+	app.controller_action_released.accept = app.controller_action_released.accept || app.controller_accept_down
+	app.controller_action_released.back = app.controller_action_released.back || app.controller_back_down
+	app.controller_action_released.pause = app.controller_action_released.pause || app.controller_pause_down
+	app.controller_action_released.help = app.controller_action_released.help || app.controller_help_down
+	app.controller_action_released.toggle_ui = app.controller_action_released.toggle_ui || app.controller_toggle_ui_down
+	app.controller_action_released.focus_next = app.controller_action_released.focus_next || app.controller_focus_next_down
+	app.controller_action_released.focus_prev = app.controller_action_released.focus_prev || app.controller_focus_prev_down
+	app.controller_action_released.camera_reset = app.controller_action_released.camera_reset || app.controller_camera_reset_down
 	app.controller_dpad_x = 0
 	app.controller_dpad_y = 0
+	app.controller_nav_pressed_x = 0
+	app.controller_nav_pressed_y = 0
 	app.controller_accept_down = false
 	app.controller_back_down = false
 	app.controller_pause_down = false
+	app.controller_help_down = false
+	app.controller_north_down = false
+	app.controller_start_down = false
+	app.controller_view_down = false
 	app.controller_toggle_ui_down = false
 	app.controller_focus_next_down = false
 	app.controller_focus_prev_down = false
+	app.controller_left_shoulder_down = false
+	app.controller_right_shoulder_down = false
 	app.controller_secondary_button_down = false
+	app.controller_camera_reset_pressed = false
+	app.controller_camera_reset_down = false
+}
+
+app_controller_south_is_accept :: proc(settings: App_Settings) -> bool {
+	return settings.controller_face_layout != "East Accept"
+}
+
+app_controller_start_is_pause :: proc(settings: App_Settings) -> bool {
+	return settings.controller_menu_layout != "View Pauses"
+}
+
+app_controller_right_shoulder_is_next :: proc(settings: App_Settings) -> bool {
+	return settings.controller_shoulder_layout != "Left Next"
+}
+
+app_controller_right_trigger_is_primary :: proc(settings: App_Settings) -> bool {
+	return settings.controller_trigger_layout != "Left Primary"
+}
+
+app_controller_primary_trigger_down :: proc(app: ^App_State) -> bool {
+	return app_controller_right_trigger_is_primary(app.settings) ? app.controller_right_trigger_down : app.controller_left_trigger_down
+}
+
+app_controller_secondary_down :: proc(app: ^App_State) -> bool {
+	trigger_down := app_controller_right_trigger_is_primary(app.settings) ? app.controller_left_trigger_down : app.controller_right_trigger_down
+	return trigger_down || app.controller_secondary_button_down
+}
+
+app_controller_primary_trigger_prev_down :: proc(app: ^App_State) -> bool {
+	return app_controller_right_trigger_is_primary(app.settings) ? app.controller_right_trigger_prev_down : app.controller_left_trigger_prev_down
+}
+
+app_controller_secondary_trigger_prev_down :: proc(app: ^App_State) -> bool {
+	return app_controller_right_trigger_is_primary(app.settings) ? app.controller_left_trigger_prev_down : app.controller_right_trigger_prev_down
+}
+
+app_apply_controller_shoulder_button :: proc(app: ^App_State, button: sdl.GamepadButton, down: bool) {
+	old_next := app.controller_focus_next_down
+	old_prev := app.controller_focus_prev_down
+	if button == .RIGHT_SHOULDER {app.controller_right_shoulder_down = down}
+	if button == .LEFT_SHOULDER {app.controller_left_shoulder_down = down}
+	right_next := app_controller_right_shoulder_is_next(app.settings)
+	app.controller_focus_next_down = right_next ? app.controller_right_shoulder_down : app.controller_left_shoulder_down
+	app.controller_focus_prev_down = right_next ? app.controller_left_shoulder_down : app.controller_right_shoulder_down
+	if old_next && !app.controller_focus_next_down {app.controller_action_released.focus_next = true}
+	if old_prev && !app.controller_focus_prev_down {app.controller_action_released.focus_prev = true}
+	if !old_next && app.controller_focus_next_down {app.input.focus_next = true}
+	if !old_prev && app.controller_focus_prev_down {app.input.focus_prev = true}
+}
+
+app_apply_controller_menu_button :: proc(app: ^App_State, button: sdl.GamepadButton, down: bool) {
+	old_pause := app.controller_pause_down
+	old_toggle := app.controller_toggle_ui_down
+	#partial switch button {
+	case .NORTH: app.controller_north_down = down
+	case .START: app.controller_start_down = down
+	case .BACK: app.controller_view_down = down
+	}
+	start_pauses := app_controller_start_is_pause(app.settings)
+	app.controller_pause_down = start_pauses ? app.controller_start_down : app.controller_view_down
+	app.controller_toggle_ui_down = app.controller_north_down || (start_pauses ? app.controller_view_down : app.controller_start_down)
+	if old_pause && !app.controller_pause_down {app.controller_action_released.pause = true}
+	if old_toggle && !app.controller_toggle_ui_down {app.controller_action_released.toggle_ui = true}
+	if !old_pause && app.controller_pause_down {
+		app.controller_pause_pressed = true
+		app.input.pause = true
+	}
+	if !old_toggle && app.controller_toggle_ui_down {
+		app.controller_toggle_ui_pressed = true
+		app.input.toggle_ui = true
+	}
+}
+
+app_release_controller_face_actions :: proc(app: ^App_State) {
+	if app == nil {
+		return
+	}
+	app.controller_action_released.accept = app.controller_action_released.accept || app.controller_accept_down
+	app.controller_action_released.back = app.controller_action_released.back || app.controller_back_down
+	app.controller_accept_down = false
+	app.controller_back_down = false
+	app.input.accept = false
+	app.input.back = false
+}
+
+app_apply_settings :: proc(app: ^App_State, settings: App_Settings) {
+	if app == nil {
+		return
+	}
+	if app_controller_south_is_accept(app.settings) != app_controller_south_is_accept(settings) {
+		// A layout swap can occur while a face button is held. Release the old
+		// semantic owner now; require a fresh press under the new profile.
+		app_release_controller_face_actions(app)
+	}
+	if app_controller_start_is_pause(app.settings) != app_controller_start_is_pause(settings) {
+		app.controller_action_released.pause = app.controller_action_released.pause || app.controller_pause_down
+		app.controller_action_released.toggle_ui = app.controller_action_released.toggle_ui || app.controller_toggle_ui_down
+		app.controller_pause_down = false
+		app.controller_toggle_ui_down = false
+		app.controller_pause_pressed = false
+		app.controller_toggle_ui_pressed = false
+		app.controller_north_down = false
+		app.controller_start_down = false
+		app.controller_view_down = false
+		app.input.pause = false
+		app.input.toggle_ui = false
+	}
+	if app_controller_right_shoulder_is_next(app.settings) != app_controller_right_shoulder_is_next(settings) {
+		app.controller_action_released.focus_next = app.controller_action_released.focus_next || app.controller_focus_next_down
+		app.controller_action_released.focus_prev = app.controller_action_released.focus_prev || app.controller_focus_prev_down
+		app.controller_focus_next_down = false
+		app.controller_focus_prev_down = false
+		app.controller_left_shoulder_down = false
+		app.controller_right_shoulder_down = false
+		app.input.focus_next = false
+		app.input.focus_prev = false
+	}
+	if app_controller_right_trigger_is_primary(app.settings) != app_controller_right_trigger_is_primary(settings) {
+		app.controller_action_released.primary = app.controller_action_released.primary || app_controller_primary_trigger_down(app)
+		app.controller_action_released.secondary = app.controller_action_released.secondary || (app_controller_secondary_down(app) && !app.controller_secondary_button_down)
+		app.controller_left_trigger = 0
+		app.controller_right_trigger = 0
+		app.controller_left_trigger_down = false
+		app.controller_right_trigger_down = false
+		app.controller_left_trigger_prev_down = false
+		app.controller_right_trigger_prev_down = false
+		app.controller_left_trigger_event_down = false
+		app.controller_right_trigger_event_down = false
+		app.input.primary_pressed = false
+		app.input.primary_released = false
+		if !app.controller_secondary_button_down {
+			app.input.secondary_pressed = false
+			app.input.secondary_released = false
+		}
+	}
+	if settings_effective_keyboard_binding(app.settings, .Pause) != settings_effective_keyboard_binding(settings, .Pause) ||
+	   settings_effective_keyboard_binding(app.settings, .Toggle_Ui) != settings_effective_keyboard_binding(settings, .Toggle_Ui) ||
+	   settings_effective_keyboard_binding(app.settings, .Help) != settings_effective_keyboard_binding(settings, .Help) {
+		app.keyboard_action_released.pause = app.keyboard_action_released.pause || app.keyboard_pause_down
+		app.keyboard_action_released.help = app.keyboard_action_released.help || app.keyboard_help_down
+		app.keyboard_action_released.toggle_ui = app.keyboard_action_released.toggle_ui || app.keyboard_toggle_ui_down
+		app.keyboard_pause_down = false
+		app.keyboard_help_down = false
+		app.keyboard_toggle_ui_down = false
+		app.keyboard_pause_pressed = false
+		app.keyboard_help_pressed = false
+		app.keyboard_toggle_ui_pressed = false
+		app.input.pause = false
+		app.input.key_f1 = false
+		app.input.toggle_ui = false
+	}
+	app.settings = settings
 }
 
 app_apply_gamepad_button :: proc(app: ^App_State, button: sdl.GamepadButton, down: bool) {
 	#partial switch button {
-	case .SOUTH:
-		app.controller_accept_down = down
-		if down {app.input.accept = true}
-	case .EAST:
-		app.controller_back_down = down
-		if down {app.input.back = true}
+	case .SOUTH, .EAST:
+		south := button == .SOUTH
+		accept := south == app_controller_south_is_accept(app.settings)
+		if accept {
+			if !down && app.controller_accept_down {app.controller_action_released.accept = true}
+			app.controller_accept_down = down
+			if down {app.input.accept = true}
+		} else {
+			if !down && app.controller_back_down {app.controller_action_released.back = true}
+			app.controller_back_down = down
+			if down {app.input.back = true}
+		}
 	case .WEST:
+		if !down && app.controller_secondary_button_down {app.controller_action_released.secondary = true}
 		app.controller_secondary_button_down = down
-	case .NORTH, .BACK:
-		app.controller_toggle_ui_down = down
-		if down {app.input.toggle_ui = true}
-	case .START:
-		app.controller_pause_down = down
-		if down {app.input.pause = true}
+		if down {app.input.secondary_pressed = true} else {app.input.secondary_released = true}
+	case .NORTH, .BACK, .START:
+		app_apply_controller_menu_button(app, button, down)
+	case .GUIDE:
+		if !down && app.controller_help_down {app.controller_action_released.help = true}
+		app.controller_help_down = down
+		if down {app.controller_help_pressed = true}
 	case .DPAD_LEFT:
+		if down {app.controller_nav_pressed_x = -1}
 		app.controller_dpad_x = down ? f32(-1) : (app.controller_dpad_x < 0 ? f32(0) : app.controller_dpad_x)
 	case .DPAD_RIGHT:
+		if down {app.controller_nav_pressed_x = 1}
 		app.controller_dpad_x = down ? f32(1) : (app.controller_dpad_x > 0 ? f32(0) : app.controller_dpad_x)
 	case .DPAD_UP:
+		if down {app.controller_nav_pressed_y = -1}
 		app.controller_dpad_y = down ? f32(-1) : (app.controller_dpad_y < 0 ? f32(0) : app.controller_dpad_y)
 	case .DPAD_DOWN:
+		if down {app.controller_nav_pressed_y = 1}
 		app.controller_dpad_y = down ? f32(1) : (app.controller_dpad_y > 0 ? f32(0) : app.controller_dpad_y)
 	case .RIGHT_SHOULDER:
-		app.controller_focus_next_down = down
-		if down {app.input.focus_next = true}
+		app_apply_controller_shoulder_button(app, button, down)
 	case .LEFT_SHOULDER:
-		app.controller_focus_prev_down = down
-		if down {app.input.focus_prev = true}
+		app_apply_controller_shoulder_button(app, button, down)
+	case .LEFT_STICK:
+		if !down && app.controller_camera_reset_down {app.controller_action_released.camera_reset = true}
+		app.controller_camera_reset_down = down
+		if down {app.controller_camera_reset_pressed = true}
 	}
 }
 
@@ -540,10 +933,11 @@ app_apply_deadzone :: proc(value, deadzone: f32) -> f32 {
 }
 
 app_controller_axis_pair :: proc(app: ^App_State, x_axis, y_axis: sdl.GamepadAxis) -> uifw.Vec2 {
-	return {
-		app_apply_deadzone(app_gamepad_axis_value(app, x_axis), INPUT_CONTROLLER_DEADZONE),
-		app_apply_deadzone(app_gamepad_axis_value(app, y_axis), INPUT_CONTROLLER_DEADZONE),
+	raw := uifw.Vec2{
+		app_gamepad_axis_value(app, x_axis),
+		app_gamepad_axis_value(app, y_axis),
 	}
+	return input_action_apply_radial_deadzone(raw, app_controller_deadzone(app))
 }
 
 app_controller_trigger_value :: proc(app: ^App_State, axis: sdl.GamepadAxis) -> f32 {
@@ -552,6 +946,57 @@ app_controller_trigger_value :: proc(app: ^App_State, axis: sdl.GamepadAxis) -> 
 		return 0
 	}
 	return min(max(raw, 0), 1)
+}
+
+app_gamepad_event_axis_value :: proc(raw: i16) -> f32 {
+	if raw < 0 {
+		return max(f32(raw) / 32768.0, -1)
+	}
+	return min(f32(raw) / 32767.0, 1)
+}
+
+app_note_gamepad_axis_event :: proc(app: ^App_State, axis: sdl.GamepadAxis, raw: i16) {
+	value := max(app_gamepad_event_axis_value(raw), 0)
+	#partial switch axis {
+	case .RIGHT_TRIGGER:
+		down := value >= INPUT_CONTROLLER_TRIGGER_THRESHOLD
+		primary := app_controller_right_trigger_is_primary(app.settings)
+		if down && !app.controller_right_trigger_event_down {
+			if primary {app.input.primary_pressed = true} else {app.input.secondary_pressed = true}
+		}
+		if !down && app.controller_right_trigger_event_down {
+			if primary {app.input.primary_released = true} else {app.input.secondary_released = true}
+		}
+		app.controller_right_trigger_event_down = down
+	case .LEFT_TRIGGER:
+		down := value >= INPUT_CONTROLLER_TRIGGER_THRESHOLD
+		primary := !app_controller_right_trigger_is_primary(app.settings)
+		if down && !app.controller_left_trigger_event_down {
+			if primary {app.input.primary_pressed = true} else {app.input.secondary_pressed = true}
+		}
+		if !down && app.controller_left_trigger_event_down {
+			if primary {app.input.primary_released = true} else {app.input.secondary_released = true}
+		}
+		app.controller_left_trigger_event_down = down
+	case:
+	}
+}
+
+app_gamepad_axis_event_is_meaningful :: proc(app: ^App_State, axis: sdl.GamepadAxis) -> bool {
+	#partial switch axis {
+	case .LEFTX, .LEFTY:
+		value := app_controller_axis_pair(app, .LEFTX, .LEFTY)
+		return value.x != 0 || value.y != 0 || app.controller_left.x != 0 || app.controller_left.y != 0
+	case .RIGHTX, .RIGHTY:
+		value := app_controller_axis_pair(app, .RIGHTX, .RIGHTY)
+		return value.x != 0 || value.y != 0 || app.controller_right.x != 0 || app.controller_right.y != 0
+	case .LEFT_TRIGGER:
+		return app_controller_trigger_value(app, .LEFT_TRIGGER) >= INPUT_CONTROLLER_TRIGGER_THRESHOLD || app.controller_left_trigger_down
+	case .RIGHT_TRIGGER:
+		return app_controller_trigger_value(app, .RIGHT_TRIGGER) >= INPUT_CONTROLLER_TRIGGER_THRESHOLD || app.controller_right_trigger_down
+	case:
+	}
+	return false
 }
 
 app_update_controller_state :: proc(app: ^App_State, delta_time: f32, window_width, window_height: i32) {
@@ -572,15 +1017,11 @@ app_update_controller_state :: proc(app: ^App_State, delta_time: f32, window_wid
 	app.controller_right = app_controller_axis_pair(app, .RIGHTX, .RIGHTY)
 	app.controller_left_trigger = app_controller_trigger_value(app, .LEFT_TRIGGER)
 	app.controller_right_trigger = app_controller_trigger_value(app, .RIGHT_TRIGGER)
-	app.controller_left_trigger_down = app.controller_left_trigger >= INPUT_CONTROLLER_TRIGGER_THRESHOLD || app.controller_secondary_button_down
+	app.controller_left_trigger_down = app.controller_left_trigger >= INPUT_CONTROLLER_TRIGGER_THRESHOLD
 	app.controller_right_trigger_down = app.controller_right_trigger >= INPUT_CONTROLLER_TRIGGER_THRESHOLD
 
 	left_active := app.controller_left.x != 0 || app.controller_left.y != 0
 	right_active := app.controller_right.x != 0 || app.controller_right.y != 0
-	trigger_active := app.controller_left_trigger_down || app.controller_right_trigger_down
-	if left_active || right_active || trigger_active {
-		app_mark_controller_input(app)
-	}
 
 	if !app.virtual_cursor_initialized {
 		app.virtual_cursor_pos = {f32(window_width) * 0.5, f32(window_height) * 0.5}
@@ -589,13 +1030,184 @@ app_update_controller_state :: proc(app: ^App_State, delta_time: f32, window_wid
 	if right_active {
 		strength_x := app.controller_right.x * (app.controller_right.x < 0 ? -app.controller_right.x : app.controller_right.x)
 		strength_y := app.controller_right.y * (app.controller_right.y < 0 ? -app.controller_right.y : app.controller_right.y)
-		speed := max(f32(window_height), 480) * INPUT_CONTROLLER_CURSOR_SPEED
+		speed := max(f32(window_height), 480) * app_controller_cursor_speed(app)
 		dt := max(delta_time, 1.0 / 240.0)
 		app.virtual_cursor_pos.x += strength_x * speed * dt
 		app.virtual_cursor_pos.y += strength_y * speed * dt
 	}
 	app.virtual_cursor_pos.x = min(max(app.virtual_cursor_pos.x, 0), max(f32(window_width) - 1, 0))
 	app.virtual_cursor_pos.y = min(max(app.virtual_cursor_pos.y, 0), max(f32(window_height) - 1, 0))
+}
+
+app_input_axis :: proc(positive, negative: bool) -> f32 {
+	value := f32(0)
+	if positive {value += 1}
+	if negative {value -= 1}
+	return value
+}
+
+app_controller_camera_zoom :: proc(app: ^App_State) -> f32 {
+	zoom := -app.controller_dpad_y
+	if zoom == 0 {
+		// Preserve a quick D-pad tap that begins and ends between frames.
+		zoom = -app.controller_nav_pressed_y
+	}
+	return min(max(zoom, -1), 1)
+}
+
+app_resolve_input_actions :: proc(app: ^App_State, delta_time: f32) -> Input_Action_Frame {
+	keyboard_nav := uifw.Vec2{
+		app_input_axis(app.input.key_right, app.input.key_left),
+		app_input_axis(app.input.key_down, app.input.key_up),
+	}
+	controller_nav := uifw.Vec2{app.controller_dpad_x, app.controller_dpad_y}
+	if controller_nav.x == 0 {
+		controller_nav.x = app.controller_left.x
+	}
+	if controller_nav.y == 0 {
+		controller_nav.y = app.controller_left.y
+	}
+	navigate := uifw.Vec2{
+		min(max(keyboard_nav.x + controller_nav.x, -1), 1),
+		min(max(keyboard_nav.y + controller_nav.y, -1), 1),
+	}
+
+	actions: Input_Action_Frame
+	actions.navigate = input_action_resolve_navigation(
+		&app.action_resolver,
+		navigate,
+		delta_time,
+		app_navigation_repeat_delay(app),
+		app_navigation_repeat_interval(app),
+	)
+	actions.navigate.pressed.x = min(max(actions.navigate.pressed.x + app.keyboard_nav_pressed_x + app.controller_nav_pressed_x, -1), 1)
+	actions.navigate.pressed.y = min(max(actions.navigate.pressed.y + app.keyboard_nav_pressed_y + app.controller_nav_pressed_y, -1), 1)
+	actions.accept = input_action_resolve_button(&app.action_resolver.accept, {
+		mouse_keyboard_down = app.keyboard_accept_down,
+		controller_down = app.controller_accept_down,
+		mouse_keyboard_pressed = app.input.key_enter,
+		controller_pressed = app.input.accept,
+		mouse_keyboard_released = app.keyboard_action_released.accept,
+		controller_released = app.controller_action_released.accept,
+	})
+	actions.back = input_action_resolve_button(&app.action_resolver.back, {
+		mouse_keyboard_down = app.keyboard_back_down,
+		controller_down = app.controller_back_down,
+		mouse_keyboard_pressed = app.input.key_escape,
+		controller_pressed = app.input.back,
+		mouse_keyboard_released = app.keyboard_action_released.back,
+		controller_released = app.controller_action_released.back,
+	})
+	actions.pause = input_action_resolve_button(&app.action_resolver.pause, {
+		mouse_keyboard_down = app.keyboard_pause_down,
+		controller_down = app.controller_pause_down,
+		mouse_keyboard_pressed = app.keyboard_pause_pressed,
+		controller_pressed = app.controller_pause_pressed || (app.input.pause && !app.keyboard_pause_pressed),
+		mouse_keyboard_released = app.keyboard_action_released.pause,
+		controller_released = app.controller_action_released.pause,
+	})
+	actions.help = input_action_resolve_button(&app.action_resolver.help, {
+		mouse_keyboard_down = app.keyboard_help_down,
+		controller_down = app.controller_help_down,
+		mouse_keyboard_pressed = app.keyboard_help_pressed,
+		controller_pressed = app.controller_help_pressed,
+		mouse_keyboard_released = app.keyboard_action_released.help,
+		controller_released = app.controller_action_released.help,
+	})
+	actions.toggle_ui = input_action_resolve_button(&app.action_resolver.toggle_ui, {
+		mouse_keyboard_down = app.keyboard_toggle_ui_down,
+		controller_down = app.controller_toggle_ui_down,
+		mouse_keyboard_pressed = app.keyboard_toggle_ui_pressed,
+		controller_pressed = app.controller_toggle_ui_pressed || (app.input.toggle_ui && !app.keyboard_toggle_ui_pressed),
+		mouse_keyboard_released = app.keyboard_action_released.toggle_ui,
+		controller_released = app.controller_action_released.toggle_ui,
+	})
+	actions.control_deck = input_action_resolve_button(&app.action_resolver.control_deck, {
+		mouse_keyboard_down = app.input.key_space_down,
+		mouse_keyboard_pressed = app.input.key_space || app.input.key_space_pressed,
+		mouse_keyboard_released = app.keyboard_action_released.control_deck,
+	})
+	actions.focus_next = input_action_resolve_button(&app.action_resolver.focus_next, {
+		mouse_keyboard_down = app.keyboard_tab_down && !app.keyboard_tab_shifted,
+		controller_down = app.controller_focus_next_down,
+		mouse_keyboard_pressed = app.input.key_tab && !app.keyboard_tab_shifted && !app.keyboard_tab_repeated,
+		controller_pressed = app.input.focus_next,
+		mouse_keyboard_repeated = app.keyboard_tab_repeated && !app.keyboard_tab_shifted,
+		mouse_keyboard_released = app.keyboard_action_released.focus_next,
+		controller_released = app.controller_action_released.focus_next,
+	})
+	actions.focus_prev = input_action_resolve_button(&app.action_resolver.focus_prev, {
+		mouse_keyboard_down = app.keyboard_tab_down && app.keyboard_tab_shifted,
+		controller_down = app.controller_focus_prev_down,
+		mouse_keyboard_pressed = app.input.key_tab && app.keyboard_tab_shifted && !app.keyboard_tab_repeated,
+		controller_pressed = app.input.focus_prev,
+		mouse_keyboard_repeated = app.keyboard_tab_repeated && app.keyboard_tab_shifted,
+		mouse_keyboard_released = app.keyboard_action_released.focus_prev,
+		controller_released = app.controller_action_released.focus_prev,
+	})
+
+	mouse_primary_down := app.input.mouse_down && app.input.mouse_button != 3
+	mouse_secondary_down := app.input.mouse_down && app.input.mouse_button == 3
+	actions.primary = input_action_resolve_button(&app.action_resolver.primary, {
+		mouse_keyboard_down = mouse_primary_down,
+		controller_down = app_controller_primary_trigger_down(app),
+		mouse_keyboard_pressed = app.input.mouse_pressed && app.input.mouse_button != 3,
+		controller_pressed = app.input.primary_pressed || (app_controller_primary_trigger_down(app) && !app_controller_primary_trigger_prev_down(app)),
+		mouse_keyboard_released = app.input.mouse_released && app.input.mouse_button != 3,
+		controller_released = app.input.primary_released || app.controller_action_released.primary,
+	})
+	actions.secondary = input_action_resolve_button(&app.action_resolver.secondary, {
+		mouse_keyboard_down = mouse_secondary_down,
+		controller_down = app_controller_secondary_down(app),
+		mouse_keyboard_pressed = app.input.mouse_pressed && app.input.mouse_button == 3,
+		controller_pressed = app.input.secondary_pressed || (app_controller_secondary_down(app) && !app_controller_secondary_trigger_prev_down(app)),
+		mouse_keyboard_released = app.input.mouse_released && app.input.mouse_button == 3,
+		controller_released = app.input.secondary_released || app.controller_action_released.secondary,
+	})
+	actions.camera_reset = input_action_resolve_button(&app.action_resolver.camera_reset, {
+		mouse_keyboard_down = app.input.key_c,
+		controller_down = app.controller_camera_reset_down,
+		mouse_keyboard_pressed = app.keyboard_camera_reset_pressed,
+		controller_pressed = app.controller_camera_reset_pressed,
+		mouse_keyboard_released = app.keyboard_action_released.camera_reset,
+		controller_released = app.controller_action_released.camera_reset,
+	})
+	actions.camera_pan = {
+		min(max(app_input_axis(app.input.key_right || app.input.key_d, app.input.key_left || app.input.key_a) + app.controller_left.x, -1), 1),
+		min(max(app_input_axis(app.input.key_down || app.input.key_s, app.input.key_up || app.input.key_w) + app.controller_left.y, -1), 1),
+	}
+	actions.camera_zoom = min(max(app_input_axis(app.input.key_e, app.input.key_q) + app_controller_camera_zoom(app), -1), 1)
+	return actions
+}
+
+app_pointer_device_for_actions :: proc(actions: Input_Action_Frame, fallback: uifw.Input_Device_Kind) -> uifw.Input_Device_Kind {
+	if actions.primary.down || actions.primary.pressed || actions.primary.released {
+		if actions.primary.owner == .Controller {return .Controller}
+		if actions.primary.owner == .Mouse_Keyboard {return .Mouse_Keyboard}
+	}
+	if actions.secondary.down || actions.secondary.pressed || actions.secondary.released {
+		if actions.secondary.owner == .Controller {return .Controller}
+		if actions.secondary.owner == .Mouse_Keyboard {return .Mouse_Keyboard}
+	}
+	return fallback
+}
+
+// Frame input is an ordered event stream, not a mergeable state snapshot:
+// opposite navigation taps, repeated accepts, text edits, and pointer
+// positions must reach the render/UI owner in their original order. Apply
+// backpressure only after the generous command queue fills instead of
+// collapsing distinct interactions into one synthetic frame.
+app_push_frame_command :: proc(app: ^App_State, cmd: Ui_To_Render_Command) -> bool {
+	if app.frame_processor_mode == .Main_Thread {
+		if engine.queue_try_push(&app.ui_to_render, cmd) {
+			return true
+		}
+		// On Darwin the renderer is owned by this thread, so a blocking push
+		// would deadlock. Drain queued work and retry the exact frame.
+		frame_processor_pump(app)
+		return engine.queue_try_push(&app.ui_to_render, cmd)
+	}
+	return engine.queue_push_blocking(&app.ui_to_render, cmd)
 }
 
 app_send_frame :: proc(app: ^App_State) {
@@ -613,78 +1225,58 @@ app_send_frame :: proc(app: ^App_State) {
 	scale_x := f32(w) / f32(max(lw, 1))
 	scale_y := f32(h) / f32(max(lh, 1))
 	app_update_controller_state(app, delta_time, i32(lw), i32(lh))
+	actions := app_resolve_input_actions(app, delta_time)
 	controller_active := app.active_device == .Controller
+	pointer_device := app_pointer_device_for_actions(actions, app.active_device)
+	controller_pointer_active := pointer_device == .Controller
 	if app.ui_system_cursor_hidden && app_input_reveals_hidden_system_cursor(app.input, app.active_device) {
 		app.ui_system_cursor_hidden = false
 	}
 	app_apply_system_cursor_visibility(app)
-	if !controller_active {
+	if !controller_active && !controller_pointer_active {
 		app.virtual_cursor_pos = app.input.mouse_pos
 		app.virtual_cursor_initialized = true
 	}
 
 	mouse_logical := app.input.mouse_pos
-	if controller_active {
+	if controller_pointer_active {
 		mouse_logical = app.virtual_cursor_pos
 	}
 	mouse_pos := uifw.Vec2{mouse_logical.x * scale_x, mouse_logical.y * scale_y}
 	mouse_delta := uifw.Vec2{app.input.mouse_delta.x * scale_x, app.input.mouse_delta.y * scale_y}
 	virtual_cursor_pos := uifw.Vec2{app.virtual_cursor_pos.x * scale_x, app.virtual_cursor_pos.y * scale_y}
 	pointer_enabled := true
-	nav_x := app.input.key_right ? f32(1) : f32(0)
-	if app.input.key_left {
-		nav_x -= 1
-	}
-	nav_y := app.input.key_down ? f32(1) : f32(0)
-	if app.input.key_up {
-		nav_y -= 1
-	}
-	controller_nav_x := app.controller_dpad_x
-	controller_nav_y := app.controller_dpad_y
-	if controller_nav_x == 0 && app.controller_left.x != 0 {
-		controller_nav_x = app.controller_left.x
-	}
-	if controller_nav_y == 0 && app.controller_left.y != 0 {
-		controller_nav_y = app.controller_left.y
-	}
-	if controller_active {
-		nav_x += controller_nav_x
-		nav_y += controller_nav_y
-	}
-	nav_pressed_x := f32(0)
-	nav_pressed_y := f32(0)
-	if controller_active {
-		if controller_nav_x != 0 && app.controller_nav_prev_x == 0 {
-			nav_pressed_x += controller_nav_x > 0 ? f32(1) : f32(-1)
-		}
-		if controller_nav_y != 0 && app.controller_nav_prev_y == 0 {
-			nav_pressed_y += controller_nav_y > 0 ? f32(1) : f32(-1)
-		}
-	}
-	app.controller_nav_prev_x = controller_nav_x
-	app.controller_nav_prev_y = controller_nav_y
+	nav_x := actions.navigate.value.x
+	nav_y := actions.navigate.value.y
+	nav_pressed_x := actions.navigate.pressed.x + actions.navigate.repeated.x
+	nav_pressed_y := actions.navigate.pressed.y + actions.navigate.repeated.y
 
-	primary_down := app.input.mouse_down && app.input.mouse_button != 3
-	primary_pressed := app.input.mouse_pressed && app.input.mouse_button != 3
-	primary_released := app.input.mouse_released && app.input.mouse_button != 3
-	secondary_down := app.input.mouse_down && app.input.mouse_button == 3
-	secondary_pressed := app.input.mouse_pressed && app.input.mouse_button == 3
-	secondary_released := app.input.mouse_released && app.input.mouse_button == 3
-	frame_mouse_down := app.input.mouse_down
-	frame_mouse_pressed := app.input.mouse_pressed
-	frame_mouse_released := app.input.mouse_released
-	frame_mouse_button := app.input.mouse_button
-	if controller_active {
-		primary_down = app.controller_right_trigger_down
-		primary_pressed = app.controller_right_trigger_down && !app.controller_right_trigger_prev_down
-		primary_released = !app.controller_right_trigger_down && app.controller_right_trigger_prev_down
-		secondary_down = app.controller_left_trigger_down
-		secondary_pressed = app.controller_left_trigger_down && !app.controller_left_trigger_prev_down
-		secondary_released = !app.controller_left_trigger_down && app.controller_left_trigger_prev_down
-		frame_mouse_down = primary_down || secondary_down
-		frame_mouse_pressed = primary_pressed || secondary_pressed
-		frame_mouse_released = primary_released || secondary_released
-		frame_mouse_button = secondary_down || secondary_pressed || secondary_released ? u32(3) : u32(1)
+	primary_down := actions.primary.down
+	primary_pressed := actions.primary.pressed
+	primary_released := actions.primary.released
+	secondary_down := actions.secondary.down
+	secondary_pressed := actions.secondary.pressed
+	secondary_released := actions.secondary.released
+	// Keep the native mouse stream authoritative for mouse/keyboard pointer
+	// input.  The semantic resolver owns cross-device arbitration, but using its
+	// latched state to drive the GUI can turn the first physical click after
+	// startup/device handoff into a focus-only click.  This also matches the
+	// pre-action-layer behavior: mouse buttons reach the GUI exactly as SDL
+	// reported them, while controller pointer buttons use resolved actions.
+	if pointer_device == .Mouse_Keyboard {
+		primary_down = app.input.mouse_down && app.input.mouse_button != 3
+		primary_pressed = app.input.mouse_pressed && app.input.mouse_button != 3
+		primary_released = app.input.mouse_released && app.input.mouse_button != 3
+		secondary_down = app.input.mouse_down && app.input.mouse_button == 3
+		secondary_pressed = app.input.mouse_pressed && app.input.mouse_button == 3
+		secondary_released = app.input.mouse_released && app.input.mouse_button == 3
+	}
+	frame_mouse_down := primary_down || secondary_down
+	frame_mouse_pressed := primary_pressed || secondary_pressed
+	frame_mouse_released := primary_released || secondary_released
+	frame_mouse_button := secondary_down || secondary_pressed || secondary_released ? u32(3) : u32(1)
+	if pointer_device == .Mouse_Keyboard && app.input.mouse_button != 0 {
+		frame_mouse_button = app.input.mouse_button
 	}
 	if app.mcp_enabled {
 		mcp_bridge_publish_frame(&app.mcp_bridge, app, i32(w), i32(h), i32(lw), i32(lh))
@@ -693,6 +1285,7 @@ app_send_frame :: proc(app: ^App_State) {
 	cmd: Ui_To_Render_Command
 	cmd.kind = .Frame_Input
 	cmd.frame_input = {
+		actions = actions,
 		frame_index = app.frame_index,
 		window_width = i32(w),
 		window_height = i32(h),
@@ -706,6 +1299,7 @@ app_send_frame :: proc(app: ^App_State) {
 		wheel_delta = app.input.wheel_delta,
 		delta_time = delta_time,
 		camera_sensitivity = app.settings.default_camera_sensitivity,
+		camera_reset = actions.camera_reset.pressed,
 		active_device = app.active_device,
 		pointer_enabled = pointer_enabled,
 		virtual_cursor_pos = virtual_cursor_pos,
@@ -713,12 +1307,13 @@ app_send_frame :: proc(app: ^App_State) {
 		nav_y = nav_y,
 		nav_pressed_x = nav_pressed_x,
 		nav_pressed_y = nav_pressed_y,
-		accept = app.input.key_enter || (controller_active && app.controller_accept_down),
-		back = app.input.key_escape || (controller_active && app.controller_back_down),
-		pause = app.input.key_space || (controller_active && app.input.pause),
-		toggle_ui = app.input.key_slash || (controller_active && app.input.toggle_ui),
-		focus_next = (app.input.key_tab && !app.input.key_shift) || (controller_active && (app.controller_focus_next_down || app.input.focus_next)),
-		focus_prev = (app.input.key_tab && app.input.key_shift) || (controller_active && (app.controller_focus_prev_down || app.input.focus_prev)),
+		accept = actions.accept.pressed,
+		back = actions.back.pressed,
+		pause = actions.pause.pressed,
+		help = actions.help.pressed,
+		toggle_ui = actions.toggle_ui.pressed,
+		focus_next = actions.focus_next.pressed || actions.focus_next.repeated,
+		focus_prev = actions.focus_prev.pressed || actions.focus_prev.repeated,
 		primary_down = primary_down,
 		primary_pressed = primary_pressed,
 		primary_released = primary_released,
@@ -729,7 +1324,7 @@ app_send_frame :: proc(app: ^App_State) {
 		controller_disconnected = app.controller_disconnected_this_frame,
 		controller_left = app.controller_left,
 		controller_right = app.controller_right,
-		controller_zoom = app.controller_right_trigger - app.controller_left_trigger,
+		controller_zoom = app_controller_camera_zoom(app),
 		text_input = app.input.text_input,
 		text_input_len = app.input.text_input_len,
 		clipboard_paste = app.input.clipboard_paste,
@@ -738,7 +1333,7 @@ app_send_frame :: proc(app: ^App_State) {
 		key_shift = app.input.key_shift,
 		key_ctrl = app.input.key_ctrl,
 		key_super = app.input.key_super,
-		key_enter = app.input.key_enter,
+		key_enter = app.input.key_enter || (actions.accept.pressed && actions.accept.owner == .Mouse_Keyboard),
 		key_escape = app.input.key_escape,
 		key_backspace = app.input.key_backspace,
 		key_delete = app.input.key_delete,
@@ -757,13 +1352,14 @@ app_send_frame :: proc(app: ^App_State) {
 		key_x = app.input.key_x,
 		key_v = app.input.key_v,
 		key_c = app.input.key_c,
+		key_f1 = app.input.key_f1,
 		key_slash = app.input.key_slash,
 		key_space = app.input.key_space,
 		key_space_down = app.input.key_space_down,
 		key_space_pressed = app.input.key_space_pressed,
 		key_space_released = app.input.key_space_released,
 	}
-	_ = engine.queue_try_push(&app.ui_to_render, cmd)
+	_ = app_push_frame_command(app, cmd)
 	if app.controller_disconnected_this_frame && app.active_device == .Controller {
 		app.active_device = .Mouse_Keyboard
 		app_apply_system_cursor_visibility(app)
@@ -896,7 +1492,7 @@ app_drain_render_messages :: proc(app: ^App_State) {
 		case .Request_Close:
 			app.running = false
 		case .App_Settings_Changed:
-			app.settings = msg.app_settings
+			app_apply_settings(app, msg.app_settings)
 		case .Frame_Stats:
 			app.ui_system_cursor_hidden = msg.system_cursor_hidden &&
 				!app_input_reveals_hidden_system_cursor(app.input, app.active_device)

@@ -4,6 +4,32 @@ import uifw "../ui"
 
 import "core:fmt"
 
+noise_settings_controls_content_height :: proc(gui: ^uifw.Gui_Context, settings: ^Noise_Settings) -> f32 {
+	row := gui.style.row_height + gui.style.spacing
+	height := row * 5 // Base, Placement, Noise, Fractal, and Domain Warping headers.
+	if settings.base_open {height += row}
+	if settings.placement_open {height += row * 5}
+	if settings.noise_open {
+		height += row * 3 + uifw.gui_slider_height(gui)
+		#partial switch settings.kind {
+		case .Gabor: height += row * 4
+		case .Phasor: height += row * 3
+		case .Voronoi: height += row * 2
+		case .Wave: height += row * 3
+		case:
+		}
+	}
+	if settings.fractal_open {
+		height += row
+		if settings.fractal_mode != .Single {height += row * 3}
+	}
+	if settings.warp_open {
+		height += row
+		if settings.warp_mode != .None {height += row * 3}
+	}
+	return height
+}
+
 draw_noise_settings_controls :: proc(gui: ^uifw.Gui_Context, settings: ^Noise_Settings, key_prefix: string) -> bool {
 	changed := false
 	noise_sync_indices(settings)
