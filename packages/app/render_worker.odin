@@ -105,6 +105,10 @@ render_worker_run :: proc(state: ^Render_Worker_State) {
 			break
 		}
 		render_worker_handle_command(state, runtime, cmd)
+		// This worker has its own thread-local context and temporary arena. Each
+		// command is fully consumed here, so no temporary data may cross this
+		// boundary into the next command/frame.
+		free_all(context.temp_allocator)
 	}
 }
 

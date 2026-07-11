@@ -62,6 +62,7 @@ Vector_Background_Mode :: game.Vector_Background_Mode
 Vector_Field_Type :: game.Vector_Field_Type
 VECTOR_FIELD_TYPE_NAMES := game.VECTOR_FIELD_TYPE_NAMES
 Vector_Image_Fit_Mode :: game.Vector_Image_Fit_Mode
+Vector_Display_Mode :: game.Vector_Display_Mode
 Vectors_Settings :: game.Vectors_Settings
 Voronoi_Settings :: game.Voronoi_Settings
 color_scheme_available_names_cached :: game.color_scheme_available_names_cached
@@ -200,4 +201,5 @@ SLIME_MASK_TARGET_NAMES := game.SLIME_MASK_TARGET_NAMES
 SLIME_POSITION_GENERATOR_NAMES := game.SLIME_POSITION_GENERATOR_NAMES
 VECTOR_BACKGROUND_MODE_NAMES := game.VECTOR_BACKGROUND_MODE_NAMES
 VECTOR_IMAGE_FIT_MODE_NAMES := game.VECTOR_IMAGE_FIT_MODE_NAMES
+VECTOR_DISPLAY_MODE_NAMES := game.VECTOR_DISPLAY_MODE_NAMES
 VORONOI_COLOR_MODE_NAMES := game.VORONOI_COLOR_MODE_NAMES

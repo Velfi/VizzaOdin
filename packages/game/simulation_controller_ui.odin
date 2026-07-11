@@ -38,12 +38,12 @@ FLOW_FIELD_CONTROLLER_TABS := [?]string{"Presets", "Look", "Field", "Particles",
 FLOW_FIELD_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 5, 6, 7, 3}
 PELLETS_CONTROLLER_TABS := [?]string{"Presets", "Look", "Physics", "Particles", "Brush"}
 PELLETS_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 6, 5, 3}
-VORONOI_CONTROLLER_TABS := [?]string{"Presets", "Look", "Sites"}
+VORONOI_CONTROLLER_TABS := [?]string{"Presets", "Look", "Tools"}
 VORONOI_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 5}
 MOIRE_CONTROLLER_TABS := [?]string{"Presets", "Look", "Pattern", "Flow"}
 MOIRE_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, MOIRE_SECTION_PATTERN, 7}
-VECTORS_CONTROLLER_TABS := [?]string{"Presets", "Look", "Field"}
-VECTORS_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 3}
+VECTORS_CONTROLLER_TABS := [?]string{"Presets", "Look", "Field", "Probe"}
+VECTORS_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 3, 8}
 PRIMORDIAL_CONTROLLER_TABS := [?]string{"Presets", "Look", "Motion", "Population", "Brush"}
 PRIMORDIAL_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 6, 5, 3}
 
@@ -102,6 +102,10 @@ simulation_controller_ui_section :: proc(mode: App_Mode, tab_index: int) -> int 
 	return sections[tab_index]
 }
 
+simulation_controller_ui_select_canvas_tool :: proc(mode: App_Mode, tab_index: int, remaining: ^Remaining_Sim_State) {
+	_ = mode; _ = tab_index; _ = remaining
+}
+
 simulation_controller_ui_tab_icon :: proc(label: string) -> uifw.Ui_Controller_Icon {
 	if label == "Presets" {return .Presets}
 	if label == "Look" {return .Palette}
@@ -117,6 +121,10 @@ simulation_controller_ui_tab_icon :: proc(label: string) -> uifw.Ui_Controller_I
 	if label == "Particles" {return .Particles}
 	if label == "Trails" {return .Trails}
 	if label == "Sites" {return .Sites}
+	if label == "Magnet" {return .Forces}
+	if label == "Sculpt" {return .Brush}
+	if label == "Tools" {return .Brush}
+	if label == "Probe" {return .Brush}
 	if label == "Flow" {return .Flow}
 	if label == "Motion" {return .Motion}
 	return .World
@@ -250,9 +258,14 @@ simulation_controller_ui_update_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_
 	return consumed
 }
 
-simulation_controller_ui_draw_deck :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, rect: uifw.Rect) {
+simulation_controller_ui_draw_deck :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, rect: uifw.Rect, remaining: ^Remaining_Sim_State = nil) {
 	state := simulation_controller_ui_state(ui)
 	tabs := simulation_controller_ui_tabs(ui.mode)
+	// Keyboard/controller Accept moves focus into the panel during input update;
+	// apply the tool choice here without continuously overriding canvas shortcuts.
+	if gui.input.accept && state.focus.phase == .Child_Region {
+		simulation_controller_ui_select_canvas_tool(ui.mode, state.active_index, remaining)
+	}
 	uifw.gui_spatial_group_begin(gui, "simulation_controller_deck")
 	defer uifw.gui_spatial_group_end(gui)
 	gap := gui.style.spacing_1
@@ -269,6 +282,7 @@ simulation_controller_ui_draw_deck :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Con
 		if control.activated || (control.hovered && gui.active == id && gui.input.mouse_released) {
 			if state.active_index != i {state.panel_scroll = 0}
 			state.focused_index = i; state.active_index = i; state.panel_open = true; state.deck_visible = true
+			simulation_controller_ui_select_canvas_tool(ui.mode, i, remaining)
 			simulation_controller_ui_focus_deck(ui, gui)
 		}
 		selected := state.panel_open && state.active_index == i
@@ -366,7 +380,7 @@ simulation_controller_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context,
 	simulation_controller_ui_clamp(state, len(tabs))
 	deck := simulation_controller_ui_deck_rect(gui, width, height, len(tabs))
 	if ui.simulation_shell.controls_visible && state.panel_open {simulation_controller_ui_draw_panel(ui, gui, gray, particle, remaining, simulation_controller_ui_panel_rect(gui, width, height, deck), worker)}
-	if ui.simulation_shell.controls_visible {simulation_controller_ui_draw_deck(ui, gui, deck)}
+	if ui.simulation_shell.controls_visible {simulation_controller_ui_draw_deck(ui, gui, deck, remaining)}
 	if remaining != nil {
 		kind := remaining_sim_kind_from_app_mode(ui.mode)
 		remaining_sim_draw_color_scheme_modal(gui, &ui.color_scheme_editor, kind, remaining)

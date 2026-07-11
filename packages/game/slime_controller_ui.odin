@@ -532,12 +532,15 @@ slime_controller_ui_panel_content_height :: proc(gui: ^uifw.Gui_Context, sim: ^R
 			slider_count = 2
 		}
 	case .Brush:
-		row_count = 1
+		row_count = 5
 		extra = shared_two_axis_pad_height(gui)
 	case .Motion:
 		slider_count = 1
 		row_count = 1
 		extra = shared_two_axis_pad_height(gui) + max(row * 3.8, f32(172)) + 8
+	case .Awareness:
+		row_count = 0
+		extra = max(row * 3.8, f32(172))
 	case .Field:
 		slider_count = 1
 		row_count = 1
@@ -594,6 +597,8 @@ slime_controller_ui_draw_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context
 		slime_controller_ui_draw_motion(gui, sim)
 		uifw.gui_spacer(gui, 8)
 		uifw.gui_label(gui, "Awareness")
+		slime_controller_ui_draw_awareness(gui, sim)
+	case .Awareness:
 		slime_controller_ui_draw_awareness(gui, sim)
 	case .Field:
 		slime_controller_ui_draw_field(gui, sim)
@@ -772,9 +777,9 @@ slime_controller_ui_draw_look :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context,
 }
 
 slime_controller_ui_draw_brush :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State) {
+	tool_set := canvas_tool_set_for_kind(.Slime_Mold)
+	shared_canvas_tool_selector(gui, &tool_set, &sim.canvas_tool)
 	_ = shared_two_axis_pad_f32(gui, "Brush Shape", "slime_brush_shape", "Radius", "Strength", &sim.cursor_size, &sim.cursor_strength, 0.01, 1, 0, 50)
-	hint := gui.input.active_device == .Controller ? "Primary: attract   Secondary: repel" : "Left click: attract   Right click: repel"
-	uifw.gui_label(gui, hint)
 }
 
 slime_controller_ui_draw_motion :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State) {

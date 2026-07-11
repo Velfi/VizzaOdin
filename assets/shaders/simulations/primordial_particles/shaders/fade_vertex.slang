@@ -19,9 +19,7 @@ struct VertexOutput {
 VertexOutput main(uint vertex_index : SV_VertexID) {
     // Generate a fullscreen triangle using vertex index
     // This creates a triangle that covers the entire screen:
-    // Vertex 0: (-1, -1) bottom-left
-    // Vertex 1: (3, -1) bottom-right (extends beyond screen)  
-    // Vertex 2: (-1, 3) top-left (extends beyond screen)
+    // With Vulkan's downward-positive viewport, NDC y=-1 is the top edge.
     
     var positions = float2[3](
         float2(-1.0, -1.0),  // Bottom-left
@@ -30,9 +28,9 @@ VertexOutput main(uint vertex_index : SV_VertexID) {
     );
     
     var uvs = float2[3](
-        float2(0.0, 1.0),    // Bottom-left UV
-        float2(2.0, 1.0),    // Bottom-right UV (extends past 1.0)
-        float2(0.0, -1.0)    // Top-left UV (extends past 0.0)
+        float2(0.0, 0.0),
+        float2(2.0, 0.0),
+        float2(0.0, 2.0)
     );
     
     VertexOutput output;

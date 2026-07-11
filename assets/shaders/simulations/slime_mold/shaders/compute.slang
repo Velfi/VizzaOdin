@@ -33,6 +33,12 @@ struct SimSizeUniform {
     uint mask_invert_tone;
     uint random_seed;
     uint position_generator;
+    float delta_time;
+    float _pad_time;
+    uint webcam_live;
+    uint webcam_fit_mode;
+    uint webcam_width;
+    uint webcam_height;
 };
 
 struct CursorParams {
@@ -61,6 +67,12 @@ StructuredBuffer<float> mask_map;
 
 [[vk::binding(4, 0)]]
 ConstantBuffer<CursorParams> cursor;
+
+[[vk::binding(5, 0)]]
+Texture2D<float4> webcam_image;
+
+[[vk::binding(6, 0)]]
+SamplerState webcam_sampler;
 
 // Helper function for bilinear interpolation
 float sample_trail_map(float2 pos) {
@@ -128,6 +140,35 @@ float sample_mask_with_mirror_invert(float2 pos) {
     if (sim_size.mask_mirror_horizontal != 0) { sx = 1.0 - sx; }
     if (sim_size.mask_mirror_vertical != 0) { sy = 1.0 - sy; }
 
+    if (sim_size.webcam_live != 0) {
+        float target_width = float(max(sim_size.width, 1u));
+        float target_height = float(max(sim_size.height, 1u));
+        float source_width = float(max(sim_size.webcam_width, 1u));
+        float source_height = float(max(sim_size.webcam_height, 1u));
+        float2 p = float2(sx * target_width, sy * target_height);
+        float2 source_p;
+        if (sim_size.webcam_fit_mode == 1u) {
+            source_p.x = source_width > target_width ? p.x * source_width / target_width : p.x - (target_width - source_width) * 0.5;
+            source_p.y = source_height > target_height ? p.y * source_height / target_height : p.y - (target_height - source_height) * 0.5;
+        } else if (sim_size.webcam_fit_mode == 2u) {
+            float fitted_height = target_width * source_height / source_width;
+            source_p = float2(p.x * source_width / target_width, (p.y - (target_height - fitted_height) * 0.5) * source_height / fitted_height);
+        } else if (sim_size.webcam_fit_mode == 3u) {
+            float fitted_width = target_height * source_width / source_height;
+            source_p = float2((p.x - (target_width - fitted_width) * 0.5) * source_width / fitted_width, p.y * source_height / target_height);
+        } else {
+            source_p = p * float2(source_width / target_width, source_height / target_height);
+        }
+        bool inside = all(source_p >= 0.0) && source_p.x < source_width && source_p.y < source_height;
+        float value = 0.0;
+        if (inside) {
+            source_p.y = source_height - 1.0 - source_p.y;
+            float3 rgb = webcam_image.SampleLevel(webcam_sampler, (source_p + 0.5) / float2(source_width, source_height), 0.0).rgb;
+            value = dot(rgb, float3(0.2126, 0.7152, 0.0722));
+        }
+        return sim_size.mask_invert_tone != 0 ? 1.0 - value : value;
+    }
+
     // Convert back to texture space and use bilinear sampling
     let mirrored_pos = float2(sx * float(sim_size.width), sy * float(sim_size.height));
     var v = sample_mask_map(mirrored_pos);
@@ -162,7 +203,7 @@ float get_mask_factor(float x, float y) {
 }
 
 // Parameters for the simulation (now mostly from uniform)
-static const float TIME_STEP = 0.016; // Affects how far agents move per frame based on their speed
+static const float TIME_STEP = 0.016; // Legacy movement amount at 60 Hz.
 
 // Constants for spatial partitioning
 static const uint WORKGROUP_SIZE_X = 16;
@@ -266,34 +307,54 @@ void update_agents(
     let left_value = sample_combined_map_fast(left_pos);
     let right_value = sample_combined_map_fast(right_pos);
     
+    let frame_scale = max(sim_size.delta_time, 0.0) * 60.0;
+
     // Update angle based on sensor readings
     if (left_value > right_value) {
         // Calculate shortest path to turn left
         let target_angle = angle - TAU;
         let angle_diff = target_angle - angle;
-        angle += min(effective_turn_rate, abs(angle_diff)) * sign(angle_diff);
+        angle += min(effective_turn_rate * frame_scale, abs(angle_diff)) * sign(angle_diff);
     } else if (right_value > left_value) {
         // Calculate shortest path to turn right
         let target_angle = angle + TAU;
         let angle_diff = target_angle - angle;
-        angle += min(effective_turn_rate, abs(angle_diff)) * sign(angle_diff);
+        angle += min(effective_turn_rate * frame_scale, abs(angle_diff)) * sign(angle_diff);
     } else {
         // If equal, do nothing
     }
 
     // Update agent position
-    let move_dist = effective_speed * TIME_STEP;
+    let move_dist = effective_speed * TIME_STEP * frame_scale;
     x = x + move_dist * cos(angle);
     y = y + move_dist * sin(angle);
 
     // --- CURSOR INTERACTION ---
     if (cursor.is_active > 0) {
         let cursor_pos = float2(cursor.x, cursor.y);
+
+        // Pheromone is a persistent trail-map edit. One invocation owns the
+        // write so thousands of agent threads do not race on the same texels.
+        if ((cursor.is_active == 3 || cursor.is_active == 4) && agent_index == 0) {
+            let radius = int(max(cursor.size, 1.0));
+            for (var oy = -radius; oy <= radius; oy++) {
+                for (var ox = -radius; ox <= radius; ox++) {
+                    let d = length(float2(float(ox), float(oy)));
+                    if (d > cursor.size) { continue; }
+                    let px = ((int(cursor.x) + ox) % int(sim_size.width) + int(sim_size.width)) % int(sim_size.width);
+                    let py = ((int(cursor.y) + oy) % int(sim_size.height) + int(sim_size.height)) % int(sim_size.height);
+                    let ti = py * int(sim_size.width) + px;
+                    let amount = saturate(1.0 - d / max(cursor.size, 1.0)) * cursor.strength * 0.01;
+                    trail_map[ti] = cursor.is_active == 3 ? saturate(trail_map[ti] + amount) : saturate(trail_map[ti] - amount);
+                }
+            }
+        }
+
         let delta = cursor_pos - float2(x, y);
         let dist = length(delta);
         if (dist < cursor.size && dist > 0.01) {
             let dir = normalize(delta);
-            let force = cursor.strength * (1.0 - dist / cursor.size);
+            let force = cursor.strength * (1.0 - dist / cursor.size) * frame_scale;
             if (cursor.is_active == 1) {
                 // Attract with swirling effect
                 x += dir.x * force;
@@ -315,13 +376,23 @@ void update_agents(
                 let swirl_force = force * 0.8; // 80% of radial force
                 x += tangential_dir.x * swirl_force;
                 y += tangential_dir.y * swirl_force;
+            } else if (cursor.is_active == 5 && ((agent_index + sim_size.random_seed) % 64u) == 0u) {
+                // Fixed-capacity population: recycle a sparse stream of agents into the brush.
+                let a = float((agent_index * 1664525u + sim_size.random_seed) & 65535u) / 65535.0 * TAU;
+                let r = cursor.size * 0.35;
+                x = cursor.x + cos(a) * r;
+                y = cursor.y + sin(a) * r;
+            } else if (cursor.is_active == 6) {
+                // Removing recycles affected agents outside the brush rather than reallocating GPU storage.
+                x = fmod(x + float(sim_size.width) * 0.5, float(sim_size.width));
+                y = fmod(y + float(sim_size.height) * 0.5, float(sim_size.height));
             }
         }
     }
     // --- END CURSOR INTERACTION ---
 
     // Apply jitter with proper random distribution
-    let jitter_strength = sim_size.agent_jitter;
+    let jitter_strength = sim_size.agent_jitter * sqrt(frame_scale);
     let jitter_x_seed = hash(random_seed_index * 2654435761u + 1013904223u);
     let jitter_y_seed = hash(random_seed_index * 1664525u + 1073741827u);
     let random_x = random_float(jitter_x_seed);
@@ -340,7 +411,7 @@ void update_agents(
     let deposit_y = int(y);
     if (deposit_x >= 0 && deposit_x < int(sim_size.width) && deposit_y >= 0 && deposit_y < int(sim_size.height)) {
         let idx = deposit_y * int(sim_size.width) + deposit_x;
-        trail_map[idx] = clamp(trail_map[idx] + effective_deposition_rate * 0.01, 0.0, 1.0);
+        trail_map[idx] = clamp(trail_map[idx] + effective_deposition_rate * 0.01 * frame_scale, 0.0, 1.0);
     }
 
     // Update agent in the buffer
@@ -379,7 +450,8 @@ void decay_trail(uint3 id : SV_DispatchThreadID) {
     }
     
     // Apply decay rate
-    let decay_rate = effective_decay_rate * 0.0001;
+    let frame_scale = max(sim_size.delta_time, 0.0) * 60.0;
+    let decay_rate = effective_decay_rate * 0.0001 * frame_scale;
     trail_map[idx] = max(0.0, trail_map[idx] - decay_rate);
 }
 
@@ -420,7 +492,8 @@ void diffuse_trail(uint3 id : SV_DispatchThreadID) {
     let down = trail_map[y_next * sim_size.width + x];
     
     // Simple diffusion: average of neighbors
-    let diffusion_rate = effective_diffusion_rate * 0.01;
+    let frame_scale = max(sim_size.delta_time, 0.0) * 60.0;
+    let diffusion_rate = clamp(effective_diffusion_rate * 0.01 * frame_scale, 0.0, 1.0);
     let new_value = center * (1.0 - diffusion_rate) + 
                    (left + right + up + down) * (diffusion_rate * 0.25);
     

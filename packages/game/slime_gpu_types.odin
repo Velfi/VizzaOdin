@@ -61,6 +61,12 @@ Slime_Sim_Uniform :: struct #align(16) {
 	mask_invert_tone: u32,
 	random_seed: u32,
 	position_generator: u32,
+	delta_time: f32,
+	_pad_time: f32,
+	webcam_live: u32,
+	webcam_fit_mode: u32,
+	webcam_width: u32,
+	webcam_height: u32,
 }
 
 Slime_Cursor_Params :: struct #align(16) {
@@ -127,6 +133,12 @@ Slime_Gpu_State :: struct {
 	render_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	camera_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	display_image: Slime_Image,
+	webcam_images: [engine.MAX_FRAMES_IN_FLIGHT]Slime_Image,
+	webcam_staging_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	webcam_upload_pending: [engine.MAX_FRAMES_IN_FLIGHT]bool,
+	webcam_image_ready: [engine.MAX_FRAMES_IN_FLIGHT]bool,
+	webcam_live: bool,
+	webcam_fit_mode: Vector_Image_Fit_Mode,
 	sampler: vk.Sampler,
 	agent_speed_min_uploaded: f32,
 	agent_speed_max_uploaded: f32,
@@ -160,5 +172,3 @@ slime_speed_range_changed :: proc(gpu: ^Slime_Gpu_State, settings: ^Slime_Settin
 	return gpu.agent_speed_min_uploaded != settings.agent_speed_min ||
 	       gpu.agent_speed_max_uploaded != settings.agent_speed_max
 }
-
-

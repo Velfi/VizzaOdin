@@ -7,6 +7,8 @@ import "core:strings"
 // run_cli is the executable composition root. Platform argument parsing belongs
 // here rather than in the product domain or the minimal executable package.
 run_cli :: proc(args: []string = os.args) -> int {
+	crash_log_init()
+
 	mcp_enabled := false
 	theme_preview := false
 	steam_override := Steam_Enabled_Override.Config

@@ -6,8 +6,8 @@
 #   scripts/steam-upload.sh [flags] <version>
 #
 # Flags:
-#   --local        Stage from local dist/Vizza.app instead of downloading the
-#                  GitHub release. Useful for smoke testing.
+#   --local        Stage from local dist/Vizza.app and dist/Vizza-windows/
+#                  (or its ZIP) instead of downloading the GitHub release.
 #   --preview      Build the depot and validate, but do NOT upload to Steam.
 #                  Always run this first when changing the VDFs.
 #   --branch NAME  Set the build live on this beta branch after upload.
@@ -32,7 +32,7 @@
 #   STEAM_BUILD_PASSWORD If set, passed to steamcmd on stdin; otherwise
 #                        steamcmd prompts interactively.
 #   STEAM_BETA_BRANCH    Used with --beta. Default: beta.
-#   packaging/steam/targets.env — default AppID / depot ID.
+#   packaging/steam/targets.env — default AppID / depot IDs.
 
 set -euo pipefail
 
@@ -96,6 +96,7 @@ if [[ -f "$TARGETS_ENV" ]]; then
 	source "$TARGETS_ENV"
 fi
 STEAM_APP_ID="${STEAM_APP_ID:-4945920}"
+STEAM_DEPOT_WINDOWS="${STEAM_DEPOT_WINDOWS:-4945921}"
 STEAM_DEPOT_MACOS="${STEAM_DEPOT_MACOS:-4945922}"
 
 validate_app_id () {
@@ -117,6 +118,7 @@ validate_depot_id () {
 }
 
 validate_app_id "main" "$STEAM_APP_ID"
+validate_depot_id "Windows" "$STEAM_DEPOT_WINDOWS"
 validate_depot_id "macOS" "$STEAM_DEPOT_MACOS"
 
 if [[ ! -d "$STEAM_SDK_ROOT" ]]; then
@@ -139,6 +141,7 @@ case "$(uname)" in
 		unset _osx_cb
 		;;
 	Linux)  STEAMCMD="$STEAM_SDK_ROOT/tools/ContentBuilder/builder_linux/steamcmd.sh" ;;
+	MINGW*|MSYS*|CYGWIN*) STEAMCMD="$STEAM_SDK_ROOT/tools/ContentBuilder/builder/steamcmd.exe" ;;
 	*) echo "error: unsupported host OS: $(uname)" >&2; exit 1 ;;
 esac
 if [[ ! -x "$STEAMCMD" ]]; then
@@ -168,7 +171,23 @@ SCRIPTS="$STAGING/scripts"
 DOWNLOADS="$STAGING/dl"
 
 rm -rf "$STAGING"
-mkdir -p "$CONTENT/macos" "$OUTPUT" "$SCRIPTS" "$DOWNLOADS"
+mkdir -p "$CONTENT/macos" "$CONTENT/windows" "$OUTPUT" "$SCRIPTS" "$DOWNLOADS"
+
+stage_windows_archive () {
+	local archive="$1"
+	local unpack="$DOWNLOADS/windows-unpacked"
+	rm -rf "$unpack"
+	mkdir -p "$unpack"
+	unzip -q "$archive" -d "$unpack"
+	if [[ -f "$unpack/Vizza-windows/Vizza.exe" ]]; then
+		cp -R "$unpack/Vizza-windows/." "$CONTENT/windows/"
+	elif [[ -f "$unpack/Vizza.exe" ]]; then
+		cp -R "$unpack/." "$CONTENT/windows/"
+	else
+		echo "error: Windows artifact does not contain Vizza.exe: $archive" >&2
+		exit 1
+	fi
+}
 
 # ─────────────────────────── Stage content ───────────────────────────
 stage_local () {
@@ -183,6 +202,19 @@ stage_local () {
 	fi
 	cp -R "$app" "$CONTENT/macos/"
 	echo "staged: macos/Vizza.app (from $app)"
+
+	local windows_dir="$REPO_ROOT/dist/Vizza-windows"
+	local windows_zip="$REPO_ROOT/dist/Vizza-windows.zip"
+	if [[ -f "$windows_dir/Vizza.exe" ]]; then
+		cp -R "$windows_dir/." "$CONTENT/windows/"
+		echo "staged: windows/Vizza.exe (from $windows_dir)"
+	elif [[ -f "$windows_zip" ]]; then
+		stage_windows_archive "$windows_zip"
+		echo "staged: windows/Vizza.exe (from $windows_zip)"
+	else
+		echo "error: --local expects dist/Vizza-windows/Vizza.exe or dist/Vizza-windows.zip." >&2
+		exit 1
+	fi
 }
 
 stage_release () {
@@ -193,11 +225,11 @@ stage_release () {
 
 	echo "Downloading $TAG release artifact..."
 	if ! gh release download "$TAG" \
-		--pattern "vizza-${TAG}-macos.zip" \
+		--pattern "vizza-${TAG}-*.zip" \
 		--dir "$DOWNLOADS"
 	then
 		gh release download "$TAG" \
-			--pattern "vizza-${VERSION}-macos.zip" \
+			--pattern "vizza-${VERSION}-*.zip" \
 			--dir "$DOWNLOADS"
 	fi
 
@@ -214,6 +246,15 @@ stage_release () {
 		exit 1
 	fi
 	echo "staged: macos/Vizza.app (from $(basename "$archive"))"
+
+	local windows_archive
+	windows_archive="$(find "$DOWNLOADS" -maxdepth 1 -type f -name 'vizza-*-windows-x64.zip' | head -1)"
+	if [[ -z "$windows_archive" ]]; then
+		echo "error: no vizza-*-windows-x64.zip artifact downloaded for $TAG" >&2
+		exit 1
+	fi
+	stage_windows_archive "$windows_archive"
+	echo "staged: windows/Vizza.exe (from $(basename "$windows_archive"))"
 }
 
 if [[ $LOCAL -eq 1 ]]; then
@@ -302,13 +343,31 @@ verify_staged_app () {
 
 verify_staged_app
 
+verify_staged_windows () {
+	local exe="$CONTENT/windows/Vizza.exe"
+	local file_count
+	if [[ ! -f "$exe" ]]; then
+		echo "error: staged Windows content is missing Vizza.exe at $exe" >&2
+		exit 1
+	fi
+	file_count="$(find "$CONTENT/windows" -type f | wc -l | tr -d '[:space:]')"
+	if [[ "$file_count" -lt 10 ]]; then
+		echo "error: staged Windows build looks incomplete: $CONTENT/windows has only $file_count files" >&2
+		exit 1
+	fi
+	echo "Verified staged Steam build: windows/Vizza.exe ($file_count files)"
+}
+
+verify_staged_windows
+
 # ─────────────────────────── Render VDFs ───────────────────────────
 render_target_vdfs () {
 	local target_label="$1"
 	local app_id="$2"
-	local depot_macos="$3"
-	local setlive="$4"
-	local desc="$5"
+	local depot_windows="$3"
+	local depot_macos="$4"
+	local setlive="$5"
+	local desc="$6"
 	local target_scripts="$SCRIPTS/$target_label"
 	local target_output="$OUTPUT/$target_label"
 
@@ -324,11 +383,13 @@ render_target_vdfs () {
 			-e "s|__SETLIVE__|${setlive}|g" \
 			-e "s|__CONTENT_ROOT__|${CONTENT}|g" \
 			-e "s|__BUILD_OUTPUT__|${target_output}|g" \
+			-e "s|__DEPOT_WINDOWS__|${depot_windows}|g" \
 			-e "s|__DEPOT_MACOS__|${depot_macos}|g" \
 			"$src" > "$dst"
 	}
 
 	render_one "packaging/steam/app_build.vdf.template"         "$target_scripts/app_build.vdf"
+	render_one "packaging/steam/depot_build_windows.vdf.template" "$target_scripts/depot_build_windows.vdf"
 	render_one "packaging/steam/depot_build_macos.vdf.template" "$target_scripts/depot_build_macos.vdf"
 
 	echo "Rendered $target_label VDFs (AppID $app_id, setlive=${setlive:-<none>}) in $target_scripts"
@@ -336,6 +397,7 @@ render_target_vdfs () {
 
 render_target_vdfs "main" \
 	"$STEAM_APP_ID" \
+	"$STEAM_DEPOT_WINDOWS" \
 	"$STEAM_DEPOT_MACOS" \
 	"$BRANCH" \
 	"Vizza ${TAG}"
@@ -366,6 +428,7 @@ else
 	echo "  main:     AppID $STEAM_APP_ID → branch ${BRANCH:-<none — promote in partner UI>}"
 fi
 echo "  macOS depot: $STEAM_DEPOT_MACOS"
+echo "  Windows depot: $STEAM_DEPOT_WINDOWS"
 echo "  staging:     $STAGING"
 echo "  steamcmd:    $STEAMCMD"
 echo
@@ -382,7 +445,6 @@ fi
 
 validate_steam_output () {
 	local target_output="$OUTPUT/main"
-	local depot_log="$target_output/depot_build_${STEAM_DEPOT_MACOS}.log"
 	local app_log="$target_output/app_build_${STEAM_APP_ID}.log"
 	local error_lines
 	local depot_files
@@ -394,14 +456,19 @@ validate_steam_output () {
 		exit 1
 	fi
 
-	if [[ -f "$depot_log" ]]; then
-		depot_files="$(sed -n 's/.*Found \([0-9][0-9]*\) files (.*) for depot.*/\1/p' "$depot_log" | tail -1)"
-		if [[ -n "$depot_files" && "$depot_files" -eq 0 ]]; then
-			echo "error: SteamPipe found zero files for depot $STEAM_DEPOT_MACOS." >&2
-			echo "       Check ContentRoot/FileMapping in $SCRIPTS/main/depot_build_macos.vdf." >&2
-			exit 1
+	local depot_id depot_label depot_log
+	for depot_id in "$STEAM_DEPOT_WINDOWS" "$STEAM_DEPOT_MACOS"; do
+		[[ "$depot_id" == "$STEAM_DEPOT_WINDOWS" ]] && depot_label="windows" || depot_label="macos"
+		depot_log="$target_output/depot_build_${depot_id}.log"
+		if [[ -f "$depot_log" ]]; then
+			depot_files="$(sed -n 's/.*Found \([0-9][0-9]*\) files (.*) for depot.*/\1/p' "$depot_log" | tail -1)"
+			if [[ -n "$depot_files" && "$depot_files" -eq 0 ]]; then
+				echo "error: SteamPipe found zero files for depot $depot_id." >&2
+				echo "       Check ContentRoot/FileMapping in $SCRIPTS/main/depot_build_${depot_label}.vdf." >&2
+				exit 1
+			fi
 		fi
-	fi
+	done
 
 	if error_lines="$(grep -R -n 'ERROR!' "$target_output" 2>/dev/null)"; then
 		echo "error: SteamPipe reported errors:" >&2
@@ -410,7 +477,7 @@ validate_steam_output () {
 			echo >&2
 			echo "Steam built the depot manifest but failed to commit the app build." >&2
 			echo "That leaves Steam with an installable app but no mounted depots, so it reports Vizza.app as missing." >&2
-			echo "Check Steamworks: the target branch exists, depot $STEAM_DEPOT_MACOS is attached to the app packages, and the build account can set builds live." >&2
+			echo "Check Steamworks: the target branch exists, depots $STEAM_DEPOT_WINDOWS and $STEAM_DEPOT_MACOS are attached to the app packages, and the build account can set builds live." >&2
 		fi
 		exit 1
 	fi
@@ -421,12 +488,14 @@ validate_steam_output () {
 			echo "Steam build created: $build_id"
 		fi
 	fi
-	if [[ -f "$target_output/depot_build_${STEAM_DEPOT_MACOS}.vdf" ]]; then
-		depot_manifest="$(awk '/"manifest"/ { gsub(/"/, "", $2); print $2 }' "$target_output/depot_build_${STEAM_DEPOT_MACOS}.vdf" | tail -1)"
-		if [[ -n "$depot_manifest" ]]; then
-			echo "Steam depot manifest created: $STEAM_DEPOT_MACOS / $depot_manifest"
+	for depot_id in "$STEAM_DEPOT_WINDOWS" "$STEAM_DEPOT_MACOS"; do
+		if [[ -f "$target_output/depot_build_${depot_id}.vdf" ]]; then
+			depot_manifest="$(awk '/"manifest"/ { gsub(/"/, "", $2); print $2 }' "$target_output/depot_build_${depot_id}.vdf" | tail -1)"
+			if [[ -n "$depot_manifest" ]]; then
+				echo "Steam depot manifest created: $depot_id / $depot_manifest"
+			fi
 		fi
-	fi
+	done
 }
 
 validate_steam_output
@@ -438,5 +507,5 @@ if [[ $PREVIEW -eq 0 ]]; then
 	echo "  main: https://partner.steamgames.com/apps/builds/${STEAM_APP_ID}"
 	echo
 	echo "If Steam installs this build with 0 mounted depots, fix Steamworks packages:"
-	echo "  add depot ${STEAM_DEPOT_MACOS} to the developer comp and release/store packages, then publish Steamworks changes."
+	echo "  add depots ${STEAM_DEPOT_WINDOWS} and ${STEAM_DEPOT_MACOS} to the developer comp and release/store packages, then publish Steamworks changes."
 fi

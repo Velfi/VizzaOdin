@@ -491,5 +491,11 @@ gray_scott_apply_frame_input :: proc(sim: ^Gray_Scott_Simulation, input: Ui_Fram
 	}
 	sim.runtime.paint_active = true
 	sim.runtime.paint_x, sim.runtime.paint_y = gray_scott_screen_to_texture(sim, input.mouse_pos, input.window_width, input.window_height)
-	sim.runtime.paint_button = button
+	tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
+	secondary := button == 2 || input.secondary_down
+	if sim.canvas_tool.selected_slot == 0 {
+		sim.runtime.paint_button = secondary ? 2 : 0
+	} else {
+		sim.runtime.paint_button = secondary ? 4 : 3
+	}
 }

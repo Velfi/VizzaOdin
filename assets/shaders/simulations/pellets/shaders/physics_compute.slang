@@ -112,7 +112,7 @@ void main(uint3 global_id : SV_DispatchThreadID) {
 
     var particle = particles[index];
     
-    // Check if mouse is pressed and in attraction mode
+    // Grab remains mode 1. Higher pairs are transient force instruments.
     if (params.mouse_pressed != 0 && params.mouse_mode == 1) {
         let delta = params.mouse_position - particle.position;
         let aspect_corrected_delta = float2(delta.x * params.aspect_ratio, delta.y);
@@ -130,6 +130,19 @@ void main(uint3 global_id : SV_DispatchThreadID) {
             particle.velocity = params.mouse_velocity * params.cursor_strength * 2.0;
         }
         particle.grabbed = 0;
+    }
+
+    if (params.mouse_pressed != 0 && params.mouse_mode >= 3) {
+        let delta = params.mouse_position - particle.position;
+        let corrected = float2(delta.x * params.aspect_ratio, delta.y);
+        let distance = length(corrected);
+        if (distance > 1e-6 && distance <= params.cursor_size) {
+            let falloff = 1.0 - distance / params.cursor_size;
+            var direction = normalize(delta);
+            if (params.mouse_mode == 4 || params.mouse_mode == 6) { direction = -direction; }
+            let burst = params.mouse_mode >= 5 ? 5.0 : 1.0;
+            particle.velocity += direction * params.cursor_strength * falloff * burst * params.dt;
+        }
     }
     
     // Handle grabbed particles

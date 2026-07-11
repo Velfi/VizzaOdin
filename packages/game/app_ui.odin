@@ -658,7 +658,13 @@ app_ui_draw_device_notice :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
 	uifw.gui_shadow(gui, rect, gui.style.radius_control, {0, 5}, 16, {0, 0, 0, 0.42 * alpha})
 	uifw.gui_round_rect(gui, rect, gui.style.radius_control, fill)
 	uifw.gui_round_stroke(gui, rect, gui.style.radius_control, border, max(gui.style.border_width * 1.5, 1.5))
-	uifw.gui_text_aligned(gui, uifw.gui_inset(rect, padding), message, text_color, .Center)
+	text_rect := uifw.gui_inset(rect, padding)
+	text_width := uifw.gui_text_width(gui, message)
+	text_scale := f32(1)
+	if text_width > 0 {
+		text_scale = min(text_rect.w / text_width, 1)
+	}
+	uifw.gui_text_aligned_scaled(gui, text_rect, message, text_color, .Center, text_scale)
 }
 
 app_ui_draw_virtual_cursor :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
@@ -713,6 +719,11 @@ app_ui_draw_remaining_sim :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, kin
 	}
 	if gui.input.pause && !pause_consumed {
 		sim.paused = !sim.paused
+	}
+	if sim.canvas_tool.changed {
+		set := canvas_tool_set_for_kind(kind)
+		tool := canvas_tool_selected(&set, &sim.canvas_tool)
+		if tool.valid {uifw.gui_notice(gui, fmt.tprintf("%s selected — Primary: %s · Secondary: %s", tool.name, tool.primary_label, tool.secondary_label), 1.6)}
 	}
 	if kind != .Vectors && kind != .Moire && kind != .Primordial && kind != .Pellets && kind != .Flow_Field && kind != .Slime_Mold && kind != .Voronoi_CA {
 		remaining_sim_draw(sim, gui, kind, width, height)
@@ -946,6 +957,11 @@ app_ui_draw_gray_scott :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^
 
 	if gui.input.pause && !pause_consumed {
 		sim.settings.paused = !sim.settings.paused
+	}
+	if sim.canvas_tool.changed {
+		set := canvas_tool_set_for_mode(.Gray_Scott)
+		tool := canvas_tool_selected(&set, &sim.canvas_tool)
+		uifw.gui_notice(gui, fmt.tprintf("%s selected — Primary: %s · Secondary: %s", tool.name, tool.primary_label, tool.secondary_label), 1.6)
 	}
 
 	if ui.simulation_shell.controls_visible {
@@ -1548,32 +1564,6 @@ app_ui_draw_simulation_bar :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, mo
 	}
 	info_x := x + gap
 	info_rect := uifw.Rect{info_x, content.y, max(content.x + content.w - info_x, 1), content.h}
-	if remaining != nil {
-		kind := remaining_sim_kind_from_app_mode(mode)
-			tool_set := canvas_tool_set_for_kind(kind)
-			tool_count := 0
-			for candidate in tool_set.tools {if candidate.valid {tool_count += 1}}
-			if tool_count > 1 {
-				tool_gap := max(gui.style.border_width * 2, f32(3))
-				tools_w := min(info_rect.w * 0.58, f32(tool_count) * max(gui.style.row_height * 1.45, f32(72)))
-				tool_w := max((tools_w - tool_gap * f32(tool_count - 1)) / f32(tool_count), f32(1))
-				tool_x := info_rect.x
-				for candidate, index in tool_set.tools {
-					if !candidate.valid {continue}
-					tool_rect := uifw.Rect{tool_x, info_rect.y, tool_w, info_rect.h}
-					selected := remaining.canvas_tool.selected_slot == index
-					if uifw.gui_button_at(gui, uifw.gui_make_id(gui, fmt.tprintf("tool_%d", index)), tool_rect, candidate.name, true, false) {
-						remaining.canvas_tool.previous_slot = remaining.canvas_tool.selected_slot
-						remaining.canvas_tool.selected_slot = index
-						remaining.canvas_tool.changed = true
-					}
-					if selected {uifw.gui_round_stroke(gui, tool_rect, gui.style.radius_control, gui.style.accent, max(gui.style.border_width * 1.5, 1.5))}
-					tool_x += tool_w + tool_gap
-				}
-				info_rect.x += tools_w + gap
-				info_rect.w = max(info_rect.w - tools_w - gap, 1)
-			}
-	}
 	app_ui_draw_simulation_bar_info(gui, info_rect, simulation_name, paused, loading, ui.last_stats.fps)
 	uifw.gui_pop_id(gui)
 

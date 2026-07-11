@@ -167,14 +167,16 @@ layout are not compatibility contracts; redesigns may replace them without
 adding tests that reproduce the former implementation.
 
 Steam commands default to app ID `4945920`; override with `STEAM_APP_ID=...`
-for test apps or alternate branches. SteamPipe uploads use app ID `4945920`
-and macOS depot `4945922` from `packaging/steam/targets.env`.
+for test apps or alternate branches. SteamPipe uploads use app ID `4945920`,
+Windows depot `4945921`, and macOS depot `4945922` from
+`packaging/steam/targets.env`.
 
 To smoke-test a local SteamPipe upload package, first build the app bundle with
 Steam support, then run the preview uploader:
 
 ```bash
 SKIP_SIGN=1 SKIP_NOTARIZE=1 scripts/package_macos.sh --steam
+pwsh ./scripts/package_windows.ps1
 scripts/steam-upload.sh --preview --local 0.1.0
 ```
 

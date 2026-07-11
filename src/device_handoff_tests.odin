@@ -77,3 +77,25 @@ test_device_notice_stays_at_top_with_bottom_simulation_bar :: proc(t: ^testing.T
 	}
 	testing.expect(t, found)
 }
+
+@(test)
+test_device_notice_scales_long_text_to_narrow_window :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default())
+	game.write_fixed_string(ui.device_notice[:], "Controller disconnected - simulation paused")
+	ui.device_notice_seconds = game.APP_UI_DEVICE_NOTICE_SECONDS
+
+	uifw.gui_begin_frame(&ctx, {window_width = 320, window_height = 240})
+	game.app_ui_draw_device_notice(&ui, &ctx)
+	for command in ctx.commands {
+		if command.kind == .Text && command.text == "Controller disconnected - simulation paused" {
+			text_width := uifw.gui_font_text_width(command.font_kind, transmute([]u8)command.text, command.text_scale, ctx.style.char_width)
+			testing.expect(t, text_width <= command.rect.w + 0.01)
+			return
+		}
+	}
+	testing.expect(t, false)
+}

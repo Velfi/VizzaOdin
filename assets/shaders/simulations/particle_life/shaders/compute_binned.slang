@@ -169,10 +169,17 @@ void main(uint3 global_id : SV_DispatchThreadID) {
             let cursor_force_strength = params.cursor_strength * distance_factor;
             if (params.cursor_active == 1) {
                 force += direction_to_cursor * cursor_force_strength;
-                force += float2(-direction_to_cursor.y, direction_to_cursor.x) * cursor_force_strength * 0.8;
             } else if (params.cursor_active == 2) {
                 force -= direction_to_cursor * cursor_force_strength;
-                force += float2(direction_to_cursor.y, -direction_to_cursor.x) * cursor_force_strength * 0.8;
+            } else if (params.cursor_active == 3) {
+                force += float2(-direction_to_cursor.y, direction_to_cursor.x) * cursor_force_strength;
+            } else if (params.cursor_active == 4) {
+                force += float2(direction_to_cursor.y, -direction_to_cursor.x) * cursor_force_strength;
+            } else if (params.cursor_active == 5) {
+                // Fixed-size GPU population: gather acts as local spawning without reallocating buffers.
+                force += direction_to_cursor * cursor_force_strength * 3.0;
+            } else if (params.cursor_active == 6) {
+                force -= direction_to_cursor * cursor_force_strength * 3.0;
             }
         }
     }

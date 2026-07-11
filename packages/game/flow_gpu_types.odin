@@ -81,6 +81,13 @@ Flow_Vector_Params :: struct #align(16) {
 	time: f32,
 	vector_magnitude: f32,
 	_pad0: u32,
+	image_fit_mode: u32,
+	image_mirror_horizontal: u32,
+	image_mirror_vertical: u32,
+	image_invert_tone: u32,
+	webcam_live: u32,
+	target_width: u32,
+	target_height: u32,
 	_pad1: u32,
 }
 
@@ -126,8 +133,13 @@ Flow_Sim_Params :: struct #align(16) {
 	vector_magnitude: f32,
 	width: f32,
 	delta_time: f32,
+	emitter_mode: u32,
+	emitter_radius: f32,
+	boundary_mode: u32,
+	trail_style: u32,
+	field_animation_speed: f32,
+	field_animation_enabled: u32,
 	_padding_1: u32,
-	_padding_2: u32,
 }
 
 Flow_Camera :: Vectors_Camera_Uniform
@@ -207,6 +219,13 @@ Flow_Gpu_State :: struct {
 	trail_image: Flow_Image,
 	default_image: Flow_Image,
 	vector_field_image: Flow_Image,
+	webcam_images: [engine.MAX_FRAMES_IN_FLIGHT]Flow_Image,
+	webcam_staging_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	webcam_upload_pending: [engine.MAX_FRAMES_IN_FLIGHT]bool,
+	webcam_image_ready: [engine.MAX_FRAMES_IN_FLIGHT]bool,
+	webcam_live: bool,
+	webcam_width: u32,
+	webcam_height: u32,
 	retired_vector_field_images: [FLOW_RETIRED_VECTOR_FIELD_IMAGE_CAP]Flow_Retired_Vector_Field_Image,
 	vector_field_image_loaded: bool,
 	vector_field_image_path: [MAX_FILE_PATH]u8,
@@ -248,4 +267,3 @@ flow_mouse_button_down_from_cursor :: proc(sim: ^Remaining_Sim_State) -> u32 {
 	}
 	return sim.cursor_mode
 }
-

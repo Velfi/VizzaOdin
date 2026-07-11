@@ -309,6 +309,7 @@ Slime_Mask_Pattern :: game.Slime_Mask_Pattern
 Slime_Render_Params :: game.Slime_Render_Params
 Slime_Sim_Uniform :: game.Slime_Sim_Uniform
 Vector_Image_Fit_Mode :: game.Vector_Image_Fit_Mode
+Vector_Display_Mode :: game.Vector_Display_Mode
 shared_image_load_rgba8_diagnostic :: game.shared_image_load_rgba8_diagnostic
 slime_camera_uniform_for_state :: game.slime_camera_uniform_for_state
 slime_speed_range_changed :: game.slime_speed_range_changed
@@ -390,6 +391,8 @@ VORONOI_FRAGMENT_SOURCE_ENTRY :: game.VORONOI_FRAGMENT_SOURCE_ENTRY
 VORONOI_IMAGE_FORMAT :: game.VORONOI_IMAGE_FORMAT
 VORONOI_JFA_INIT_FALLBACK_SPV :: game.VORONOI_JFA_INIT_FALLBACK_SPV
 VORONOI_JFA_INIT_SHADER_SOURCE :: game.VORONOI_JFA_INIT_SHADER_SOURCE
+VORONOI_JFA_ITERATION_FALLBACK_SPV :: game.VORONOI_JFA_ITERATION_FALLBACK_SPV
+VORONOI_JFA_ITERATION_SHADER_SOURCE :: game.VORONOI_JFA_ITERATION_SHADER_SOURCE
 VORONOI_RENDER_FRAGMENT_FALLBACK_SPV :: game.VORONOI_RENDER_FRAGMENT_FALLBACK_SPV
 VORONOI_RENDER_SHADER_SOURCE :: game.VORONOI_RENDER_SHADER_SOURCE
 VORONOI_RENDER_VERTEX_FALLBACK_SPV :: game.VORONOI_RENDER_VERTEX_FALLBACK_SPV

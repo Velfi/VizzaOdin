@@ -6,6 +6,10 @@ import uifw "../ui"
 import "core:math"
 import vk "vendor:vulkan"
 
+primordial_effective_step_dt :: proc(configured_dt, frame_dt: f32) -> f32 {
+	return configured_dt * max(frame_dt, 0) * 60.0
+}
+
 primordial_gpu_ensure :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, settings: ^Primordial_Settings) -> bool {
 	target_count := max(settings.particle_count, 1)
 	if gpu.ready &&
@@ -298,7 +302,6 @@ primordial_upload_blit_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: in
 }
 
 primordial_write_step_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int, sim: ^Remaining_Sim_State, dt: f32, width, height: f32) {
-	_ = dt
 	settings := &sim.primordial
 	if gpu.sim_params_buffers[frame_slot].mapped != nil {
 		params := cast(^Primordial_Sim_Params)gpu.sim_params_buffers[frame_slot].mapped
@@ -309,7 +312,9 @@ primordial_write_step_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int
 			beta = settings.beta,
 			velocity = settings.velocity,
 			radius = settings.radius,
-			dt = settings.dt,
+			// `settings.dt` is the legacy per-frame amount at 60 Hz. Scale it by
+			// elapsed time so uncapped presentation does not accelerate particles.
+			dt = primordial_effective_step_dt(settings.dt, dt),
 			width = 2,
 			height = 2,
 			wrap_edges = settings.wrap_edges ? u32(1) : u32(0),

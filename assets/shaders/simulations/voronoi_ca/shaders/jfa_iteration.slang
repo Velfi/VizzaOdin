@@ -27,6 +27,8 @@ ConstantBuffer<VoronoiParams> params;
 Texture2D<float4> voronoi_texture_read;
 [[vk::binding(2, 0)]]
 RWTexture2D<float4> voronoi_texture_write;
+struct JumpPush { uint jump_distance; };
+[[vk::push_constant]] ConstantBuffer<JumpPush> jump_push;
 
 [shader("compute")]
 [numthreads(8,  8, 1)]
@@ -52,7 +54,7 @@ void main(uint3 gid : SV_DispatchThreadID) {
   
     // Sample from jump offset positions
     // JFA uses powers of 2 for jump distances
-    let jump_distance = params.jump_distance;
+    let jump_distance = float(jump_push.jump_distance);
     
     for (var dy = -1; dy <= 1; dy = dy + 1) {
       for (var dx = -1; dx <= 1; dx = dx + 1) {
@@ -62,13 +64,17 @@ void main(uint3 gid : SV_DispatchThreadID) {
         let sample_coord = coord + offset;
         
         // Toroidal wrapping
+        // A jump may be larger than one axis (for example 2048 on a 1920x1080
+        // target), so adding the dimension once is not sufficient before `%`.
+        // Normalize the signed remainder to [0, dimension) on both axes.
         let wrapped_coord = int2(
-          (sample_coord.x + dims.x) % dims.x,
-          (sample_coord.y + dims.y) % dims.y
+          ((sample_coord.x % dims.x) + dims.x) % dims.x,
+          ((sample_coord.y % dims.y) + dims.y) % dims.y
         );
         let sample = LoadTexture(voronoi_texture_read, wrapped_coord, 0);
         
         // Calculate distance from this pixel to the sampled site
+        if (sample.a >= 1e29) { continue; }
         let sampled_pos = sample.rg;
         let w = params.resolution_x;
         let h = params.resolution_y;

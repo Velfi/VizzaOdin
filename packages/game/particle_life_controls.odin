@@ -24,7 +24,7 @@ particle_life_controls_content_height :: proc(sim: ^Particle_Life_Simulation, ct
 			if sim.settings.trails_enabled {rows += 2}
 			return heading * 3 + row * f32(rows) + spacer * 2
 		case 3:
-			return heading + shared_two_axis_pad_height(ctx) + row * 2 + spacer
+			return heading * 2 + shared_two_axis_pad_height(ctx) + row * 6 + spacer
 		case PARTICLE_LIFE_SECTION_POPULATION:
 			return heading + row * 9 + spacer
 		case PARTICLE_LIFE_SECTION_FORCES:
@@ -398,15 +398,16 @@ particle_life_draw_controls :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.G
 	}
 
 	if section < 0 || section == 3 {
+	tool_set := canvas_tool_set_for_mode(.Particle_Life)
+	shared_canvas_tool_selector(ctx, &tool_set, &sim.canvas_tool)
 	cursor_options := shared_default_cursor_config_options()
 	cursor_options.size_min = 0.05
 	cursor_options.size_max = 1.0
 	cursor_options.strength_min = 0.0
 	cursor_options.strength_max = 20.0
-	interaction_text := ctx.input.active_device == .Controller ? "Primary: attract | Secondary: repel" : "Left click: attract | Right click: repel"
 	controls_options := Controls_Panel_Options {
 		heading = section >= 0 ? "Brush" : "Controls",
-		mouse_interaction_text = interaction_text,
+		mouse_interaction_text = "",
 		cursor_settings_title = "",
 		cursor = cursor_options,
 	}
@@ -508,33 +509,6 @@ particle_life_draw_controls :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.G
 		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Relaxation: %.2f", sim.settings.collision_relaxation), "pl_collision_relaxation", &sim.settings.collision_relaxation, 0.0, 1.0)
 		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Damping: %.2f", sim.settings.collision_damping), "pl_collision_damping", &sim.settings.collision_damping, 0.0, 1.0)
 	}
-	}
-
-	if section < 0 || section == 6 || section == PARTICLE_LIFE_SECTION_ADVANCED {
-	uifw.gui_spacer(ctx, 8)
-	uifw.gui_heading(ctx, "Blob Analysis")
-	_ = uifw.gui_toggle(ctx, fmt.tprintf("Analysis: %v", sim.settings.analysis_enabled), "pl_analysis_enabled", &sim.settings.analysis_enabled)
-	if uifw.gui_toggle(ctx, fmt.tprintf("Blob Overlay: %v", sim.settings.blob_overlay_enabled), "pl_blob_overlay", &sim.settings.blob_overlay_enabled) && sim.settings.blob_overlay_enabled {
-		sim.settings.analysis_enabled = true
-	}
-	analysis_interval := f32(sim.settings.analysis_interval_frames)
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Analysis Cadence: %d", sim.settings.analysis_interval_frames), "pl_analysis_interval", &analysis_interval, 1, 1, 120) {
-		sim.settings.analysis_interval_frames = u32(max(analysis_interval, 1))
-	}
-	shared_control_explanation(ctx, "pl_analysis_interval", "Analysis Cadence is how many frames pass between blob checks. Higher values use less work.")
-	analysis_grid := f32(sim.settings.analysis_grid_size)
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Analysis Grid: %d", sim.settings.analysis_grid_size), "pl_analysis_grid", &analysis_grid, 16, 64, 1024) {
-		sim.settings.analysis_grid_size = u32(max(analysis_grid, 16))
-		particle_life_request_resource_rebuild(sim)
-	}
-	_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Coherence: %.2f", sim.settings.coherence_threshold), "pl_coherence", &sim.settings.coherence_threshold, 0, 1)
-	shared_control_explanation(ctx, "pl_coherence", "Coherence is how strongly a region must look and move like one cluster before it counts as a blob.")
-	min_blob_area := f32(sim.settings.min_blob_area_cells)
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Min Blob Cells: %d", sim.settings.min_blob_area_cells), "pl_min_blob_area", &min_blob_area, 1, 1, 100000) {
-		sim.settings.min_blob_area_cells = u32(max(min_blob_area, 1))
-	}
-	shared_control_explanation(ctx, "pl_min_blob_area", "Min Blob Cells is the smallest cluster the analysis will count as a blob.")
-	uifw.gui_text_block(ctx, fmt.tprintf("Tracked blobs: %d", sim.blob_tracker.count), panel.w - ctx.style.panel_padding * 2, ctx.style.text_muted)
 	}
 
 	if section < 0 || section == 7 || section == PARTICLE_LIFE_SECTION_ADVANCED {

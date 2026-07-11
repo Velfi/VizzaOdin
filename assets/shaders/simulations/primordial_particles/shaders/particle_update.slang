@@ -167,8 +167,12 @@ void main(uint3 global_id : SV_DispatchThreadID) {
         if (distance <= sim_params.cursor_size && distance > 1e-6) {
             let distance_factor = 1.0 - (distance / sim_params.cursor_size);
             var dir = normalize(float2(to_cursor.x, to_cursor.y));
-            if (sim_params.mouse_mode == 2) { // repel
+            if (sim_params.mouse_mode == 2) { // pull is the secondary impulse action
                 dir = -dir;
+            }
+            if (sim_params.mouse_mode == 3 || sim_params.mouse_mode == 4) {
+                let radial = dir;
+                dir = sim_params.mouse_mode == 3 ? float2(-radial.y, radial.x) : float2(radial.y, -radial.x);
             }
             // magnitude scaled by proximity and cursor strength (boosted)
             let mag = sim_params.cursor_strength * distance_factor * 4.0;

@@ -110,7 +110,7 @@ gray_scott_controls_content_height :: proc(sim: ^Gray_Scott_Simulation, ctx: ^ui
 		case CONTROLLER_SECTION_LOOK:
 			return heading * 2 + row * 10 + spacer
 		case 4:
-			return heading + shared_two_axis_pad_height(ctx) + row * 2 + spacer
+			return heading * 2 + shared_two_axis_pad_height(ctx) + row * 5 + spacer
 		case 5:
 			return heading + row * 3 + spacer + undo_row
 		case GRAY_SCOTT_SECTION_PATTERN:
@@ -362,13 +362,14 @@ gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Con
 	}
 
 	if section < 0 || section == 4 {
+	tool_set := canvas_tool_set_for_mode(.Gray_Scott)
+	shared_canvas_tool_selector(ctx, &tool_set, &sim.canvas_tool)
 	cursor_options := shared_default_cursor_config_options()
 	cursor_options.size_step = 0.01
 	cursor_options.strength_step = 0.05
-	interaction_text := ctx.input.active_device == .Controller ? "Primary: seed reaction | Secondary: erase" : "Left click: seed reaction | Right click: erase"
 	controls_options := Controls_Panel_Options {
 		heading = section >= 0 ? "Brush" : "Controls",
-		mouse_interaction_text = interaction_text,
+		mouse_interaction_text = "",
 		cursor_settings_title = "Cursor Settings",
 		cursor = cursor_options,
 	}

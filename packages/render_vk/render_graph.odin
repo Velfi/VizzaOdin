@@ -3,6 +3,7 @@ package render_vk
 import uifw "../ui"
 import engine "../engine"
 
+import "core:math"
 import "core:time"
 import vk "vendor:vulkan"
 
@@ -13,6 +14,31 @@ MAIN_MENU_SIM_PREVIEW_WIDTH :: u32(192)
 MAIN_MENU_SIM_PREVIEW_HEIGHT :: u32(128)
 MAIN_MENU_SIM_PREVIEW_MAX_WIDTH :: u32(640)
 MAIN_MENU_SIM_PREVIEW_MAX_HEIGHT :: u32(360)
+SIMULATION_MAX_SUBSTEP_SECONDS :: f32(1.0 / 120.0)
+SIMULATION_MAX_FRAME_SECONDS :: f32(0.1)
+SIMULATION_MAX_SUBSTEPS :: 12
+
+Simulation_Substeps :: struct {
+	count: int,
+	delta_time: f32,
+}
+
+// Split elapsed real time into equal, bounded integration steps. Equal steps
+// are intentional: GPU commands recorded in one frame share the frame's mapped
+// parameter buffer, so every dispatch must use the same delta time.
+simulation_substeps :: proc(frame_dt: f32) -> Simulation_Substeps {
+	clamped_dt := min(max(frame_dt, 0), SIMULATION_MAX_FRAME_SECONDS)
+	if clamped_dt <= 0 {
+		return {}
+	}
+	count := int(math.ceil(clamped_dt / SIMULATION_MAX_SUBSTEP_SECONDS))
+	count = min(max(count, 1), SIMULATION_MAX_SUBSTEPS)
+	return {count = count, delta_time = clamped_dt / f32(count)}
+}
+
+simulation_frame_delta :: proc(frame_dt: f32) -> f32 {
+	return min(max(frame_dt, 0), SIMULATION_MAX_FRAME_SECONDS)
+}
 
 Render_Resource_Kind :: enum {
 	Swapchain_Color,
@@ -195,7 +221,6 @@ render_backend_draw_frame :: proc(backend: ^Render_Backend, vk_ctx: ^engine.Vk_C
 	case .Slime_Mold: webcam_state = &app_ui.slime_mold
 	case:
 	}
-	webcam_update_remaining(webcam_state, app_mode, vk_ctx, vectors_gpu, moire_gpu, flow_gpu, slime_gpu)
 	if !backend.initialized || !vk_ctx.initialized {
 		return false
 	}
@@ -215,6 +240,9 @@ render_backend_draw_frame :: proc(backend: ^Render_Backend, vk_ctx: ^engine.Vk_C
 	if !ok {
 		return false
 	}
+	// Capture after vk_begin_frame has waited for this frame slot's fence. Flow
+	// can now safely refill its persistent per-slot staging buffer.
+	webcam_update_remaining(webcam_state, app_mode, vk_ctx, vectors_gpu, moire_gpu, flow_gpu, slime_gpu)
 
 	graph := render_graph_build_v1()
 	ctx := Render_Context {
@@ -497,6 +525,7 @@ render_pass_gray_scott_compute :: proc(ctx: ^Render_Context, pass: ^Render_Pass_
 	engine.gpu_profiler_begin_pass(ctx.vk_ctx, ctx.frame.command_buffer, ctx.frame, .Simulation_Step)
 	defer engine.gpu_profiler_end_pass(ctx.vk_ctx, ctx.frame.command_buffer, ctx.frame, .Simulation_Step)
 	defer engine.vk_cmd_label_end(ctx.vk_ctx, ctx.frame.command_buffer)
+	sim_dt := simulation_frame_delta(ctx.dt)
 	if ctx.app_mode == .Main_Menu {
 		render_pass_main_menu_preview_step(ctx)
 		render_pass_main_menu_preview_prepare(ctx)
@@ -504,7 +533,10 @@ render_pass_gray_scott_compute :: proc(ctx: ^Render_Context, pass: ^Render_Pass_
 	}
 	if ctx.app_mode != .Gray_Scott {
 		if ctx.app_mode == .Particle_Life && particle_life_ensure_gpu_runtime(ctx.particle_life, ctx.vk_ctx) {
-			particle_life_gpu_step(ctx.particle_life, ctx.vk_ctx, ctx.frame.command_buffer, ctx.dt)
+			steps := simulation_substeps(sim_dt)
+			for _ in 0 ..< steps.count {
+				particle_life_gpu_step(ctx.particle_life, ctx.vk_ctx, ctx.frame.command_buffer, steps.delta_time)
+			}
 		} else if ctx.app_mode == .Moire && ctx.app_ui != nil && ctx.moire_gpu != nil {
 			moire_gpu_step(
 				ctx.moire_gpu,
@@ -517,22 +549,28 @@ render_pass_gray_scott_compute :: proc(ctx: ^Render_Context, pass: ^Render_Pass_
 				ctx.app_ui.moire.paused,
 			)
 		} else if ctx.app_mode == .Primordial && ctx.app_ui != nil && ctx.primordial_gpu != nil {
-			primordial_gpu_step(ctx.primordial_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.primordial, ctx.dt)
+			steps := simulation_substeps(sim_dt)
+			for _ in 0 ..< steps.count {
+				primordial_gpu_step(ctx.primordial_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.primordial, steps.delta_time)
+			}
 		} else if ctx.app_mode == .Pellets && ctx.app_ui != nil && ctx.pellets_gpu != nil {
-			pellets_gpu_step(ctx.pellets_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.pellets, ctx.dt)
+			steps := simulation_substeps(sim_dt)
+			for _ in 0 ..< steps.count {
+				pellets_gpu_step(ctx.pellets_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.pellets, steps.delta_time)
+			}
 		} else if ctx.app_mode == .Flow_Field && ctx.app_ui != nil && ctx.flow_gpu != nil {
-			flow_gpu_step(ctx.flow_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.flow_field, ctx.dt)
+			flow_gpu_step(ctx.flow_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.flow_field, sim_dt)
 		} else if ctx.app_mode == .Slime_Mold && ctx.app_ui != nil && ctx.slime_gpu != nil {
-			slime_gpu_step(ctx.slime_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.slime_mold)
+			slime_gpu_step(ctx.slime_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.slime_mold, sim_dt)
 		} else if ctx.app_mode == .Voronoi_CA && ctx.app_ui != nil && ctx.voronoi_gpu != nil {
-			voronoi_gpu_step(ctx.voronoi_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.voronoi_ca, ctx.dt)
+			voronoi_gpu_step(ctx.voronoi_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.voronoi_ca, sim_dt)
 		}
 		return true
 	}
 	if !gray_scott_ensure_gpu_runtime(ctx.sim, ctx.vk_ctx) {
 		return true
 	}
-	gray_scott_gpu_step(ctx.sim, ctx.vk_ctx, ctx.frame.command_buffer, ctx.dt)
+	gray_scott_gpu_step(ctx.sim, ctx.vk_ctx, ctx.frame.command_buffer, sim_dt)
 	return true
 }
 
@@ -541,6 +579,7 @@ render_pass_main_menu_preview_step :: proc(ctx: ^Render_Context) {
 		return
 	}
 	palette_name := render_main_menu_preview_palette_name(ctx)
+	sim_dt := simulation_frame_delta(ctx.dt)
 	preview_width := MAIN_MENU_SIM_PREVIEW_WIDTH
 	preview_height := MAIN_MENU_SIM_PREVIEW_HEIGHT
 	if ctx.preview_gray_scott != nil && render_main_menu_preview_mode_visible(ctx, .Gray_Scott) {
@@ -549,16 +588,16 @@ render_pass_main_menu_preview_step :: proc(ctx: ^Render_Context) {
 			gray_scott_resize(ctx.preview_gray_scott, i32(preview_width), i32(preview_height))
 		}
 		if gray_scott_ensure_gpu_runtime(ctx.preview_gray_scott, ctx.vk_ctx) {
-			gray_scott_gpu_step(ctx.preview_gray_scott, ctx.vk_ctx, ctx.frame.command_buffer, ctx.dt)
+			gray_scott_gpu_step(ctx.preview_gray_scott, ctx.vk_ctx, ctx.frame.command_buffer, sim_dt)
 		}
 		ctx.backend.last_main_menu_preview_warmed_mode_count += 1
 	}
 	if ctx.preview_slime_gpu != nil && render_main_menu_preview_mode_visible(ctx, .Slime_Mold) {
 		preview_slime := render_main_menu_slime_preview_state(&ctx.app_ui.slime_mold)
 		render_main_menu_apply_slime_palette(&preview_slime.slime, palette_name)
-		remaining_sim_step(&preview_slime, ctx.dt)
+		remaining_sim_step(&preview_slime, sim_dt)
 		slime_width, slime_height := render_main_menu_preview_size_for_mode(ctx, .Slime_Mold)
-		slime_gpu_step_preview(ctx.preview_slime_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &preview_slime, slime_width, slime_height)
+		slime_gpu_step_preview(ctx.preview_slime_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &preview_slime, sim_dt, slime_width, slime_height)
 		ctx.backend.last_main_menu_preview_warmed_mode_count += 1
 	}
 	if ctx.preview_particle_life != nil && render_main_menu_preview_mode_visible(ctx, .Particle_Life) {
@@ -572,34 +611,37 @@ render_pass_main_menu_preview_step :: proc(ctx: ^Render_Context) {
 			particle_life_resize(ctx.preview_particle_life, i32(preview_width), i32(preview_height))
 		}
 		if particle_life_ensure_gpu_runtime(ctx.preview_particle_life, ctx.vk_ctx) {
-			particle_life_gpu_step(ctx.preview_particle_life, ctx.vk_ctx, ctx.frame.command_buffer, ctx.dt)
+			steps := simulation_substeps(sim_dt)
+			for _ in 0 ..< steps.count {
+				particle_life_gpu_step(ctx.preview_particle_life, ctx.vk_ctx, ctx.frame.command_buffer, steps.delta_time)
+			}
 		}
 		ctx.backend.last_main_menu_preview_warmed_mode_count += 1
 	}
 	if ctx.preview_flow_gpu != nil && render_main_menu_preview_mode_visible(ctx, .Flow_Field) {
 		preview_flow := render_main_menu_flow_preview_state(&ctx.app_ui.flow_field)
 		render_main_menu_apply_flow_palette(&preview_flow.flow, palette_name)
-		remaining_sim_step(&preview_flow, ctx.dt)
+		remaining_sim_step(&preview_flow, sim_dt)
 		flow_width, flow_height := render_main_menu_preview_size_for_mode(ctx, .Flow_Field)
-		flow_gpu_step_preview(ctx.preview_flow_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &preview_flow, ctx.dt, flow_width, flow_height)
+		flow_gpu_step_preview(ctx.preview_flow_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &preview_flow, sim_dt, flow_width, flow_height)
 		ctx.backend.last_main_menu_preview_warmed_mode_count += 1
 	}
 	if ctx.preview_pellets_gpu != nil && render_main_menu_preview_mode_visible(ctx, .Pellets) {
 		preview_pellets := render_main_menu_pellets_preview_state(&ctx.app_ui.pellets)
 		render_main_menu_apply_pellets_palette(&preview_pellets.pellets, palette_name)
-		remaining_sim_step(&preview_pellets, ctx.dt)
-		pellets_gpu_step(ctx.preview_pellets_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &preview_pellets, ctx.dt)
+		remaining_sim_step(&preview_pellets, sim_dt)
+		pellets_gpu_step(ctx.preview_pellets_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &preview_pellets, sim_dt)
 		ctx.backend.last_main_menu_preview_warmed_mode_count += 1
 	}
 	if ctx.preview_voronoi_gpu != nil && render_main_menu_preview_mode_visible(ctx, .Voronoi_CA) {
-		remaining_sim_step(&ctx.app_ui.voronoi_ca, ctx.dt)
+		remaining_sim_step(&ctx.app_ui.voronoi_ca, sim_dt)
 		preview_voronoi := ctx.app_ui.voronoi_ca
 		render_main_menu_apply_voronoi_palette(&preview_voronoi.voronoi, palette_name)
-		voronoi_gpu_step_size(ctx.preview_voronoi_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &preview_voronoi.voronoi, ctx.dt, preview_voronoi.paused, preview_width, preview_height)
+		voronoi_gpu_step_size(ctx.preview_voronoi_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &preview_voronoi.voronoi, sim_dt, preview_voronoi.paused, preview_width, preview_height)
 		ctx.backend.last_main_menu_preview_warmed_mode_count += 1
 	}
 	if ctx.preview_moire_gpu != nil && render_main_menu_preview_mode_visible(ctx, .Moire) {
-		remaining_sim_step(&ctx.app_ui.moire, ctx.dt)
+		remaining_sim_step(&ctx.app_ui.moire, sim_dt)
 		preview_moire := ctx.app_ui.moire
 		render_main_menu_apply_moire_palette(&preview_moire.moire, palette_name)
 		moire_gpu_step(
@@ -615,7 +657,7 @@ render_pass_main_menu_preview_step :: proc(ctx: ^Render_Context) {
 		ctx.backend.last_main_menu_preview_warmed_mode_count += 1
 	}
 	if ctx.preview_vectors_gpu != nil && render_main_menu_preview_mode_visible(ctx, .Vectors) {
-		remaining_sim_step(&ctx.app_ui.vectors, ctx.dt)
+		remaining_sim_step(&ctx.app_ui.vectors, sim_dt)
 		preview_vectors := ctx.app_ui.vectors
 		render_main_menu_apply_vectors_palette(&preview_vectors.vectors, palette_name)
 		_ = vectors_gpu_prepare_viewport(ctx.preview_vectors_gpu, ctx.vk_ctx, &preview_vectors.vectors, preview_vectors.time, f32(preview_width), f32(preview_height))
@@ -624,8 +666,11 @@ render_pass_main_menu_preview_step :: proc(ctx: ^Render_Context) {
 	if ctx.preview_primordial_gpu != nil && render_main_menu_preview_mode_visible(ctx, .Primordial) {
 		preview_primordial := render_main_menu_primordial_preview_state(&ctx.app_ui.primordial)
 		render_main_menu_apply_primordial_palette(&preview_primordial.primordial, palette_name)
-		remaining_sim_step(&preview_primordial, ctx.dt)
-		primordial_gpu_step(ctx.preview_primordial_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &preview_primordial, ctx.dt)
+		remaining_sim_step(&preview_primordial, sim_dt)
+		steps := simulation_substeps(sim_dt)
+		for _ in 0 ..< steps.count {
+			primordial_gpu_step(ctx.preview_primordial_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &preview_primordial, steps.delta_time)
+		}
 		ctx.backend.last_main_menu_preview_warmed_mode_count += 1
 	}
 }
@@ -699,8 +744,11 @@ render_pass_main_menu_preview_prepare_slot :: proc(ctx: ^Render_Context, slot: M
 		}
 	case .Voronoi_CA:
 		gpu := ctx.preview_voronoi_gpu
-		if gpu != nil && gpu.ready && gpu.jfa_image.handle != vk.Image(0) && gpu.jfa_image.layout != .SHADER_READ_ONLY_OPTIMAL {
-			voronoi_transition_image(ctx.vk_ctx, cmd, &gpu.jfa_image, .SHADER_READ_ONLY_OPTIMAL)
+		if gpu != nil && gpu.ready {
+			image := gpu.jfa_result_is_scratch ? &gpu.jfa_scratch_image : &gpu.jfa_image
+			if image.handle != vk.Image(0) && image.layout != .SHADER_READ_ONLY_OPTIMAL {
+				voronoi_transition_image(ctx.vk_ctx, cmd, image, .SHADER_READ_ONLY_OPTIMAL)
+			}
 		}
 	case .Moire:
 		gpu := ctx.preview_moire_gpu
@@ -831,8 +879,6 @@ render_main_menu_particle_life_preview_settings :: proc(source: Particle_Life_Se
 	preview.cursor_strength = 0
 	preview.trails_enabled = false
 	preview.infinite_tiles_enabled = false
-	preview.analysis_enabled = false
-	preview.blob_overlay_enabled = false
 	preview.paused = false
 	return preview
 }

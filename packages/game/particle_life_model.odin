@@ -698,14 +698,22 @@ particle_life_grid_satisfies_target :: proc(current_width, current_height, curre
 particle_life_current_grid_satisfies_settings :: proc(sim: ^Particle_Life_Simulation) -> bool {
 	world_size := particle_life_world_size(sim)
 	target_grid_width, target_grid_height := particle_life_target_grid_dimensions(sim.settings, world_size)
-	target_neighbor_radius := particle_life_target_neighbor_radius_cells(sim.settings, target_grid_width, target_grid_height, world_size)
+	// A finer existing grid is reusable only if its stored search radius covers
+	// the current distance at that finer cell size. Comparing against the target
+	// grid's radius can incorrectly accept a stale grid after max_distance moves.
+	current_neighbor_radius := particle_life_target_neighbor_radius_cells(
+		sim.settings,
+		sim.gpu.grid_width,
+		sim.gpu.grid_height,
+		world_size,
+	)
 	return particle_life_grid_satisfies_target(
 		sim.gpu.grid_width,
 		sim.gpu.grid_height,
 		sim.gpu.neighbor_radius_cells,
 		target_grid_width,
 		target_grid_height,
-		target_neighbor_radius,
+		current_neighbor_radius,
 	)
 }
 
@@ -831,7 +839,8 @@ particle_life_apply_frame_input :: proc(sim: ^Particle_Life_Simulation, input: U
 	world := particle_life_screen_to_world(sim, input.mouse_pos, input.window_width, input.window_height)
 	sim.runtime.cursor_x = world[0]
 	sim.runtime.cursor_y = world[1]
-	sim.runtime.cursor_active = input.mouse_button == 3 ? 2 : 1
+	tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
+	sim.runtime.cursor_active = canvas_tool_interaction_mode(tool, input.mouse_button == 3 || input.secondary_down)
 }
 
 particle_life_view_bounds :: proc(sim: ^Particle_Life_Simulation, width, height: f32) -> [4]f32 {

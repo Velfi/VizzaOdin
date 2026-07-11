@@ -1265,7 +1265,7 @@ settings_write_flow_toml :: proc(settings: Flow_Settings, out: []u8) -> string {
 	noise_sync_indices(&noise)
 	noise_buf: [4096]u8
 	noise_text := settings_write_noise_toml("flow.noise", noise, noise_buf[:])
-	return fmt.bprintf(out, "[flow]\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\nvector_field_type = \"%s\"\nvector_magnitude = %.6f\nimage_fit_mode = \"%s\"\nimage_path = \"%s\"\nimage_mirror_horizontal = %v\nimage_mirror_vertical = %v\nimage_invert_tone = %v\ntotal_pool_size = %d\nparticle_lifetime = %.6f\nparticle_speed = %.6f\nparticle_size = %d\nparticle_shape = \"%s\"\nparticle_autospawn = %v\nshow_particles = %v\nautospawn_rate = %d\nbrush_spawn_rate = %d\nforeground_color_mode = \"%s\"\nbackground_color_mode = \"%s\"\ntrail_decay_rate = %.6f\ntrail_deposition_rate = %.6f\ntrail_diffusion_rate = %.6f\ntrail_wash_out_rate = %.6f\ntrail_map_filtering = \"%s\"\n\n%s",
+	return fmt.bprintf(out, "[flow]\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\nvector_field_type = \"%s\"\nvector_magnitude = %.6f\nimage_fit_mode = \"%s\"\nimage_path = \"%s\"\nimage_mirror_horizontal = %v\nimage_mirror_vertical = %v\nimage_invert_tone = %v\ntotal_pool_size = %d\nparticle_lifetime = %.6f\nparticle_speed = %.6f\nparticle_size = %d\nparticle_shape = \"%s\"\nparticle_autospawn = %v\nshow_particles = %v\nautospawn_rate = %d\nbrush_spawn_rate = %d\nemitter_mode = \"%s\"\nemitter_radius = %.6f\nboundary_mode = \"%s\"\ntrail_style = \"%s\"\nfield_animation_enabled = %v\nfield_animation_speed = %.6f\nforeground_color_mode = \"%s\"\nbackground_color_mode = \"%s\"\ntrail_decay_rate = %.6f\ntrail_deposition_rate = %.6f\ntrail_diffusion_rate = %.6f\ntrail_wash_out_rate = %.6f\ntrail_map_filtering = \"%s\"\n\n%s",
 		color_scheme_name_get(&color_scheme),
 		settings.color_scheme_reversed,
 		settings.post_processing.blur_enabled,
@@ -1287,6 +1287,9 @@ settings_write_flow_toml :: proc(settings: Flow_Settings, out: []u8) -> string {
 		settings.show_particles,
 		settings.autospawn_rate,
 		settings.brush_spawn_rate,
+		FLOW_EMITTER_MODE_NAMES[settings.emitter_index], settings.emitter_radius,
+		FLOW_BOUNDARY_MODE_NAMES[settings.boundary_index], FLOW_TRAIL_STYLE_NAMES[settings.trail_style_index],
+		settings.field_animation_enabled, settings.field_animation_speed,
 		FLOW_FOREGROUND_MODE_NAMES[settings.foreground_index],
 		VECTOR_BACKGROUND_MODE_NAMES[settings.background_index],
 		settings.trail_decay_rate,
@@ -1336,6 +1339,12 @@ settings_load_flow :: proc(path: string, defaults: Flow_Settings) -> (Flow_Setti
 	if v, ok := toml_bool(result.toptab, "flow.show_particles"); ok {settings.show_particles = v}
 	if v, ok := toml_i64(result.toptab, "flow.autospawn_rate"); ok {settings.autospawn_rate = u32(max(v, 0))}
 	if v, ok := toml_i64(result.toptab, "flow.brush_spawn_rate"); ok {settings.brush_spawn_rate = u32(max(v, 0))}
+	if v, ok := toml_string(result.toptab, "flow.emitter_mode"); ok {value: Flow_Emitter_Mode; if flow_emitter_mode_from_name(v, &value) {settings.emitter_mode = value; settings.emitter_index = int(value)}}
+	if v, ok := toml_f64(result.toptab, "flow.emitter_radius"); ok {settings.emitter_radius = f32(v)}
+	if v, ok := toml_string(result.toptab, "flow.boundary_mode"); ok {value: Flow_Boundary_Mode; if flow_boundary_mode_from_name(v, &value) {settings.boundary_mode = value; settings.boundary_index = int(value)}}
+	if v, ok := toml_string(result.toptab, "flow.trail_style"); ok {value: Flow_Trail_Style; if flow_trail_style_from_name(v, &value) {settings.trail_style = value; settings.trail_style_index = int(value)}}
+	if v, ok := toml_bool(result.toptab, "flow.field_animation_enabled"); ok {settings.field_animation_enabled = v}
+	if v, ok := toml_f64(result.toptab, "flow.field_animation_speed"); ok {settings.field_animation_speed = f32(v)}
 	if v, ok := toml_string(result.toptab, "flow.foreground_color_mode"); ok {value: Flow_Foreground_Mode; if flow_foreground_mode_from_name(v, &value) {settings.foreground_color_mode = value; settings.foreground_index = int(value)}}
 	if v, ok := toml_string(result.toptab, "flow.background_color_mode"); ok {value: Vector_Background_Mode; if vector_background_mode_from_name(v, &value) {settings.background_color_mode = value; settings.background_index = int(value)}}
 	if v, ok := toml_f64(result.toptab, "flow.trail_decay_rate"); ok {settings.trail_decay_rate = f32(v)}
@@ -1353,8 +1362,8 @@ settings_write_vectors_toml :: proc(settings: Vectors_Settings, out: []u8) -> st
 	noise_sync_indices(&noise)
 	noise_buf: [4096]u8
 	noise_text := settings_write_noise_toml("vectors.noise", noise, noise_buf[:])
-	return fmt.bprintf(out, "[vectors]\nvector_field_type = \"%s\"\ndensity = %.6f\nline_length = %.6f\nline_width = %.6f\nbackground_color_mode = \"%s\"\nimage_fit_mode = \"%s\"\nimage_path = \"%s\"\nimage_mirror_horizontal = %v\nimage_mirror_vertical = %v\nimage_invert_tone = %v\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\n\n%s",
-		VECTOR_FIELD_TYPE_NAMES[settings.vector_field_index], settings.density, settings.line_length, settings.line_width, VECTOR_BACKGROUND_MODE_NAMES[settings.background_index], VECTOR_IMAGE_FIT_MODE_NAMES[settings.image_fit_index], fixed_string(image_path[:]), settings.image_mirror_horizontal, settings.image_mirror_vertical, settings.image_invert_tone, color_scheme_name_get(&color_scheme), settings.color_scheme_reversed, noise_text)
+	return fmt.bprintf(out, "[vectors]\nvector_field_type = \"%s\"\ndisplay_mode = \"%s\"\ndensity = %.6f\nline_length = %.6f\nline_width = %.6f\nbackground_color_mode = \"%s\"\nimage_fit_mode = \"%s\"\nimage_path = \"%s\"\nimage_mirror_horizontal = %v\nimage_mirror_vertical = %v\nimage_invert_tone = %v\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\n\n%s",
+		VECTOR_FIELD_TYPE_NAMES[settings.vector_field_index], VECTOR_DISPLAY_MODE_NAMES[settings.display_index], settings.density, settings.line_length, settings.line_width, VECTOR_BACKGROUND_MODE_NAMES[settings.background_index], VECTOR_IMAGE_FIT_MODE_NAMES[settings.image_fit_index], fixed_string(image_path[:]), settings.image_mirror_horizontal, settings.image_mirror_vertical, settings.image_invert_tone, color_scheme_name_get(&color_scheme), settings.color_scheme_reversed, noise_text)
 }
 
 settings_save_vectors :: proc(path: string, settings: Vectors_Settings) -> bool {
@@ -1371,6 +1380,7 @@ settings_load_vectors :: proc(path: string, defaults: Vectors_Settings) -> (Vect
 	defer toml_free(result)
 	if !result.ok {return settings, false}
 	if v, ok := toml_string(result.toptab, "vectors.vector_field_type"); ok {value: Vector_Field_Type; if vector_field_type_from_name(v, &value) {settings.vector_field_type = value; settings.vector_field_index = int(value)}}
+	if v, ok := toml_string(result.toptab, "vectors.display_mode"); ok {value: Vector_Display_Mode; if vector_display_mode_from_name(v, &value) {settings.display_mode = value; settings.display_index = int(value)}}
 	if v, ok := toml_string(result.toptab, "vectors.image_fit_mode"); ok {value: Vector_Image_Fit_Mode; if vector_image_fit_mode_from_name(v, &value) {settings.image_fit_mode = value; settings.image_fit_index = int(value)}}
 	if v, ok := toml_string(result.toptab, "vectors.image_path"); ok {write_fixed_string(settings.image_path[:], v)}
 	if v, ok := toml_bool(result.toptab, "vectors.image_mirror_horizontal"); ok {settings.image_mirror_horizontal = v}

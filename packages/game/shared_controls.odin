@@ -1,5 +1,27 @@
 package game
 
+CANVAS_TOOL_DIRECTIONS := [?]string{"Left", "Up", "Right", "Down"}
+
+shared_canvas_tool_selector :: proc(ctx: ^uifw.Gui_Context, set: ^Canvas_Tool_Set, state: ^Canvas_Tool_State, title: string = "Brush Modes") {
+	count := 0
+	for tool in set.tools {if tool.valid {count += 1}}
+	if count <= 1 {return}
+	uifw.gui_heading(ctx, title)
+	for tool, index in set.tools {
+		if !tool.valid {continue}
+		prefix := state.selected_slot == index ? "•" : " "
+		label := fmt.tprintf("%s %s · %s", prefix, CANVAS_TOOL_DIRECTIONS[index], tool.name)
+		if uifw.gui_button(ctx, label, fmt.tprintf("brush_mode_%d", index)) {
+			state.previous_slot = state.selected_slot
+			state.selected_slot = index
+			state.changed = true
+			uifw.gui_notice(ctx, fmt.tprintf("%s selected — Primary: %s · Secondary: %s", tool.name, tool.primary_label, tool.secondary_label), 1.6)
+		}
+	}
+	selected := canvas_tool_selected(set, state)
+	if selected.valid {uifw.gui_label(ctx, fmt.tprintf("Primary: %s   Secondary: %s", selected.primary_label, selected.secondary_label))}
+}
+
 import uifw "../ui"
 
 import "core:fmt"

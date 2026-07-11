@@ -1,9 +1,11 @@
 APP := vizzaodin
+.DEFAULT_GOAL := run
 SRC := src
 ODIN_PACKAGES := $(SRC) packages/app packages/engine packages/game packages/render_vk packages/ui
 BUILD_DIR := build
 SHADER_SRC := assets/shaders
 SHADER_BUILD := $(BUILD_DIR)/shaders
+PROFILE_MACOS_ENTITLEMENTS := config/profile-macos.entitlements
 FONT_GENERATOR := scripts/generate_ui_font_bitmap.py
 FONT_SOURCE := assets/fonts/ZeldaSans-Regular-v1.otf
 FONT_BITMAP := assets/shaders/ui_font_bitmap.slang
@@ -62,7 +64,37 @@ endif
 STEAM_REDIST_SRC := $(STEAM_SDK_LOCATION)/redistributable_bin/$(STEAM_REDIST_SUBDIR)/$(STEAM_REDIST_FILE)
 ODIN_FLAGS ?= -o:none
 
-.PHONY: run run-macos-vulkan build build-steam run-steam copy-steam-redist check check-boundaries test fmt clean shaders deps install-slangc mcp mcp-macos-vulkan theme-preview theme-preview-mcp profile-ui-trace package-macos steam-upload-preview ui-font-atlas tomlc17 textshape
+.PHONY: help run run-macos-vulkan build build-steam run-steam copy-steam-redist check check-boundaries test fmt clean distclean shaders deps install-slangc mcp mcp-macos-vulkan theme-preview theme-preview-mcp profile-ui-trace package-macos steam-upload-preview ui-font-atlas tomlc17 textshape
+
+help:
+	@printf '%s\n' \
+		'Development:' \
+		'  run                 Build shaders/app and run it' \
+		'  run-steam           Build and run with Steam enabled' \
+		'  mcp                 Build and run in MCP mode' \
+		'  theme-preview       Build and run the theme preview' \
+		'  theme-preview-mcp   Run the theme preview in MCP mode' \
+		'  profile-ui-trace    Build, launch, and record an Instruments trace' \
+		'' \
+		'Build and validation:' \
+		'  build               Build build/vizzaodin' \
+		'  build-steam         Build with Steam and copy its redistributable' \
+		'  shaders             Compile Slang shaders into build/shaders' \
+		'  check               Check package boundaries and Odin sources' \
+		'  test                Run Odin tests' \
+		'  fmt                 Format Odin packages' \
+		'  deps                Build native dependencies' \
+		'  ui-font-atlas       Regenerate UI font assets and metrics' \
+		'' \
+		'Release and maintenance:' \
+		'  package-macos       Build dist/Vizza.app and dist/Vizza-macos.zip' \
+		'  steam-upload-preview  Validate a local Steam upload (VERSION=x.y.z)' \
+		'  install-slangc      Install the repo-local Slang compiler' \
+		'  clean               Remove build/' \
+		'  distclean           Remove build/, dist/, and build-staging/' \
+		'' \
+		'Profiling variables: DURATION=30s TEMPLATE="Metal System Trace" OUTPUT=profiles/name.trace' \
+		'Build variables: ODIN_FLAGS=-o:none STEAM_SDK_LOCATION=~/steam_sdk STEAM_APP_ID=4945920'
 
 run: shaders build
 	$(MACOS_VULKAN_ENV) $(BUILD_DIR)/$(APP)
@@ -83,8 +115,11 @@ theme-preview: shaders build
 theme-preview-mcp: shaders build
 	$(MACOS_VULKAN_ENV) $(BUILD_DIR)/$(APP) --theme-preview --mcp
 
-profile-ui-trace: build
-	./scripts/profile_gpu_trace.sh --attach vizzaodin --duration "$${DURATION:-30s}" --template "$${TEMPLATE:-Metal System Trace}" --output "$${OUTPUT:-profiles/vizzaodin-ui-render.trace}"
+profile-ui-trace: shaders build
+	@if [ "$(UNAME_S)" = "Darwin" ]; then \
+		codesign --force --sign - --entitlements "$(PROFILE_MACOS_ENTITLEMENTS)" "$(BUILD_DIR)/$(APP)"; \
+	fi
+	./scripts/profile_gpu_trace.sh --duration "$${DURATION:-30s}" --template "$${TEMPLATE:-Metal System Trace}" --output "$${OUTPUT:-profiles/vizzaodin-ui-render.trace}"
 
 ui-font-atlas: $(FONT_BITMAP) $(FONT_ATLAS) $(FONT_METRICS)
 
@@ -156,3 +191,6 @@ fmt:
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+distclean: clean
+	rm -rf dist build-staging

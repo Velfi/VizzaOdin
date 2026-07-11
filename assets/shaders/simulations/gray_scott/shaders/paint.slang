@@ -78,6 +78,14 @@ void main(uint3 global_id : SV_DispatchThreadID) {
         let paint_strength = factor * params.cursor_strength;
         new_uv.x = lerp(current_uv.x, 1.0, paint_strength);
         new_uv.y = lerp(current_uv.y, 0.0, paint_strength);
+    } else if (params.mouse_button == 3) {
+        // Nutrient brush: restore U without directly seeding V.
+        let paint_strength = saturate(factor * params.cursor_strength);
+        new_uv.x = lerp(current_uv.x, 1.0, paint_strength);
+    } else if (params.mouse_button == 4) {
+        // Drain nutrient while preserving the current reaction concentration.
+        let paint_strength = saturate(factor * params.cursor_strength);
+        new_uv.x = lerp(current_uv.x, 0.0, paint_strength);
     }
     // Middle mouse button (params.mouse_button == 1): no effect
     

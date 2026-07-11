@@ -482,7 +482,11 @@ app_ui_draw_particle_life :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim
 	if gui.input.pause && !pause_consumed {
 		sim.settings.paused = !sim.settings.paused
 	}
-	particle_life_draw_blob_overlay(sim, gui, width, height)
+	if sim.canvas_tool.changed {
+		set := canvas_tool_set_for_mode(.Particle_Life)
+		tool := canvas_tool_selected(&set, &sim.canvas_tool)
+		uifw.gui_notice(gui, fmt.tprintf("%s selected — Primary: %s · Secondary: %s", tool.name, tool.primary_label, tool.secondary_label), 1.6)
+	}
 	if ui.simulation_shell.controls_visible {
 		tool_set := canvas_tool_set_for_mode(.Particle_Life)
 		tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)

@@ -67,7 +67,7 @@ slime_gpu_ensure_size_count :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Co
 	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
 		slime_upload_render_params(gpu, frame_slot, settings)
 		slime_upload_camera(gpu, frame_slot)
-		slime_write_uniforms(gpu, frame_slot, settings, 0, {0, 0}, 0.20, 1.0)
+		slime_write_uniforms(gpu, frame_slot, settings, 0, {0, 0}, 0.20, 1.0, 1.0 / 60.0)
 	}
 	if !slime_create_descriptors(gpu, vk_ctx) {
 		slime_gpu_destroy(gpu, vk_ctx)
@@ -207,6 +207,35 @@ slime_create_sampler :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context) 
 	return vk.CreateSampler(vk_ctx.device, &info, nil, &gpu.sampler) == .SUCCESS
 }
 
+slime_ensure_webcam_slot :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int, width, height: u32) -> bool {
+	image := &gpu.webcam_images[frame_slot]
+	staging := &gpu.webcam_staging_buffers[frame_slot]
+	size := vk.DeviceSize(width * height * 4)
+	if image.handle != vk.Image(0) && image.width == width && image.height == height && staging.size >= size {return true}
+	slime_destroy_image(vk_ctx, image)
+	engine.vk_destroy_buffer(vk_ctx, staging)
+	gpu.webcam_image_ready[frame_slot] = false
+	if !slime_create_image(gpu, vk_ctx, image, width, height, {.SAMPLED, .TRANSFER_DST}) ||
+	   !engine.vk_create_host_buffer(vk_ctx, size, {.TRANSFER_SRC}, staging) {
+		slime_destroy_image(vk_ctx, image)
+		engine.vk_destroy_buffer(vk_ctx, staging)
+		return false
+	}
+	return true
+}
+
+slime_record_webcam_upload :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, frame_slot: int) {
+	if !gpu.webcam_upload_pending[frame_slot] {return}
+	image := &gpu.webcam_images[frame_slot]
+	slime_transition_image(vk_ctx, cmd, image, .TRANSFER_DST_OPTIMAL)
+	region := vk.BufferImageCopy{imageSubresource = {aspectMask = {.COLOR}, mipLevel = 0, baseArrayLayer = 0, layerCount = 1}, imageExtent = {image.width, image.height, 1}}
+	vk.CmdCopyBufferToImage(cmd, gpu.webcam_staging_buffers[frame_slot].handle, image.handle, .TRANSFER_DST_OPTIMAL, 1, &region)
+	engine.vk_cmd_count_transfer_copy(vk_ctx)
+	slime_transition_image(vk_ctx, cmd, image, .SHADER_READ_ONLY_OPTIMAL)
+	gpu.webcam_upload_pending[frame_slot] = false
+	gpu.webcam_image_ready[frame_slot] = true
+}
+
 slime_upload_lut :: proc(gpu: ^Slime_Gpu_State, settings: ^Slime_Settings) {
 	if gpu.lut_buffer.mapped == nil {return}
 	scheme := color_scheme_effective(&settings.color_scheme, settings.color_scheme_reversed)
@@ -228,7 +257,7 @@ slime_upload_camera :: proc(gpu: ^Slime_Gpu_State, frame_slot: int, control: ^Ca
 	camera^ = uniform
 }
 
-slime_write_uniforms :: proc(gpu: ^Slime_Gpu_State, frame_slot: int, settings: ^Slime_Settings, cursor_active: u32, cursor_pixel: [2]f32, cursor_size, cursor_strength: f32) {
+slime_write_uniforms :: proc(gpu: ^Slime_Gpu_State, frame_slot: int, settings: ^Slime_Settings, cursor_active: u32, cursor_pixel: [2]f32, cursor_size, cursor_strength, dt: f32) {
 	if gpu.sim_buffers[frame_slot].mapped != nil {
 		sim := cast(^Slime_Sim_Uniform)gpu.sim_buffers[frame_slot].mapped
 		sim^ = {
@@ -252,6 +281,11 @@ slime_write_uniforms :: proc(gpu: ^Slime_Gpu_State, frame_slot: int, settings: ^
 			mask_invert_tone = settings.mask_invert_tone ? 1 : 0,
 			random_seed = settings.random_seed,
 			position_generator = settings.position_generator,
+			delta_time = max(dt, 0),
+			webcam_live = gpu.webcam_live ? 1 : 0,
+			webcam_fit_mode = u32(gpu.webcam_fit_mode),
+			webcam_width = gpu.webcam_images[frame_slot].width,
+			webcam_height = gpu.webcam_images[frame_slot].height,
 		}
 	}
 	if gpu.cursor_buffers[frame_slot].mapped != nil {
@@ -267,12 +301,14 @@ slime_write_uniforms :: proc(gpu: ^Slime_Gpu_State, frame_slot: int, settings: ^
 }
 
 slime_create_descriptors :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
-	sim_bindings := [5]vk.DescriptorSetLayoutBinding{
+	sim_bindings := [7]vk.DescriptorSetLayoutBinding{
 		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 4, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 5, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 6, descriptorType = .SAMPLER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
 	display_bindings := [5]vk.DescriptorSetLayoutBinding{
 		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
@@ -291,7 +327,7 @@ slime_create_descriptors :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Conte
 	   !slime_create_set_layout(vk_ctx, display_bindings[:], &gpu.display_set_layout) ||
 	   !slime_create_set_layout(vk_ctx, texture_bindings[:], &gpu.texture_set_layout) ||
 	   !slime_create_set_layout(vk_ctx, camera_bindings[:], &gpu.camera_set_layout) {return false}
-	pool_sizes := [5]vk.DescriptorPoolSize{{type = .STORAGE_BUFFER, descriptorCount = 8 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .UNIFORM_BUFFER, descriptorCount = 5 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .STORAGE_IMAGE, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}, {type = .SAMPLED_IMAGE, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}, {type = .SAMPLER, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}}
+	pool_sizes := [5]vk.DescriptorPoolSize{{type = .STORAGE_BUFFER, descriptorCount = 8 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .UNIFORM_BUFFER, descriptorCount = 5 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .STORAGE_IMAGE, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}, {type = .SAMPLED_IMAGE, descriptorCount = 2 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .SAMPLER, descriptorCount = 2 * engine.MAX_FRAMES_IN_FLIGHT}}
 	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 4 * engine.MAX_FRAMES_IN_FLIGHT}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {return false}
 	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
@@ -330,6 +366,8 @@ slime_update_descriptors_for_slot :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine
 	display_storage := vk.DescriptorImageInfo{imageLayout = .GENERAL, imageView = gpu.display_image.view}
 	display_sampled := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.display_image.view}
 	sampler_info := vk.DescriptorImageInfo{sampler = gpu.sampler}
+	webcam_sampled := vk.DescriptorImageInfo{imageLayout = .GENERAL, imageView = gpu.display_image.view}
+	if gpu.webcam_image_ready[frame_slot] {webcam_sampled = {imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.webcam_images[frame_slot].view}}
 	render_info := vk.DescriptorBufferInfo{buffer = gpu.render_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Slime_Render_Params))}
 	camera_info := vk.DescriptorBufferInfo{buffer = gpu.camera_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Slime_Camera))}
 	sim_set := gpu.sim_sets[frame_slot]
@@ -342,6 +380,8 @@ slime_update_descriptors_for_slot :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &mask_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 4, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &cursor_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 5, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &webcam_sampled},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = sim_set, dstBinding = 6, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = display_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &trail_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = display_set, dstBinding = 1, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &display_storage},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = display_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
@@ -396,14 +436,20 @@ slime_transition_image :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer
 		src_stage = {.COMPUTE_SHADER}
 	} else if image.layout == .SHADER_READ_ONLY_OPTIMAL {
 		src_access = {.SHADER_READ}
-		src_stage = {.FRAGMENT_SHADER}
+		src_stage = {.COMPUTE_SHADER, .FRAGMENT_SHADER}
+	} else if image.layout == .TRANSFER_DST_OPTIMAL {
+		src_access = {.TRANSFER_WRITE}
+		src_stage = {.TRANSFER}
 	}
 	if new_layout == .GENERAL {
 		dst_access = {.SHADER_WRITE, .SHADER_READ}
 		dst_stage = {.COMPUTE_SHADER}
 	} else if new_layout == .SHADER_READ_ONLY_OPTIMAL {
 		dst_access = {.SHADER_READ}
-		dst_stage = {.FRAGMENT_SHADER}
+		dst_stage = {.COMPUTE_SHADER, .FRAGMENT_SHADER}
+	} else if new_layout == .TRANSFER_DST_OPTIMAL {
+		dst_access = {.TRANSFER_WRITE}
+		dst_stage = {.TRANSFER}
 	}
 	barrier := vk.ImageMemoryBarrier{sType = .IMAGE_MEMORY_BARRIER, srcAccessMask = src_access, dstAccessMask = dst_access, oldLayout = image.layout, newLayout = new_layout, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, image = image.handle, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
 	vk.CmdPipelineBarrier(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
@@ -431,27 +477,29 @@ slime_dispatch_agent_pipeline :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
 }
 
-slime_gpu_step :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State) {
+slime_gpu_step :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State, dt: f32) {
 	settings := &sim_state.slime
 	if !slime_gpu_ensure(gpu, vk_ctx, settings) {return}
-	slime_gpu_step_ready(gpu, vk_ctx, cmd, sim_state)
+	slime_gpu_step_ready(gpu, vk_ctx, cmd, sim_state, dt)
 }
 
-slime_gpu_step_size :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State, width, height: u32) {
+slime_gpu_step_size :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State, dt: f32, width, height: u32) {
 	settings := &sim_state.slime
 	if !slime_gpu_ensure_size(gpu, vk_ctx, settings, width, height) {return}
-	slime_gpu_step_ready(gpu, vk_ctx, cmd, sim_state)
+	slime_gpu_step_ready(gpu, vk_ctx, cmd, sim_state, dt)
 }
 
-slime_gpu_step_preview :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State, width, height: u32) {
+slime_gpu_step_preview :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State, dt: f32, width, height: u32) {
 	settings := &sim_state.slime
 	if !slime_gpu_ensure_size_count(gpu, vk_ctx, settings, width, height, SLIME_PREVIEW_AGENT_COUNT) {return}
-	slime_gpu_step_ready(gpu, vk_ctx, cmd, sim_state)
+	slime_gpu_step_ready(gpu, vk_ctx, cmd, sim_state, dt)
 }
 
-slime_gpu_step_ready :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State) {
+slime_gpu_step_ready :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State, dt: f32) {
 	settings := &sim_state.slime
 	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
+	slime_record_webcam_upload(gpu, vk_ctx, cmd, frame_slot)
+	slime_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
 	if sim_state.slime_clear_trails_requested {
 		slime_clear_trail_buffer(gpu)
 		sim_state.slime_clear_trails_requested = false
@@ -462,7 +510,7 @@ slime_gpu_step_ready :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 	}
 	slime_upload_lut(gpu, settings)
 	slime_upload_render_params(gpu, frame_slot, settings)
-	slime_write_uniforms(gpu, frame_slot, settings, sim_state.cursor_active, sim_state.cursor_pixel, sim_state.cursor_size, sim_state.cursor_strength)
+	slime_write_uniforms(gpu, frame_slot, settings, sim_state.cursor_active, sim_state.cursor_pixel, sim_state.cursor_size, sim_state.cursor_strength, dt)
 	speed_range_changed := slime_speed_range_changed(gpu, settings)
 	sim_set := gpu.sim_sets[frame_slot]
 	display_set := gpu.display_sets[frame_slot]
@@ -600,6 +648,8 @@ slime_gpu_destroy :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context) {
 		engine.vk_destroy_buffer(vk_ctx, &gpu.cursor_buffers[frame_slot])
 		engine.vk_destroy_buffer(vk_ctx, &gpu.render_params_buffers[frame_slot])
 		engine.vk_destroy_buffer(vk_ctx, &gpu.camera_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.webcam_staging_buffers[frame_slot])
+		slime_destroy_image(vk_ctx, &gpu.webcam_images[frame_slot])
 	}
 	slime_destroy_image(vk_ctx, &gpu.display_image)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.update_shader)

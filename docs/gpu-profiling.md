@@ -143,7 +143,6 @@ tooling, captures may include labels such as:
 - `Particle Life: force compute`
 - `Particle Life: collision solve/apply`
 - `Particle Life: copy scratch`
-- `Particle Life: blob analysis`
 - `Particle Life: present`
 - `UI overlay`
 

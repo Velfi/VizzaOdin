@@ -24,6 +24,7 @@ voronoi_gpu_ensure_size :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Cont
 	gpu.height = target_height
 	gpu.point_count = point_count
 	if !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_JFA_INIT_SHADER_SOURCE, VORONOI_JFA_INIT_FALLBACK_SPV, .Compute, VORONOI_SOURCE_ENTRY, &gpu.jfa_init_shader) ||
+	   !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_JFA_ITERATION_SHADER_SOURCE, VORONOI_JFA_ITERATION_FALLBACK_SPV, .Compute, VORONOI_SOURCE_ENTRY, &gpu.jfa_iteration_shader) ||
 	   !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_BROWNIAN_SHADER_SOURCE, VORONOI_BROWNIAN_FALLBACK_SPV, .Compute, VORONOI_SOURCE_ENTRY, &gpu.brownian_shader) ||
 	   !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_RENDER_SHADER_SOURCE, VORONOI_RENDER_VERTEX_FALLBACK_SPV, .Vertex, VORONOI_VERTEX_SOURCE_ENTRY, &gpu.render_vertex_shader) ||
 	   !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_RENDER_SHADER_SOURCE, VORONOI_RENDER_FRAGMENT_FALLBACK_SPV, .Fragment, VORONOI_FRAGMENT_SOURCE_ENTRY, &gpu.render_fragment_shader) {
@@ -43,7 +44,8 @@ voronoi_gpu_ensure_size :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Cont
 			return false
 		}
 	}
-	if !voronoi_create_image(gpu, vk_ctx, &gpu.jfa_image, target_width, target_height) {
+	if !voronoi_create_image(gpu, vk_ctx, &gpu.jfa_image, target_width, target_height) ||
+	   !voronoi_create_image(gpu, vk_ctx, &gpu.jfa_scratch_image, target_width, target_height) {
 		voronoi_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
@@ -55,6 +57,7 @@ voronoi_gpu_ensure_size :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Cont
 	}
 	if !voronoi_create_descriptors(gpu, vk_ctx) ||
 	   !voronoi_create_compute_pipeline(gpu, vk_ctx) ||
+	   !voronoi_create_jfa_iteration_pipeline(vk_ctx, gpu.jfa_iteration_shader.handle, gpu.jfa_iteration_set_layout, &gpu.jfa_iteration_pipeline) ||
 	   !voronoi_create_single_compute_pipeline(vk_ctx, gpu.brownian_shader.handle, gpu.brownian_set_layout, &gpu.brownian_pipeline) ||
 	   !voronoi_create_render_pipeline(gpu, vk_ctx) {
 		voronoi_gpu_destroy(gpu, vk_ctx)
@@ -68,7 +71,7 @@ voronoi_gpu_ensure_size :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Cont
 voronoi_create_image :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, image: ^Voronoi_Image, width, height: u32) -> bool {
 	_ = gpu
 	image^ = {width = width, height = height, layout = .UNDEFINED}
-	info := vk.ImageCreateInfo{sType = .IMAGE_CREATE_INFO, imageType = .D2, format = VORONOI_IMAGE_FORMAT, extent = {width, height, 1}, mipLevels = 1, arrayLayers = 1, samples = {._1}, tiling = .OPTIMAL, usage = {.STORAGE, .SAMPLED}, sharingMode = .EXCLUSIVE, initialLayout = .UNDEFINED}
+	info := vk.ImageCreateInfo{sType = .IMAGE_CREATE_INFO, imageType = .D2, format = VORONOI_IMAGE_FORMAT, extent = {width, height, 1}, mipLevels = 1, arrayLayers = 1, samples = {._1}, tiling = .OPTIMAL, usage = {.STORAGE, .SAMPLED, .TRANSFER_DST}, sharingMode = .EXCLUSIVE, initialLayout = .UNDEFINED}
 	if vk.CreateImage(vk_ctx.device, &info, nil, &image.handle) != .SUCCESS {return false}
 	req: vk.MemoryRequirements
 	vk.GetImageMemoryRequirements(vk_ctx.device, image.handle, &req)
@@ -168,11 +171,17 @@ voronoi_create_descriptors :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_C
 		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
+	jfa_iteration_bindings := [3]vk.DescriptorSetLayoutBinding{
+		{binding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 2, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, stageFlags = {.COMPUTE}},
+	}
 	if !voronoi_create_set_layout(vk_ctx, jfa_bindings[:], &gpu.jfa_set_layout) ||
+	   !voronoi_create_set_layout(vk_ctx, jfa_iteration_bindings[:], &gpu.jfa_iteration_set_layout) ||
 	   !voronoi_create_set_layout(vk_ctx, brownian_bindings[:], &gpu.brownian_set_layout) ||
 	   !voronoi_create_set_layout(vk_ctx, render_bindings[:], &gpu.render_set_layout) {return false}
-	pool_sizes := [4]vk.DescriptorPoolSize{{type = .STORAGE_BUFFER, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .UNIFORM_BUFFER, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .STORAGE_IMAGE, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}, {type = .SAMPLED_IMAGE, descriptorCount = engine.MAX_FRAMES_IN_FLIGHT}}
-	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 3 * engine.MAX_FRAMES_IN_FLIGHT}
+	pool_sizes := [4]vk.DescriptorPoolSize{{type = .STORAGE_BUFFER, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .UNIFORM_BUFFER, descriptorCount = 6 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .STORAGE_IMAGE, descriptorCount = 3 * engine.MAX_FRAMES_IN_FLIGHT}, {type = .SAMPLED_IMAGE, descriptorCount = 3 * engine.MAX_FRAMES_IN_FLIGHT}}
+	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 5 * engine.MAX_FRAMES_IN_FLIGHT}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {return false}
 	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
 		layouts := [3]vk.DescriptorSetLayout{gpu.jfa_set_layout, gpu.brownian_set_layout, gpu.render_set_layout}
@@ -182,6 +191,9 @@ voronoi_create_descriptors :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_C
 		gpu.jfa_sets[frame_slot] = sets[0]
 		gpu.brownian_sets[frame_slot] = sets[1]
 		gpu.render_sets[frame_slot] = sets[2]
+		iteration_layouts := [2]vk.DescriptorSetLayout{gpu.jfa_iteration_set_layout, gpu.jfa_iteration_set_layout}
+		iteration_alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = 2, pSetLayouts = raw_data(iteration_layouts[:])}
+		if vk.AllocateDescriptorSets(vk_ctx.device, &iteration_alloc, raw_data(gpu.jfa_iteration_sets[frame_slot][:])) != .SUCCESS {return false}
 	}
 	voronoi_update_descriptors(gpu, vk_ctx)
 	return true
@@ -206,6 +218,10 @@ voronoi_update_descriptors_for_slot :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^en
 	lut_info := vk.DescriptorBufferInfo{buffer = gpu.lut_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT)}
 	jfa_storage := vk.DescriptorImageInfo{imageLayout = .GENERAL, imageView = gpu.jfa_image.view}
 	jfa_sampled := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.jfa_image.view}
+	jfa_compute_read := vk.DescriptorImageInfo{imageLayout = .GENERAL, imageView = gpu.jfa_image.view}
+	jfa_compute_write := vk.DescriptorImageInfo{imageLayout = .GENERAL, imageView = gpu.jfa_scratch_image.view}
+	scratch_compute_read := vk.DescriptorImageInfo{imageLayout = .GENERAL, imageView = gpu.jfa_scratch_image.view}
+	scratch_compute_write := vk.DescriptorImageInfo{imageLayout = .GENERAL, imageView = gpu.jfa_image.view}
 	jfa_set := gpu.jfa_sets[frame_slot]
 	brownian_set := gpu.brownian_sets[frame_slot]
 	render_set := gpu.render_sets[frame_slot]
@@ -219,8 +235,21 @@ voronoi_update_descriptors_for_slot :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^en
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = render_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = render_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &lut_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = render_set, dstBinding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &jfa_sampled},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.jfa_iteration_sets[frame_slot][0], dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.jfa_iteration_sets[frame_slot][0], dstBinding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &jfa_compute_read},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.jfa_iteration_sets[frame_slot][0], dstBinding = 2, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &jfa_compute_write},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.jfa_iteration_sets[frame_slot][1], dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.jfa_iteration_sets[frame_slot][1], dstBinding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &scratch_compute_read},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.jfa_iteration_sets[frame_slot][1], dstBinding = 2, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, pImageInfo = &scratch_compute_write},
 	}
 	vk.UpdateDescriptorSets(vk_ctx.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
+}
+
+voronoi_update_render_image :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
+	image := gpu.jfa_result_is_scratch ? &gpu.jfa_scratch_image : &gpu.jfa_image
+	info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = image.view}
+	write := vk.WriteDescriptorSet{sType = .WRITE_DESCRIPTOR_SET, dstSet = gpu.render_sets[frame_slot], dstBinding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &info}
+	vk.UpdateDescriptorSets(vk_ctx.device, 1, &write, 0, nil)
 }
 
 voronoi_create_compute_pipeline :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
@@ -235,6 +264,16 @@ voronoi_create_compute_pipeline :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine
 voronoi_create_single_compute_pipeline :: proc(vk_ctx: ^engine.Vk_Context, shader: vk.ShaderModule, set_layout: vk.DescriptorSetLayout, out: ^engine.Vk_Compute_Pipeline) -> bool {
 	layouts := [1]vk.DescriptorSetLayout{set_layout}
 	layout_info := vk.PipelineLayoutCreateInfo{sType = .PIPELINE_LAYOUT_CREATE_INFO, setLayoutCount = 1, pSetLayouts = raw_data(layouts[:])}
+	if vk.CreatePipelineLayout(vk_ctx.device, &layout_info, nil, &out.layout) != .SUCCESS {return false}
+	stage := vk.PipelineShaderStageCreateInfo{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.COMPUTE}, module = shader, pName = VORONOI_ENTRY}
+	info := vk.ComputePipelineCreateInfo{sType = .COMPUTE_PIPELINE_CREATE_INFO, stage = stage, layout = out.layout}
+	return vk.CreateComputePipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &out.pipeline) == .SUCCESS
+}
+
+voronoi_create_jfa_iteration_pipeline :: proc(vk_ctx: ^engine.Vk_Context, shader: vk.ShaderModule, set_layout: vk.DescriptorSetLayout, out: ^engine.Vk_Compute_Pipeline) -> bool {
+	layouts := [1]vk.DescriptorSetLayout{set_layout}
+	push_range := vk.PushConstantRange{stageFlags = {.COMPUTE}, offset = 0, size = size_of(u32)}
+	layout_info := vk.PipelineLayoutCreateInfo{sType = .PIPELINE_LAYOUT_CREATE_INFO, setLayoutCount = 1, pSetLayouts = raw_data(layouts[:]), pushConstantRangeCount = 1, pPushConstantRanges = &push_range}
 	if vk.CreatePipelineLayout(vk_ctx.device, &layout_info, nil, &out.layout) != .SUCCESS {return false}
 	stage := vk.PipelineShaderStageCreateInfo{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.COMPUTE}, module = shader, pName = VORONOI_ENTRY}
 	info := vk.ComputePipelineCreateInfo{sType = .COMPUTE_PIPELINE_CREATE_INFO, stage = stage, layout = out.layout}
@@ -276,8 +315,8 @@ voronoi_transition_image :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuff
 		src_stage = {.COMPUTE_SHADER, .FRAGMENT_SHADER}
 	}
 	if new_layout == .GENERAL {
-		dst_access = {.SHADER_WRITE}
-		dst_stage = {.COMPUTE_SHADER}
+		dst_access = {.SHADER_WRITE, .TRANSFER_WRITE}
+		dst_stage = {.COMPUTE_SHADER, .TRANSFER}
 	} else if new_layout == .SHADER_READ_ONLY_OPTIMAL {
 		dst_access = {.SHADER_READ}
 		dst_stage = {.COMPUTE_SHADER, .FRAGMENT_SHADER}
@@ -297,10 +336,12 @@ voronoi_gpu_step :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, cm
 voronoi_apply_interaction :: proc(gpu: ^Voronoi_Gpu_State, sim: ^Remaining_Sim_State, dt: f32) {
 	if gpu.vertex_buffer.mapped == nil || gpu.point_count == 0 {return}
 	points := (cast([^]Voronoi_Vertex)gpu.vertex_buffer.mapped)[:gpu.point_count]
-	// cursor_world is normalized; convert it directly to the simulation texture.
-	cx := (sim.cursor_world[0] + 1) * 0.5 * f32(gpu.width)
-	cy := (1 - sim.cursor_world[1]) * 0.5 * f32(gpu.height)
-	radius := max(min(f32(gpu.width), f32(gpu.height)) * 0.18, 48)
+	// The Voronoi image is presented with Vulkan's downward-positive viewport Y,
+	// so its site coordinates use the same orientation as cursor_world.
+	cursor := voronoi_cursor_texture_position(sim.cursor_world, gpu.width, gpu.height)
+	cx, cy := cursor[0], cursor[1]
+	radius := max(min(f32(gpu.width), f32(gpu.height)) * max(sim.cursor_size, 0.01) * 0.5, 8)
+	strength := max(sim.cursor_strength, 0)
 	changed := false
 	if sim.voronoi_interaction_mode == 3 {
 		if !sim.voronoi_grabbed {
@@ -333,13 +374,13 @@ voronoi_apply_interaction :: proc(gpu: ^Voronoi_Gpu_State, sim: ^Remaining_Sim_S
 		sign := sim.voronoi_interaction_mode == 1 ? f32(-1) : f32(1)
 		for i in 0 ..< int(gpu.point_count) {
 			dx := points[i].position[0]-cx; dy := points[i].position[1]-cy; d2 := dx*dx+dy*dy
-			if d2 > 1 && d2 < radius*radius {s := sign*900*dt*(1-math.sqrt(d2)/radius)/math.sqrt(d2); points[i].position[0] += dx*s; points[i].position[1] += dy*s; changed = true}
+			if d2 > 1 && d2 < radius*radius {s := sign*900*strength*dt*(1-math.sqrt(d2)/radius)/math.sqrt(d2); points[i].position[0] += dx*s; points[i].position[1] += dy*s; changed = true}
 		}
 	}
 	if sim.voronoi_interaction_mode == 6 && sim.voronoi_pressed {
 		for i in 0 ..< int(gpu.point_count) {
 			dx := points[i].position[0]-cx; dy := points[i].position[1]-cy; d := max(math.sqrt(dx*dx+dy*dy), 1)
-			if d < radius*1.5 {s := 36*(1-d/(radius*1.5)); points[i].position[0] += dx/d*s; points[i].position[1] += dy/d*s; changed = true}
+			if d < radius*1.5 {s := 36*strength*(1-d/(radius*1.5)); points[i].position[0] += dx/d*s; points[i].position[1] += dy/d*s; changed = true}
 		}
 	}
 	if sim.voronoi_released && sim.voronoi_grabbed {
@@ -347,11 +388,18 @@ voronoi_apply_interaction :: proc(gpu: ^Voronoi_Gpu_State, sim: ^Remaining_Sim_S
 		// A short ballistic kick makes release read as a fling; Brownian drift
 		// naturally takes over again after the impulse.
 		points[i].position[0] += sim.cursor_world_velocity[0] * f32(gpu.width) * 0.06
-		points[i].position[1] -= sim.cursor_world_velocity[1] * f32(gpu.height) * 0.06
+		points[i].position[1] += sim.cursor_world_velocity[1] * f32(gpu.height) * 0.06
 		sim.voronoi_grabbed = false
 		changed = true
 	}
 	if changed {gpu.needs_rebuild = true}
+}
+
+voronoi_cursor_texture_position :: proc(cursor_world: [2]f32, width, height: u32) -> [2]f32 {
+	return {
+		(cursor_world[0] + 1) * 0.5 * f32(width),
+		(cursor_world[1] + 1) * 0.5 * f32(height),
+	}
 }
 
 voronoi_gpu_step_size :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, settings: ^Voronoi_Settings, delta_time: f32, paused: bool, width, height: u32) {
@@ -383,14 +431,42 @@ voronoi_gpu_step_ready :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Conte
 	}
 	if gpu.needs_rebuild {
 		voronoi_transition_image(vk_ctx, cmd, &gpu.jfa_image, .GENERAL)
+		voronoi_transition_image(vk_ctx, cmd, &gpu.jfa_scratch_image, .GENERAL)
+		// Give every pixel a valid fallback seed before scattering the remaining
+		// sites. Sparse JFA seeds can otherwise leave unassigned islands on
+		// non-power-of-two, toroidally wrapped targets.
+		points := (cast([^]Voronoi_Vertex)gpu.vertex_buffer.mapped)[:gpu.point_count]
+		fallback := points[0].position
+		clear := vk.ClearColorValue{float32 = {fallback[0], fallback[1], 0, 1e28}}
+		range := vk.ImageSubresourceRange{aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}
+		vk.CmdClearColorImage(cmd, gpu.jfa_image.handle, .GENERAL, &clear, 1, &range)
+		voronoi_transfer_to_compute_barrier(vk_ctx, cmd)
 		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.jfa_init_pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
 		jfa_set := gpu.jfa_sets[frame_slot]
 		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.jfa_init_pipeline.layout, 0, 1, &jfa_set, 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
-		vk.CmdDispatch(cmd, (gpu.width + 15) / 16, (gpu.height + 15) / 16, 1)
+		vk.CmdDispatch(cmd, point_groups, 1, 1)
 		engine.vk_cmd_count_compute_dispatch(vk_ctx)
-		voronoi_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER, .FRAGMENT_SHADER})
+		voronoi_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
+		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.jfa_iteration_pipeline.pipeline)
+		engine.vk_cmd_count_pipeline_bind(vk_ctx)
+		jump := u32(1)
+		for jump < max(gpu.width, gpu.height) {jump *= 2}
+		ping := 0
+		for jump >= 1 {
+			set := gpu.jfa_iteration_sets[frame_slot][ping]
+			vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.jfa_iteration_pipeline.layout, 0, 1, &set, 0, nil)
+			engine.vk_cmd_count_descriptor_bind(vk_ctx)
+			vk.CmdPushConstants(cmd, gpu.jfa_iteration_pipeline.layout, {.COMPUTE}, 0, size_of(u32), &jump)
+			vk.CmdDispatch(cmd, (gpu.width + 7) / 8, (gpu.height + 7) / 8, 1)
+			engine.vk_cmd_count_compute_dispatch(vk_ctx)
+			voronoi_compute_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
+			ping = 1 - ping
+			jump /= 2
+		}
+		gpu.jfa_result_is_scratch = ping == 1
+		voronoi_update_render_image(gpu, vk_ctx, frame_slot)
 		gpu.needs_rebuild = false
 	}
 }
@@ -398,6 +474,12 @@ voronoi_gpu_step_ready :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Conte
 voronoi_compute_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, dst: vk.PipelineStageFlags) {
 	barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
 	vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, dst, {}, 1, &barrier, 0, nil, 0, nil)
+	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
+}
+
+voronoi_transfer_to_compute_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer) {
+	barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.TRANSFER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
+	vk.CmdPipelineBarrier(cmd, {.TRANSFER}, {.COMPUTE_SHADER}, {}, 1, &barrier, 0, nil, 0, nil)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 }
 
@@ -409,7 +491,8 @@ voronoi_gpu_present :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context,
 
 voronoi_gpu_present_viewport :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, viewport: vk.Viewport, scissor: vk.Rect2D) {
 	if !gpu.ready || gpu.render_pipeline.pipeline == vk.Pipeline(0) {return}
-	voronoi_transition_image(vk_ctx, frame.command_buffer, &gpu.jfa_image, .SHADER_READ_ONLY_OPTIMAL)
+	image := gpu.jfa_result_is_scratch ? &gpu.jfa_scratch_image : &gpu.jfa_image
+	voronoi_transition_image(vk_ctx, frame.command_buffer, image, .SHADER_READ_ONLY_OPTIMAL)
 	voronoi_gpu_draw_prepared_viewport(gpu, vk_ctx, frame, viewport, scissor)
 }
 
@@ -448,10 +531,12 @@ voronoi_destroy_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Voronoi_Image)
 voronoi_gpu_destroy :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context) {
 	if vk_ctx == nil || vk_ctx.device == nil {gpu^ = {}; return}
 	voronoi_destroy_compute_pipeline(vk_ctx, &gpu.jfa_init_pipeline)
+	voronoi_destroy_compute_pipeline(vk_ctx, &gpu.jfa_iteration_pipeline)
 	voronoi_destroy_compute_pipeline(vk_ctx, &gpu.brownian_pipeline)
 	engine.vk_destroy_graphics_pipeline(vk_ctx, &gpu.render_pipeline)
 	if gpu.descriptor_pool != vk.DescriptorPool(0) {vk.DestroyDescriptorPool(vk_ctx.device, gpu.descriptor_pool, nil)}
 	if gpu.jfa_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.jfa_set_layout, nil)}
+	if gpu.jfa_iteration_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.jfa_iteration_set_layout, nil)}
 	if gpu.brownian_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.brownian_set_layout, nil)}
 	if gpu.render_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.render_set_layout, nil)}
 	engine.vk_destroy_buffer(vk_ctx, &gpu.vertex_buffer)
@@ -462,7 +547,9 @@ voronoi_gpu_destroy :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context)
 	}
 	engine.vk_destroy_buffer(vk_ctx, &gpu.lut_buffer)
 	voronoi_destroy_image(vk_ctx, &gpu.jfa_image)
+	voronoi_destroy_image(vk_ctx, &gpu.jfa_scratch_image)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.jfa_init_shader)
+	engine.vk_destroy_shader_module(vk_ctx, &gpu.jfa_iteration_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.brownian_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.render_vertex_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.render_fragment_shader)

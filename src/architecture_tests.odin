@@ -16,6 +16,35 @@ test_approx_f32 :: proc(a, b: f32) -> bool {
 	return math.abs(a - b) <= 0.01
 }
 
+@(test)
+test_simulation_substeps_preserve_real_time_with_bounded_steps :: proc(t: ^testing.T) {
+	fast := rendervk.simulation_substeps(1.0 / 240.0)
+	testing.expect_value(t, fast.count, 1)
+	testing.expect(t, math.abs(fast.delta_time - f32(1.0 / 240.0)) < 0.00001)
+
+	normal := rendervk.simulation_substeps(1.0 / 60.0)
+	testing.expect_value(t, normal.count, 2)
+	testing.expect(t, normal.delta_time <= rendervk.SIMULATION_MAX_SUBSTEP_SECONDS)
+	testing.expect(t, math.abs(normal.delta_time * f32(normal.count) - f32(1.0 / 60.0)) < 0.00001)
+
+	stalled := rendervk.simulation_substeps(1)
+	testing.expect_value(t, stalled.count, rendervk.SIMULATION_MAX_SUBSTEPS)
+	testing.expect(t, math.abs(stalled.delta_time * f32(stalled.count) - rendervk.SIMULATION_MAX_FRAME_SECONDS) < 0.00001)
+}
+
+@(test)
+test_primordial_timestep_is_independent_of_render_rate :: proc(t: ^testing.T) {
+	configured := f32(0.016)
+	at_60 := rendervk.primordial_effective_step_dt(configured, 1.0 / 60.0)
+	at_240 := rendervk.primordial_effective_step_dt(configured, 1.0 / 240.0)
+	testing.expect(t, math.abs(at_60 - configured) < 0.00001)
+	testing.expect(t, math.abs(at_240 * 4 - at_60) < 0.00001)
+
+	steps := rendervk.simulation_substeps(1.0 / 60.0)
+	substep_total := rendervk.primordial_effective_step_dt(configured, steps.delta_time) * f32(steps.count)
+	testing.expect(t, math.abs(substep_total - at_60) < 0.00001)
+}
+
 test_is_scroll_top_fade :: proc(command: uifw.Draw_Command, viewport: uifw.Rect) -> bool {
 	if command.kind != uifw.Draw_Command_Kind.Gradient_Rect {
 		return false
@@ -669,6 +698,25 @@ test_particle_life_collision_toggle_reuses_fine_grid :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_particle_life_range_change_rejects_stale_grid :: proc(t: ^testing.T) {
+	sim: game.Particle_Life_Simulation
+	game.particle_life_init(&sim, 320, 240)
+	world_size := game.particle_life_world_size(&sim)
+
+	sim.settings.collision_enabled = false
+	sim.settings.max_distance = 0.8
+	wide_width, wide_height := game.particle_life_target_grid_dimensions(sim.settings, world_size)
+	wide_radius := game.particle_life_target_neighbor_radius_cells(sim.settings, wide_width, wide_height, world_size)
+	sim.gpu.grid_width = wide_width
+	sim.gpu.grid_height = wide_height
+	sim.gpu.neighbor_radius_cells = wide_radius
+	testing.expect(t, game.particle_life_current_grid_satisfies_settings(&sim))
+
+	sim.settings.max_distance = 0.02
+	testing.expect(t, !game.particle_life_current_grid_satisfies_settings(&sim))
+}
+
+@(test)
 test_particle_life_screen_to_world_keeps_mouse_y_upright :: proc(t: ^testing.T) {
 	sim: game.Particle_Life_Simulation
 	game.particle_life_init(&sim, 200, 100)
@@ -1052,6 +1100,17 @@ test_remaining_sim_screen_to_world_uses_ndc_coordinates :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_voronoi_cursor_texture_y_follows_mouse_y :: proc(t: ^testing.T) {
+	top := rendervk.voronoi_cursor_texture_position({-1, 1}, 200, 100)
+	bottom := rendervk.voronoi_cursor_texture_position({1, -1}, 200, 100)
+
+	testing.expect_value(t, top[0], f32(0))
+	testing.expect_value(t, top[1], f32(100))
+	testing.expect_value(t, bottom[0], f32(200))
+	testing.expect_value(t, bottom[1], f32(0))
+}
+
+@(test)
 test_flow_field_input_tracks_cursor_mode_and_vulkan_y :: proc(t: ^testing.T) {
 	sim: game.Remaining_Sim_State
 	game.remaining_sim_init(&sim)
@@ -1077,6 +1136,24 @@ test_flow_field_input_tracks_cursor_mode_and_vulkan_y :: proc(t: ^testing.T) {
 	testing.expect_value(t, sim.cursor_world[1], f32(-0.5))
 	testing.expect(t, sim.cursor_world_velocity[0] > 0)
 	testing.expect(t, sim.cursor_world_velocity[1] < 0)
+}
+
+@(test)
+test_primordial_input_tracks_vulkan_y :: proc(t: ^testing.T) {
+	sim: game.Remaining_Sim_State
+	game.remaining_sim_init(&sim)
+
+	game.remaining_sim_apply_frame_input_for_kind(&sim, .Primordial, {
+		window_width = 100,
+		window_height = 100,
+		mouse_pos = {75, 25},
+		mouse_down = true,
+		mouse_button = 1,
+		delta_time = 1.0 / 60.0,
+	})
+
+	testing.expect_value(t, sim.cursor_world[0], f32(0.5))
+	testing.expect_value(t, sim.cursor_world[1], f32(-0.5))
 }
 
 @(test)
@@ -1385,6 +1462,15 @@ test_remaining_image_settings_round_trip_through_tomlc17 :: proc(t: ^testing.T) 
 	flow.show_particles = false
 	flow.autospawn_rate = 12
 	flow.brush_spawn_rate = 34
+	flow.emitter_mode = .Ring
+	flow.emitter_index = int(game.Flow_Emitter_Mode.Ring)
+	flow.emitter_radius = 0.625
+	flow.boundary_mode = .Respawn
+	flow.boundary_index = int(game.Flow_Boundary_Mode.Respawn)
+	flow.trail_style = .Dotted
+	flow.trail_style_index = int(game.Flow_Trail_Style.Dotted)
+	flow.field_animation_enabled = true
+	flow.field_animation_speed = -0.35
 	flow.foreground_color_mode = .Direction
 	flow.foreground_index = int(game.Flow_Foreground_Mode.Direction)
 	flow.background_color_mode = .White
@@ -1421,6 +1507,12 @@ test_remaining_image_settings_round_trip_through_tomlc17 :: proc(t: ^testing.T) 
 	testing.expect_value(t, loaded_flow.show_particles, false)
 	testing.expect_value(t, loaded_flow.autospawn_rate, u32(12))
 	testing.expect_value(t, loaded_flow.brush_spawn_rate, u32(34))
+	testing.expect_value(t, loaded_flow.emitter_mode, game.Flow_Emitter_Mode.Ring)
+	testing.expect_value(t, loaded_flow.emitter_radius, f32(0.625))
+	testing.expect_value(t, loaded_flow.boundary_mode, game.Flow_Boundary_Mode.Respawn)
+	testing.expect_value(t, loaded_flow.trail_style, game.Flow_Trail_Style.Dotted)
+	testing.expect_value(t, loaded_flow.field_animation_enabled, true)
+	testing.expect_value(t, loaded_flow.field_animation_speed, f32(-0.35))
 	testing.expect_value(t, loaded_flow.foreground_color_mode, game.Flow_Foreground_Mode.Direction)
 	testing.expect_value(t, loaded_flow.background_color_mode, game.Vector_Background_Mode.White)
 	testing.expect_value(t, loaded_flow.trail_decay_rate, f32(0.25))
@@ -1499,6 +1591,8 @@ test_remaining_image_settings_round_trip_through_tomlc17 :: proc(t: ^testing.T) 
 	vectors.density = 0.04
 	vectors.line_length = 0.08
 	vectors.line_width = 0.004
+	vectors.display_mode = .Arrows
+	vectors.display_index = int(game.Vector_Display_Mode.Arrows)
 	vectors.background_color_mode = .Color_Scheme
 	vectors.background_index = int(game.Vector_Background_Mode.Color_Scheme)
 	testing.expect(t, game.settings_save_vectors(vectors_path, vectors))
@@ -1513,6 +1607,7 @@ test_remaining_image_settings_round_trip_through_tomlc17 :: proc(t: ^testing.T) 
 	testing.expect_value(t, loaded_vectors.density, f32(0.04))
 	testing.expect_value(t, loaded_vectors.line_length, f32(0.08))
 	testing.expect_value(t, loaded_vectors.line_width, f32(0.004))
+	testing.expect_value(t, loaded_vectors.display_mode, game.Vector_Display_Mode.Arrows)
 	testing.expect_value(t, loaded_vectors.background_color_mode, game.Vector_Background_Mode.Color_Scheme)
 }
 
@@ -2086,6 +2181,59 @@ test_voronoi_canvas_tools_have_stable_cardinal_slots_and_pairs :: proc(t: ^testi
 	testing.expect_value(t, set.tools[1].name, "Sites")
 	testing.expect_value(t, set.tools[2].name, "Sculpt")
 	testing.expect(t, !set.tools[3].valid)
+}
+
+@(test)
+test_simulation_brush_mode_sets_match_cardinal_design :: proc(t: ^testing.T) {
+	slime := game.canvas_tool_set_for_mode(.Slime_Mold)
+	testing.expect_value(t, slime.tools[0].name, "Influence")
+	testing.expect_value(t, slime.tools[1].name, "Pheromone")
+	testing.expect_value(t, slime.tools[2].name, "Agents")
+	testing.expect(t, !slime.tools[3].valid)
+
+	gray := game.canvas_tool_set_for_mode(.Gray_Scott)
+	testing.expect_value(t, gray.tools[0].name, "Reaction")
+	testing.expect_value(t, gray.tools[1].name, "Nutrient")
+	testing.expect(t, !gray.tools[2].valid && !gray.tools[3].valid)
+
+	particle := game.canvas_tool_set_for_mode(.Particle_Life)
+	testing.expect_value(t, particle.tools[0].name, "Gravity")
+	testing.expect_value(t, particle.tools[1].name, "Vortex")
+	testing.expect_value(t, particle.tools[2].name, "Particles")
+	testing.expect(t, !particle.tools[3].valid)
+
+	flow := game.canvas_tool_set_for_mode(.Flow_Field)
+	testing.expect_value(t, flow.tools[0].name, "Particles")
+	testing.expect_value(t, flow.tools[1].name, "Force")
+	testing.expect_value(t, flow.tools[2].name, "Flow")
+
+	pellets := game.canvas_tool_set_for_mode(.Pellets)
+	testing.expect_value(t, pellets.tools[0].name, "Grab")
+	testing.expect_value(t, pellets.tools[1].name, "Gravity")
+	testing.expect_value(t, pellets.tools[2].name, "Burst")
+
+	vectors := game.canvas_tool_set_for_mode(.Vectors)
+	testing.expect_value(t, vectors.tools[0].name, "Probe")
+	testing.expect_value(t, vectors.tools[1].name, "Deflect")
+	testing.expect(t, !vectors.tools[2].valid && !vectors.tools[3].valid)
+
+	primordial := game.canvas_tool_set_for_mode(.Primordial)
+	testing.expect_value(t, primordial.tools[0].name, "Impulse")
+	testing.expect_value(t, primordial.tools[1].name, "Vortex")
+
+	moire := game.canvas_tool_set_for_mode(.Moire)
+	for tool in moire.tools {testing.expect(t, !tool.valid)}
+}
+
+@(test)
+test_brush_mode_actions_map_to_stable_shader_pairs :: proc(t: ^testing.T) {
+	set := game.canvas_tool_set_for_mode(.Particle_Life)
+	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[0], false), u32(1))
+	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[0], true), u32(2))
+	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[1], false), u32(3))
+	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[1], true), u32(4))
+	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[2], false), u32(5))
+	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[2], true), u32(6))
 }
 
 @(test)

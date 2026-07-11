@@ -48,8 +48,13 @@ struct SimParams {
     float vector_magnitude;
     float width;
     float delta_time;
+    uint emitter_mode;
+    float emitter_radius;
+    uint boundary_mode;
+    uint trail_style;
+    float field_animation_speed;
+    uint field_animation_enabled;
     uint _padding_1;
-    uint _padding_2;
 };
 
 struct CameraUniform {

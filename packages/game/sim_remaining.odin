@@ -139,6 +139,7 @@ MOIRE_INTERFERENCE_MODE_NAMES := [?]string{"Replace", "Add", "Multiply", "Overla
 VECTOR_FIELD_TYPE_NAMES := [?]string{"Noise", "Image"}
 VECTOR_BACKGROUND_MODE_NAMES := [?]string{"Black", "White", "Gray18", "Color Scheme"}
 VECTOR_IMAGE_FIT_MODE_NAMES := [?]string{"Stretch", "Center", "Fit H", "Fit V"}
+VECTOR_DISPLAY_MODE_NAMES := [?]string{"Lines", "Needles", "Arrows", "Chevrons", "Rings"}
 PELLETS_FOREGROUND_MODE_NAMES := [?]string{"Density", "Velocity", "Random"}
 PRIMORDIAL_FOREGROUND_MODE_NAMES := [?]string{"Random", "Density", "Heading", "Velocity"}
 VORONOI_COLOR_MODE_NAMES := [?]string{"Random", "Distance", "Rings"}
@@ -149,6 +150,9 @@ SLIME_MASK_TARGET_NAMES := [?]string{"Pheromone Deposition", "Pheromone Decay", 
 FLOW_PARTICLE_SHAPE_NAMES := [?]string{"Circle", "Square", "Triangle", "Flower", "Diamond"}
 FLOW_FOREGROUND_MODE_NAMES := [?]string{"Age", "Random", "Direction"}
 FLOW_TRAIL_MAP_FILTERING_NAMES := [?]string{"Nearest", "Linear"}
+FLOW_EMITTER_MODE_NAMES := [?]string{"Area", "Center", "Ring", "Edges", "Line"}
+FLOW_BOUNDARY_MODE_NAMES := [?]string{"Wrap", "Bounce", "Absorb", "Respawn"}
+FLOW_TRAIL_STYLE_NAMES := [?]string{"Ink", "Dotted", "Tapered", "Neon"}
 REMAINING_DEFAULT_BUILTIN_PRESET_NAMES := [?]string{"Default"}
 MOIRE_BUILTIN_PRESET_NAMES := [?]string{"Default", "Classic Moire", "Psychedelic", "Subtle"}
 SLIME_BUILTIN_PRESET_NAMES := [?]string{"Default", "Gloop Loops", "Firecracker Trees", "Threads", "Snake", "Cells", "Net", "Bars", "Healthy Fungus", "Sand On A Speaker", "Spots", "Cascades", "Venom"}
@@ -170,6 +174,41 @@ Vector_Image_Fit_Mode :: enum int {
 	Center,
 	Fit_H,
 	Fit_V,
+}
+
+Vector_Display_Mode :: enum int {
+	Lines,
+	Needles,
+	Arrows,
+	Chevrons,
+	Rings,
+}
+
+Flow_Emitter_Mode :: enum int {Area, Center, Ring, Edges, Line}
+Flow_Boundary_Mode :: enum int {Wrap, Bounce, Absorb, Respawn}
+Flow_Trail_Style :: enum int {Ink, Dotted, Tapered, Neon}
+
+flow_emitter_mode_from_name :: proc(name: string, out: ^Flow_Emitter_Mode) -> bool {
+	for value, i in FLOW_EMITTER_MODE_NAMES {if name == value {out^ = Flow_Emitter_Mode(i); return true}}
+	return false
+}
+flow_boundary_mode_from_name :: proc(name: string, out: ^Flow_Boundary_Mode) -> bool {
+	for value, i in FLOW_BOUNDARY_MODE_NAMES {if name == value {out^ = Flow_Boundary_Mode(i); return true}}
+	return false
+}
+flow_trail_style_from_name :: proc(name: string, out: ^Flow_Trail_Style) -> bool {
+	for value, i in FLOW_TRAIL_STYLE_NAMES {if name == value {out^ = Flow_Trail_Style(i); return true}}
+	return false
+}
+
+vector_display_mode_from_name :: proc(name: string, out: ^Vector_Display_Mode) -> bool {
+	for value, i in VECTOR_DISPLAY_MODE_NAMES {
+		if name == value {
+			out^ = Vector_Display_Mode(i)
+			return true
+		}
+	}
+	return false
 }
 
 vector_image_fit_mode_from_name :: proc(name: string, out: ^Vector_Image_Fit_Mode) -> bool {
@@ -208,6 +247,7 @@ Vectors_Settings :: struct {
 	density: f32,
 	line_length: f32,
 	line_width: f32,
+	display_mode: Vector_Display_Mode,
 	background_color_mode: Vector_Background_Mode,
 	image_fit_mode: Vector_Image_Fit_Mode,
 	image_mirror_horizontal: bool,
@@ -217,6 +257,21 @@ Vectors_Settings :: struct {
 	vector_field_index: int,
 	background_index: int,
 	image_fit_index: int,
+	display_index: int,
+	// Canvas edits are runtime instruments and are intentionally omitted by settings serialization.
+	deflection_stamps: [32]Vector_Deflection_Stamp,
+	deflection_stamp_count: int,
+	probe_position: [2]f32,
+	probe_value: f32,
+	probe_pinned: bool,
+	probe_has_sample: bool,
+	probe_initialized: bool,
+}
+
+Vector_Deflection_Stamp :: struct {
+	position: [2]f32,
+	radius: f32,
+	angle: f32,
 }
 
 Primordial_Settings :: struct {
@@ -466,6 +521,12 @@ Flow_Settings :: struct {
 	show_particles: bool,
 	autospawn_rate: u32,
 	brush_spawn_rate: u32,
+	emitter_mode: Flow_Emitter_Mode,
+	emitter_radius: f32,
+	boundary_mode: Flow_Boundary_Mode,
+	trail_style: Flow_Trail_Style,
+	field_animation_enabled: bool,
+	field_animation_speed: f32,
 	foreground_color_mode: Flow_Foreground_Mode,
 	background_color_mode: Vector_Background_Mode,
 	trail_decay_rate: f32,
@@ -479,6 +540,9 @@ Flow_Settings :: struct {
 	foreground_index: int,
 	background_index: int,
 	trail_filtering_index: int,
+	emitter_index: int,
+	boundary_index: int,
+	trail_style_index: int,
 }
 
 Slime_Background_Mode :: enum int {
@@ -608,6 +672,8 @@ vectors_settings_default :: proc() -> Vectors_Settings {
 			density = 0.02,
 		line_length = 0.03,
 		line_width = 0.001,
+		display_mode = .Lines,
+		display_index = int(Vector_Display_Mode.Lines),
 		background_color_mode = .Black,
 		image_fit_mode = .Stretch,
 		image_mirror_horizontal = false,
@@ -714,6 +780,12 @@ flow_settings_default :: proc() -> Flow_Settings {
 		show_particles = true,
 		autospawn_rate = 500,
 		brush_spawn_rate = 1000,
+		emitter_mode = .Area,
+		emitter_radius = 0.5,
+		boundary_mode = .Wrap,
+		trail_style = .Ink,
+		field_animation_enabled = false,
+		field_animation_speed = 0.15,
 		foreground_color_mode = .Age,
 		background_color_mode = .Color_Scheme,
 		trail_decay_rate = 0.0,
@@ -727,6 +799,9 @@ flow_settings_default :: proc() -> Flow_Settings {
 		foreground_index = int(Flow_Foreground_Mode.Age),
 		background_index = int(Vector_Background_Mode.Color_Scheme),
 		trail_filtering_index = int(Flow_Trail_Map_Filtering.Nearest),
+		emitter_index = int(Flow_Emitter_Mode.Area),
+		boundary_index = int(Flow_Boundary_Mode.Wrap),
+		trail_style_index = int(Flow_Trail_Style.Ink),
 	}
 	settings.noise.offset_x = 1.0
 	settings.noise.offset_y = 1.0
@@ -1145,9 +1220,9 @@ remaining_sim_apply_frame_input_for_kind :: proc(sim: ^Remaining_Sim_State, kind
 	if kind == .Slime_Mold {
 		world = camera_controls_screen_to_world(&sim.camera, input.mouse_pos, input.window_width, input.window_height)
 	}
-	// Flow Field and Pellets render their world coordinates with Vulkan's
+	// These simulations render their world coordinates with Vulkan's
 	// downward-positive viewport Y, so keep pointer Y in the same space.
-	if kind == .Flow_Field || kind == .Pellets {
+	if kind == .Flow_Field || kind == .Pellets || kind == .Primordial {
 		world[1] = -world[1]
 	}
 	dt := max(input.delta_time, 1.0 / 240.0)
@@ -1171,6 +1246,30 @@ remaining_sim_apply_frame_input_for_kind :: proc(sim: ^Remaining_Sim_State, kind
 	}
 	tool_set := canvas_tool_set_for_kind(kind)
 	canvas_tool_update_selection(&tool_set, &sim.canvas_tool, input)
+	if sim.cursor_active != 0 && kind != .Voronoi_CA {
+		tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
+		if tool.valid {
+			sim.cursor_mode = canvas_tool_interaction_mode(tool, input.mouse_button == 3 || input.secondary_down)
+		}
+	}
+	if kind == .Vectors && sim.cursor_active != 0 {
+		settings := &sim.vectors
+		if sim.cursor_mode == 3 || sim.cursor_mode == 4 {
+			settings.probe_position = sim.cursor_world
+			settings.probe_initialized = true
+			settings.probe_value = noise_sample01_2d(&settings.noise, sim.cursor_world[0], sim.cursor_world[1], sim.time)
+			settings.probe_has_sample = settings.vector_field_type == .Noise
+			settings.probe_pinned = sim.cursor_mode == 4
+		} else if sim.cursor_mode == 5 || sim.cursor_mode == 6 {
+			index := settings.deflection_stamp_count % len(settings.deflection_stamps)
+			settings.deflection_stamps[index] = {
+				position = sim.cursor_world,
+				radius = max(sim.cursor_size, 0.01),
+				angle = (sim.cursor_mode == 5 ? f32(1) : f32(-1)) * sim.cursor_strength * 0.03,
+			}
+			settings.deflection_stamp_count += 1
+		}
+	}
 	if kind == .Voronoi_CA {
 		tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
 		sim.voronoi_pressed = input.mouse_pressed || input.primary_pressed || input.secondary_pressed

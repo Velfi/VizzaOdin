@@ -73,6 +73,25 @@ float3 get_lut_color(float intensity) {
     return linear_from_srgb(float3(r_srgb, g_srgb, b_srgb));
 }
 
+float2 emitter_position(uint particle_index) {
+    let a = frac(sin(float(particle_index) * 0.1234 + sim_params.time * 0.1) * 43758.5453);
+    let b = frac(cos(float(particle_index) * 0.5678 + sim_params.time * 0.1) * 43758.5453);
+    let angle = a * 6.2831853;
+    let radius = clamp(sim_params.emitter_radius, 0.0, 1.0);
+    if (sim_params.emitter_mode == 1) return float2(0.0, 0.0);
+    if (sim_params.emitter_mode == 2) return float2(cos(angle), sin(angle)) * radius;
+    if (sim_params.emitter_mode == 3) {
+        let edge = uint(floor(a * 4.0)) % 4;
+        let along = b * 2.0 - 1.0;
+        if (edge == 0) return float2(-1.0, along);
+        if (edge == 1) return float2(1.0, along);
+        if (edge == 2) return float2(along, -1.0);
+        return float2(along, 1.0);
+    }
+    if (sim_params.emitter_mode == 4) return float2(a * 2.0 - 1.0, 0.0);
+    return float2(a, b) * 2.0 - 1.0;
+}
+
 // Check if a point is inside the particle shape
 bool is_inside_particle_shape(float offset_x, float offset_y, float radius, uint shape) {
     let normalized_x = offset_x / radius;
@@ -204,11 +223,9 @@ void main(uint3 global_id : SV_DispatchThreadID) {
                     particles[particle_index] = particle;
                     return;
                 }
-                // Spawn at random position in world space
-                let random_x = float(particle_index) * 0.1234 + sim_params.time * 0.1;
-                let random_y = float(particle_index) * 0.5678 + sim_params.time * 0.1;
-                spawn_x = frac(sin(random_x) * 43758.5453) * 2.0 - 1.0;
-                spawn_y = frac(cos(random_y) * 43758.5453) * 2.0 - 1.0;
+                let spawn = emitter_position(particle_index);
+                spawn_x = spawn.x;
+                spawn_y = spawn.y;
                 should_reset = true; // Force spawn
             } else {
                 // Don't spawn yet - keep particle dead
@@ -343,6 +360,20 @@ void main(uint3 global_id : SV_DispatchThreadID) {
     
     // Get flow direction with O(1) bilinear sample
     var direction = sample_flow_vector(particle.position);
+	if (sim_params.mouse_button_down == 3 || sim_params.mouse_button_down == 4) {
+		let to_cursor = float2(sim_params.cursor_x, sim_params.cursor_y) - particle.position;
+		let distance_to_cursor = max(length(to_cursor), 0.001);
+		let influence = smoothstep(sim_params.cursor_size, 0.0, distance_to_cursor);
+		let sign = sim_params.mouse_button_down == 3 ? 1.0 : -1.0;
+		direction += normalize(to_cursor) * influence * sign * sim_params.vector_magnitude * 4.0;
+	} else if (sim_params.mouse_button_down == 5 || sim_params.mouse_button_down == 6) {
+		let to_cursor = float2(sim_params.cursor_x, sim_params.cursor_y) - particle.position;
+		let distance_to_cursor = max(length(to_cursor), 0.001);
+		let influence = smoothstep(sim_params.cursor_size, 0.0, distance_to_cursor);
+		let radial = normalize(to_cursor);
+		let tangent = sim_params.mouse_button_down == 5 ? float2(-radial.y, radial.x) : float2(radial.y, -radial.x);
+		direction += tangent * influence * sim_params.vector_magnitude * 4.0;
+	}
     
     // Update particle LUT index based on display mode
     if (sim_params.display_mode == 2) { // Direction mode
@@ -351,6 +382,10 @@ void main(uint3 global_id : SV_DispatchThreadID) {
         let normalized_angle = (direction_angle + 3.14159) / (2.0 * 3.14159); // Normalize to [0, 1]
         particle.lut_index = uint(clamp(normalized_angle * 255.0, 0.0, 255.0));
     }
+	if (sim_params.boundary_mode == 1) {
+		if ((particle.position.x > 0.99 && direction.x > 0.0) || (particle.position.x < -0.99 && direction.x < 0.0)) direction.x = -direction.x;
+		if ((particle.position.y > 0.99 && direction.y > 0.0) || (particle.position.y < -0.99 && direction.y < 0.0)) direction.y = -direction.y;
+	}
     
     // Apply cursor interaction if active (right click destroys particles)
     if (sim_params.mouse_button_down == 2) {
@@ -374,9 +409,17 @@ void main(uint3 global_id : SV_DispatchThreadID) {
     // Move particle along flow direction using delta time
     particle.position += direction * sim_params.particle_speed * sim_params.delta_time;
     
-    // Wrap around edges
-    particle.position.x = frac(particle.position.x * 0.5 + 0.5) * 2.0 - 1.0;
-    particle.position.y = frac(particle.position.y * 0.5 + 0.5) * 2.0 - 1.0;
+    let outside = abs(particle.position.x) > 1.0 || abs(particle.position.y) > 1.0;
+    if (outside && sim_params.boundary_mode == 0) {
+        particle.position.x = frac(particle.position.x * 0.5 + 0.5) * 2.0 - 1.0;
+        particle.position.y = frac(particle.position.y * 0.5 + 0.5) * 2.0 - 1.0;
+    } else if (outside && sim_params.boundary_mode == 1) {
+        particle.position = clamp(particle.position, float2(-1.0), float2(1.0));
+    } else if (outside && sim_params.boundary_mode == 2) {
+        particle.is_alive = 0; particle.age = 0.0; particles[particle_index] = particle; return;
+    } else if (outside && sim_params.boundary_mode == 3) {
+        particle.position = emitter_position(particle_index); particle.age = 0.0;
+    }
     
     // Deposit trail at particle position with LUT color based on display mode
     var trail_color_intensity = 0.0;
@@ -396,7 +439,13 @@ void main(uint3 global_id : SV_DispatchThreadID) {
     
     let trail_color = get_lut_color(trail_color_intensity);
     // Alpha is not used by deposit_trail (intensity is computed internally), pass placeholder
-    deposit_trail(particle.position, float4(trail_color, 1.0));
+    let dotted = sim_params.trail_style == 1 && (uint(particle.age * 30.0) % 2 == 1);
+    if (!dotted) {
+        var styled_color = trail_color;
+        if (sim_params.trail_style == 2) styled_color *= 1.0 - clamp(particle.age / sim_params.particle_lifetime, 0.0, 1.0);
+        if (sim_params.trail_style == 3) styled_color = min(styled_color * 1.8, float3(1.0));
+        deposit_trail(particle.position, float4(styled_color, 1.0));
+    }
     
     // No stored alpha; visual alpha is computed in render from age
     

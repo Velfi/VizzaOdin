@@ -283,9 +283,24 @@ vectors_gpu_update_geometry :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_
 	spacing := max(settings.density, VECTORS_MIN_DENSITY)
 	cols := min(max(int(2.4 / spacing), 8), 480)
 	rows := min(max(int(1.8 / spacing), 6), 360)
+	if settings.probe_initialized {
+		if settings.vector_field_type == .Noise {
+			settings.probe_value = noise_sample01_2d(&settings.noise, settings.probe_position[0], settings.probe_position[1], time)
+			settings.probe_has_sample = true
+		} else if gpu.image_loaded && len(gpu.image_data) == VECTORS_IMAGE_RESOLUTION * VECTORS_IMAGE_RESOLUTION {
+			tex_u := math.clamp((settings.probe_position[0] + 1.0) * 0.5, 0, 1)
+			tex_v := math.clamp(1.0 - (settings.probe_position[1] + 1.0) * 0.5, 0, 1)
+			px_probe := min(int(tex_u * f32(VECTORS_IMAGE_RESOLUTION - 1)), VECTORS_IMAGE_RESOLUTION - 1)
+			py_probe := min(int(tex_v * f32(VECTORS_IMAGE_RESOLUTION - 1)), VECTORS_IMAGE_RESOLUTION - 1)
+			settings.probe_value = f32(gpu.image_data[py_probe * VECTORS_IMAGE_RESOLUTION + px_probe]) / 255.0
+			settings.probe_has_sample = true
+		} else {
+			settings.probe_has_sample = false
+		}
+	}
 	for y in 0 ..< rows {
 		for x in 0 ..< cols {
-			if index_count + 6 > VECTORS_MAX_INDICES || vertex_count + 4 > VECTORS_MAX_VERTICES {
+			if index_count + 36 > VECTORS_MAX_INDICES || vertex_count + 12 > VECTORS_MAX_VERTICES {
 				break
 			}
 			wx := -1.2 + (f32(x) + 0.5) / f32(cols) * 2.4
@@ -303,6 +318,16 @@ vectors_gpu_update_geometry :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_
 			}
 			intensity := math.clamp(value, 0, 1)
 			angle := value * 2 * math.PI
+			stamp_count := min(settings.deflection_stamp_count, len(settings.deflection_stamps))
+			for i in 0 ..< stamp_count {
+				stamp := settings.deflection_stamps[i]
+				dx_stamp := wx - stamp.position[0]
+				dy_stamp := wy - stamp.position[1]
+				distance := math.sqrt(dx_stamp * dx_stamp + dy_stamp * dy_stamp)
+				if distance < stamp.radius {
+					angle += stamp.angle * (1 - distance / max(stamp.radius, 0.0001))
+				}
+			}
 			// The configured length is the full segment length, as in Vizza's
 			// original vector renderer. Centering it on the sample doubles it.
 			length := max(settings.line_length, 0.001) * (0.5 + math.clamp(value, 0, 1) * 0.5)
@@ -310,12 +335,46 @@ vectors_gpu_update_geometry :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_
 			dx := math.cos(angle) * length
 			dy := math.sin(angle) * length
 			len := max(math.sqrt(dx * dx + dy * dy), 0.000001)
+			if settings.display_mode == .Rings {
+				// Rings intentionally emphasize magnitude rather than direction:
+				// their radius follows the sampled value while color retains the
+				// same palette encoding as the directional glyphs.
+				radius := max(length * 0.5, half_width * 2)
+				inner_radius := max(radius - max(half_width * 2, radius * 0.18), radius * 0.35)
+				base := u32(vertex_count)
+				for segment in 0 ..< 6 {
+					a := f32(segment) / 6.0 * 2 * math.PI
+					ca := math.cos(a)
+					sa := math.sin(a)
+					vertices[vertex_count + segment] = {{wx + ca * radius, wy + sa * radius}, intensity}
+					vertices[vertex_count + 6 + segment] = {{wx + ca * inner_radius, wy + sa * inner_radius}, intensity}
+				}
+				for segment in 0 ..< 6 {
+					next := (segment + 1) % 6
+					i := index_count + segment * 6
+					indices[i + 0] = base + u32(segment)
+					indices[i + 1] = base + u32(next)
+					indices[i + 2] = base + 6 + u32(next)
+					indices[i + 3] = base + u32(segment)
+					indices[i + 4] = base + 6 + u32(next)
+					indices[i + 5] = base + 6 + u32(segment)
+				}
+				vertex_count += 12
+				index_count += 36
+				continue
+			}
 			px := -dy / len * half_width
 			py := dx / len * half_width
 			x0 := wx
 			y0 := wy
 			x1 := wx + dx
 			y1 := wy + dy
+			if settings.display_mode == .Needles {
+				x0 = wx - dx * 0.5
+				y0 = wy - dy * 0.5
+				x1 = wx + dx * 0.5
+				y1 = wy + dy * 0.5
+			}
 			base := u32(vertex_count)
 			vertices[vertex_count + 0] = {{x0 - px, y0 - py}, intensity}
 			vertices[vertex_count + 1] = {{x0 + px, y0 + py}, intensity}
@@ -329,6 +388,51 @@ vectors_gpu_update_geometry :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_
 			indices[index_count + 5] = base + 3
 			vertex_count += 4
 			index_count += 6
+			if settings.display_mode == .Arrows {
+				// A filled head makes direction explicit while retaining the
+				// magnitude-colored shaft used by the original display.
+				head_length := min(length * 0.42, max(half_width * 8, length * 0.22))
+				head_width := max(half_width * 3.5, head_length * 0.45)
+				ux := dx / len
+				uy := dy / len
+				hx := x1 - ux * head_length
+				hy := y1 - uy * head_length
+				base = u32(vertex_count)
+				vertices[vertex_count + 0] = {{x1, y1}, intensity}
+				vertices[vertex_count + 1] = {{hx - uy * head_width, hy + ux * head_width}, intensity}
+				vertices[vertex_count + 2] = {{hx + uy * head_width, hy - ux * head_width}, intensity}
+				indices[index_count + 0] = base
+				indices[index_count + 1] = base + 1
+				indices[index_count + 2] = base + 2
+				vertex_count += 3
+				index_count += 3
+			} else if settings.display_mode == .Chevrons {
+				// Add a second angled stroke to the shaft, producing a compact
+				// directional V without implying motion or leaving a trail.
+				ux := dx / len
+				uy := dy / len
+				wing_length := length * 0.42
+				wing_x := x1 - ux * wing_length - uy * wing_length * 0.55
+				wing_y := y1 - uy * wing_length + ux * wing_length * 0.55
+				wdx := x1 - wing_x
+				wdy := y1 - wing_y
+				wlen := max(math.sqrt(wdx * wdx + wdy * wdy), 0.000001)
+				wpx := -wdy / wlen * half_width
+				wpy := wdx / wlen * half_width
+				base = u32(vertex_count)
+				vertices[vertex_count + 0] = {{wing_x - wpx, wing_y - wpy}, intensity}
+				vertices[vertex_count + 1] = {{wing_x + wpx, wing_y + wpy}, intensity}
+				vertices[vertex_count + 2] = {{x1 + wpx, y1 + wpy}, intensity}
+				vertices[vertex_count + 3] = {{x1 - wpx, y1 - wpy}, intensity}
+				indices[index_count + 0] = base
+				indices[index_count + 1] = base + 1
+				indices[index_count + 2] = base + 2
+				indices[index_count + 3] = base
+				indices[index_count + 4] = base + 2
+				indices[index_count + 5] = base + 3
+				vertex_count += 4
+				index_count += 6
+			}
 		}
 	}
 	gpu.index_count = u32(index_count)

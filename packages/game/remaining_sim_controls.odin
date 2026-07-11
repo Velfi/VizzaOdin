@@ -133,25 +133,25 @@ remaining_sim_controller_section_content_height :: proc(sim: ^Remaining_Sim_Stat
 	#partial switch kind {
 	case .Flow_Field:
 		switch section {
-		case 3: return heading + row * 2 + uifw.gui_slider_height(gui)
+		case 3: return heading * 2 + row * 6 + uifw.gui_slider_height(gui)
 		case 5:
-			height := heading + row * 2
+			height := heading + row * (sim.flow.field_animation_enabled ? 4 : 3)
 			if sim.flow.vector_field_type == .Noise {height += noise_settings_controls_content_height(gui, &sim.flow.noise)}
 			if sim.flow.vector_field_type == .Image {height += row * 9}
 			return height
-		case 6: return heading + row * 9
-		case 7: return heading + row * 5
+		case 6: return heading + row * (sim.flow.emitter_mode == .Ring ? 13 : 12)
+		case 7: return heading + row * 6
 		case:
 		}
 	case .Pellets:
 		switch section {
-		case 3: return heading + shared_two_axis_pad_height(gui) + row * 2
+		case 3: return heading * 2 + shared_two_axis_pad_height(gui) + row * 6
 		case 5: return heading + row * 6
 		case 6: return heading + row * 5
 		case:
 		}
 	case .Voronoi_CA:
-		if section == 5 {return heading + row * 5}
+		if section == 5 {return heading * 2 + row * 7 + shared_two_axis_pad_height(gui)}
 	case .Moire:
 		switch section {
 		case MOIRE_SECTION_PATTERN:
@@ -168,9 +168,10 @@ remaining_sim_controller_section_content_height :: proc(sim: ^Remaining_Sim_Stat
 			if sim.vectors.vector_field_type == .Image {height += row * 9}
 			return height
 		}
+		if section == 8 {return heading * 2 + row * 6 + shared_two_axis_pad_height(gui)}
 	case .Primordial:
 		switch section {
-		case 3: return heading + shared_two_axis_pad_height(gui) + row * 2
+		case 3: return heading * 2 + shared_two_axis_pad_height(gui) + row * 5
 		case 5: return heading + row * 3
 		case 6: return heading + row * 4 + shared_two_axis_pad_height(gui)
 		case:
@@ -331,6 +332,7 @@ remaining_sim_draw_controller_section :: proc(sim: ^Remaining_Sim_State, gui: ^u
 		switch section {
 		case 2: remaining_sim_draw_vectors_color(sim, gui, color_editor)
 		case 3: remaining_sim_draw_vectors_field(sim, gui, worker)
+		case 8: remaining_sim_draw_interaction_controls(sim, gui, kind, "Probe")
 		case:
 		}
 	case:
@@ -494,7 +496,6 @@ remaining_sim_draw_display_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 
 remaining_sim_draw_interaction_controls :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, heading: string = "") {
 	tool_set := canvas_tool_set_for_kind(kind)
-	tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
 	options := Controls_Panel_Options {
 		heading = heading,
 		mouse_interaction_text = "",
@@ -503,42 +504,37 @@ remaining_sim_draw_interaction_controls :: proc(sim: ^Remaining_Sim_State, gui: 
 	}
 	#partial switch kind {
 	case .Slime_Mold:
-		options.mouse_interaction_text = gui.input.active_device == .Controller ? "Primary: attract agents | Secondary: repel agents" : "Left click: attract agents | Right click: repel agents"
 		options.cursor.size_min = 0.01
 		options.cursor.size_max = 1.0
 		options.cursor.strength_max = 50.0
 	case .Flow_Field:
-		options.mouse_interaction_text = gui.input.active_device == .Controller ? "Primary: spawn particles | Secondary: remove particles" : "Left click: spawn particles | Right click: remove particles"
 		options.cursor.show_strength = false
-	case .Pellets:
-		options.mouse_interaction_text = gui.input.active_device == .Controller ? "Primary: grab particles | Secondary: black hole" : "Left click: grab particles | Right click: black hole"
 	case .Voronoi_CA:
-		options.mouse_interaction_text = fmt.tprintf("%s — Left: %s | Right: %s", tool.name, tool.primary_label, tool.secondary_label)
-		if gui.input.active_device == .Controller {
-			options.mouse_interaction_text = fmt.tprintf("%s — Primary: %s | Secondary: %s | D-pad selects tools", tool.name, tool.primary_label, tool.secondary_label)
-		}
 		options.cursor_settings_title = "Cursor Settings"
 		options.cursor.strength_step = 0.01
-	case .Primordial:
-		options.mouse_interaction_text = gui.input.active_device == .Controller ? "Primary: fling particles | Triggers: zoom" : "Drag: fling particles | Scroll: zoom"
 	case:
-		options.mouse_interaction_text = "Mouse interaction"
 	}
-	tool_count := 0
-	for candidate in tool_set.tools {if candidate.valid {tool_count += 1}}
-	if tool_count > 1 {
-		uifw.gui_heading(gui, "Canvas Tools")
-		for candidate, index in tool_set.tools {
-			if !candidate.valid {continue}
-			label := sim.canvas_tool.selected_slot == index ? fmt.tprintf("• %s", candidate.name) : candidate.name
-			if uifw.gui_button(gui, label, fmt.tprintf("canvas_tool_%d", index)) {
-				sim.canvas_tool.previous_slot = sim.canvas_tool.selected_slot
-				sim.canvas_tool.selected_slot = index
-				sim.canvas_tool.changed = true
-			}
+	selector_title := kind == .Voronoi_CA ? "Canvas Tools" : (kind == .Vectors ? "Probe Tools" : "Brush Modes")
+	shared_canvas_tool_selector(gui, &tool_set, &sim.canvas_tool, selector_title)
+	if kind == .Vectors {
+		pin := sim.vectors.probe_pinned ? " · pinned" : ""
+		if !sim.vectors.probe_initialized {
+			uifw.gui_label(gui, "Move the probe over the field to inspect it")
+		} else if sim.vectors.probe_has_sample {
+			uifw.gui_label(gui, fmt.tprintf("Probe %.3f at (%.2f, %.2f)%s", sim.vectors.probe_value, sim.vectors.probe_position[0], sim.vectors.probe_position[1], pin))
+		} else {
+			uifw.gui_label(gui, fmt.tprintf("Move the probe over the image field%s", pin))
 		}
 	}
-	_ = shared_controls_panel(gui, options, &sim.cursor_size, &sim.cursor_strength)
+	if kind == .Vectors && sim.canvas_tool.selected_slot == 0 {
+		// Probe has no adjustable footprint; its panel is intentionally read-only.
+		return
+	}
+	if kind == .Flow_Field && sim.canvas_tool.selected_slot > 0 {
+		options.cursor_settings_title = "Force follows Vector Magnitude in the Field panel."
+	}
+	uifw.gui_heading(gui, "Brush Shape")
+	_ = shared_cursor_config(gui, &sim.cursor_size, &sim.cursor_strength, options.cursor)
 }
 
 remaining_sim_draw_color_scheme_modal :: proc(gui: ^uifw.Gui_Context, color_editor: ^Color_Scheme_Editor_State, kind: Remaining_Sim_Kind, sim: ^Remaining_Sim_State) {
@@ -767,6 +763,9 @@ remaining_sim_draw_vectors_field :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 	} else if settings.vector_field_type == .Noise {
 		_ = draw_noise_settings_controls(gui, &settings.noise, "vectors_noise")
 	}
+	if uifw.gui_selector(gui, fmt.tprintf("Display: %s", VECTOR_DISPLAY_MODE_NAMES[settings.display_index]), "vector_display", &settings.display_index, VECTOR_DISPLAY_MODE_NAMES[:]) {
+		settings.display_mode = Vector_Display_Mode(settings.display_index)
+	}
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Density: %.3f", settings.density), "vector_density", &settings.density, 0.001, VECTORS_MIN_DENSITY, 0.1)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Line Length: %.3f", settings.line_length), "line_length", &settings.line_length, 0.001, 0.005, 1)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Line Width: %.3f", settings.line_width), "line_width", &settings.line_width, 0.001, 0.001, 1)
@@ -875,6 +874,10 @@ remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 		_ = draw_noise_settings_controls(gui, &settings.noise, "flow_noise")
 	}
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Vector Magnitude: %.2f", settings.vector_magnitude), "vector_magnitude", &settings.vector_magnitude, 0.01, 0, 2)
+	_ = uifw.gui_toggle(gui, fmt.tprintf("Animate Field: %v", settings.field_animation_enabled), "flow_field_animation", &settings.field_animation_enabled)
+	if settings.field_animation_enabled {
+		_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Animation Speed: %.2f", settings.field_animation_speed), "flow_field_animation_speed", &settings.field_animation_speed, 0.01, -2, 2)
+	}
 	if settings.vector_field_type == .Image {
 		image_options := shared_default_image_selector_options()
 		image_options.fit_label = "Image Fit"
@@ -935,6 +938,15 @@ remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 		settings.particle_size = u32(size)
 	}
 	_ = uifw.gui_toggle(gui, fmt.tprintf("Autospawn: %v", settings.particle_autospawn), "flow_autospawn", &settings.particle_autospawn)
+	if uifw.gui_selector(gui, fmt.tprintf("Emitter: %s", FLOW_EMITTER_MODE_NAMES[settings.emitter_index]), "flow_emitter", &settings.emitter_index, FLOW_EMITTER_MODE_NAMES[:]) {
+		settings.emitter_mode = Flow_Emitter_Mode(settings.emitter_index)
+	}
+	if settings.emitter_mode == .Ring {
+		_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Emitter Radius: %.2f", settings.emitter_radius), "flow_emitter_radius", &settings.emitter_radius, 0.01, 0, 1)
+	}
+	if uifw.gui_selector(gui, fmt.tprintf("Boundary: %s", FLOW_BOUNDARY_MODE_NAMES[settings.boundary_index]), "flow_boundary", &settings.boundary_index, FLOW_BOUNDARY_MODE_NAMES[:]) {
+		settings.boundary_mode = Flow_Boundary_Mode(settings.boundary_index)
+	}
 	_ = uifw.gui_toggle(gui, fmt.tprintf("Show Particles: %v", settings.show_particles), "flow_show_particles", &settings.show_particles)
 	auto_rate := f32(settings.autospawn_rate)
 	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Autospawn Rate: %d", settings.autospawn_rate), "flow_autospawn_rate", &auto_rate, 10, 0, 100000) {
@@ -948,6 +960,9 @@ remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 	if subsection < 0 || subsection == 2 {
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, "Trails")
+	if uifw.gui_selector(gui, fmt.tprintf("Style: %s", FLOW_TRAIL_STYLE_NAMES[settings.trail_style_index]), "flow_trail_style", &settings.trail_style_index, FLOW_TRAIL_STYLE_NAMES[:]) {
+		settings.trail_style = Flow_Trail_Style(settings.trail_style_index)
+	}
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Decay: %.2f", settings.trail_decay_rate), "trail_decay", &settings.trail_decay_rate, 0.01, 0, 10)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Deposition: %.2f", settings.trail_deposition_rate), "trail_deposition", &settings.trail_deposition_rate, 0.01, 0, 10)
 	_ = uifw.gui_number_drag_f32(gui, fmt.tprintf("Diffusion: %.2f", settings.trail_diffusion_rate), "trail_diffusion", &settings.trail_diffusion_rate, 0.01, 0, 10)

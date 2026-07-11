@@ -254,6 +254,10 @@ app_run :: proc(config: App_Run_Config = {}) -> int {
 }
 
 app_loop_tick :: proc(app: ^App_State) {
+	// The default temporary allocator is a growing arena. Keep allocations made
+	// while producing and, on Darwin, rendering this frame alive until every
+	// frame consumer has finished, then release the arena before the next tick.
+	defer free_all(context.temp_allocator)
 	frame_start := time.tick_now()
 	app_poll_events(app)
 	steam_client_tick(&app.steam)

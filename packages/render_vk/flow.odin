@@ -171,6 +171,39 @@ flow_upload_sampled_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Flow_Image
 	return true
 }
 
+flow_ensure_webcam_slot :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int, width, height: u32) -> bool {
+	image := &gpu.webcam_images[frame_slot]
+	staging := &gpu.webcam_staging_buffers[frame_slot]
+	size := vk.DeviceSize(width * height * 4)
+	if image.handle != vk.Image(0) && image.width == width && image.height == height && staging.size >= size {return true}
+	flow_destroy_image(vk_ctx, image)
+	engine.vk_destroy_buffer(vk_ctx, staging)
+	gpu.webcam_image_ready[frame_slot] = false
+	if !flow_create_image(gpu, vk_ctx, image, width, height, {.SAMPLED, .TRANSFER_DST}) ||
+	   !engine.vk_create_host_buffer(vk_ctx, size, {.TRANSFER_SRC}, staging) {
+		flow_destroy_image(vk_ctx, image)
+		engine.vk_destroy_buffer(vk_ctx, staging)
+		return false
+	}
+	return true
+}
+
+flow_record_webcam_upload :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, frame_slot: int) {
+	if !gpu.webcam_upload_pending[frame_slot] {return}
+	image := &gpu.webcam_images[frame_slot]
+	staging := &gpu.webcam_staging_buffers[frame_slot]
+	flow_transition_image(vk_ctx, cmd, image, .TRANSFER_DST_OPTIMAL)
+	region := vk.BufferImageCopy {
+		imageSubresource = {aspectMask = {.COLOR}, mipLevel = 0, baseArrayLayer = 0, layerCount = 1},
+		imageExtent = {image.width, image.height, 1},
+	}
+	vk.CmdCopyBufferToImage(cmd, staging.handle, image.handle, .TRANSFER_DST_OPTIMAL, 1, &region)
+	engine.vk_cmd_count_transfer_copy(vk_ctx)
+	flow_transition_image(vk_ctx, cmd, image, .SHADER_READ_ONLY_OPTIMAL)
+	gpu.webcam_upload_pending[frame_slot] = false
+	gpu.webcam_image_ready[frame_slot] = true
+}
+
 flow_gpu_load_vector_field_image_path :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, path: string, settings: ^Flow_Settings) -> bool {
 	if !gpu.ready || len(path) == 0 {
 		gpu.vector_field_image_loaded = false
@@ -302,8 +335,8 @@ flow_write_params_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context,
 			noise_kind = u32(noise.kind_index),
 			fractal_mode = u32(noise.fractal_mode_index),
 			noise_seed = noise.seed,
-			offset_x = noise.offset_x,
-			offset_y = noise.offset_y,
+			offset_x = noise.offset_x + (settings.field_animation_enabled ? sim.time * settings.field_animation_speed : 0),
+			offset_y = noise.offset_y + (settings.field_animation_enabled ? sim.time * settings.field_animation_speed * 0.6180339 : 0),
 			rotation = noise.rotation,
 			anchor_x = noise.anchor_x,
 			anchor_y = noise.anchor_y,
@@ -331,6 +364,13 @@ flow_write_params_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context,
 			wave_band_softness = noise.wave.band_softness,
 				time = sim.time,
 			vector_magnitude = settings.vector_magnitude,
+			image_fit_mode = u32(settings.image_fit_mode),
+			image_mirror_horizontal = settings.image_mirror_horizontal ? 1 : 0,
+			image_mirror_vertical = settings.image_mirror_vertical ? 1 : 0,
+			image_invert_tone = settings.image_invert_tone ? 1 : 0,
+			webcam_live = gpu.webcam_live ? 1 : 0,
+			target_width = width,
+			target_height = height,
 		}
 	}
 	if gpu.sim_params_buffers[frame_slot].mapped != nil {
@@ -370,6 +410,12 @@ flow_write_params_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context,
 			vector_magnitude = settings.vector_magnitude,
 			width = 2,
 			delta_time = dt,
+			emitter_mode = u32(settings.emitter_index),
+			emitter_radius = settings.emitter_radius,
+			boundary_mode = u32(settings.boundary_index),
+			trail_style = u32(settings.trail_style_index),
+			field_animation_speed = settings.field_animation_speed,
+			field_animation_enabled = settings.field_animation_enabled ? u32(1) : u32(0),
 		}
 	}
 }
@@ -466,7 +512,9 @@ flow_update_descriptors_for_slot :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.V
 	shape_params_info := vk.DescriptorBufferInfo{buffer = gpu.shape_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Shape_Params))}
 	camera_info := vk.DescriptorBufferInfo{buffer = gpu.camera_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Flow_Camera))}
 	default_image_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.default_image.view}
-	if gpu.vector_field_image_loaded && gpu.vector_field_image.view != vk.ImageView(0) {
+	if gpu.webcam_live && gpu.webcam_image_ready[frame_slot] && gpu.webcam_images[frame_slot].view != vk.ImageView(0) {
+		default_image_info = vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.webcam_images[frame_slot].view}
+	} else if gpu.vector_field_image_loaded && gpu.vector_field_image.view != vk.ImageView(0) {
 		default_image_info = vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = gpu.vector_field_image.view}
 	}
 	sampler_info := vk.DescriptorImageInfo{sampler = gpu.sampler}
@@ -613,6 +661,7 @@ flow_gpu_step_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd
 	settings := &sim.flow
 	if !flow_gpu_ensure_size(gpu, vk_ctx, settings, trail_width, trail_height) {return}
 	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
+	flow_record_webcam_upload(gpu, vk_ctx, cmd, frame_slot)
 	flow_write_params_size(gpu, vk_ctx, frame_slot, sim, dt, screen_width, screen_height)
 	flow_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
 	flow_collect_retired_vector_field_images(gpu, vk_ctx, frame_slot)
@@ -816,6 +865,8 @@ flow_gpu_destroy :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context) {
 		engine.vk_destroy_buffer(vk_ctx, &gpu.background_color_buffers[frame_slot])
 		engine.vk_destroy_buffer(vk_ctx, &gpu.shape_params_buffers[frame_slot])
 		engine.vk_destroy_buffer(vk_ctx, &gpu.camera_buffers[frame_slot])
+		engine.vk_destroy_buffer(vk_ctx, &gpu.webcam_staging_buffers[frame_slot])
+		flow_destroy_image(vk_ctx, &gpu.webcam_images[frame_slot])
 	}
 	for i in 0 ..< FLOW_RETIRED_VECTOR_FIELD_IMAGE_CAP {
 		flow_destroy_image(vk_ctx, &gpu.retired_vector_field_images[i].image)

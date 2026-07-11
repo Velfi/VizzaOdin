@@ -1809,9 +1809,7 @@ particle_life_gpu_step :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.V
 	if sim.settings.paused {
 		return
 	}
-	particle_life_read_gpu_blob_analysis(sim)
 	particle_life_write_frame_uniforms(sim, dt)
-	particle_life_write_analysis_uniforms(sim)
 	engine.vk_cmd_label_begin(vk_ctx, cmd, "Particle Life: grid clear")
 	particle_life_dispatch_grid_clear(sim, vk_ctx, cmd)
 	engine.vk_cmd_label_end(vk_ctx, cmd)
@@ -1826,9 +1824,6 @@ particle_life_gpu_step :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.V
 	engine.vk_cmd_label_end(vk_ctx, cmd)
 	engine.vk_cmd_label_begin(vk_ctx, cmd, "Particle Life: copy scratch")
 	particle_life_copy_scratch_to_particles(sim, vk_ctx, cmd)
-	engine.vk_cmd_label_end(vk_ctx, cmd)
-	engine.vk_cmd_label_begin(vk_ctx, cmd, "Particle Life: blob analysis")
-	particle_life_dispatch_gpu_blob_analysis(sim, cmd)
 	engine.vk_cmd_label_end(vk_ctx, cmd)
 }
 
@@ -2109,25 +2104,16 @@ particle_life_post_trail_to_swapchain :: proc(sim: ^Particle_Life_Simulation, vk
 	scissor := vk.Rect2D{offset = {0, 0}, extent = extent}
 	vk.CmdSetViewport(cmd, 0, 1, &viewport)
 	vk.CmdSetScissor(cmd, 0, 1, &scissor)
-	if sim.settings.infinite_tiles_enabled && sim.gpu.tiled_post_pipeline.pipeline != vk.Pipeline(0) {
-		vk.CmdBindPipeline(cmd, .GRAPHICS, sim.gpu.tiled_post_pipeline.pipeline)
-	} else {
-		vk.CmdBindPipeline(cmd, .GRAPHICS, sim.gpu.post_pipeline.pipeline)
-	}
+	// The trail target is already rendered in camera space. Present it once as a
+	// fullscreen image; applying the infinite-tile camera transform here would
+	// transform (and tile) the camera-space result a second time.
+	vk.CmdBindPipeline(cmd, .GRAPHICS, sim.gpu.post_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
 	pipeline_layout := sim.gpu.post_pipeline.layout
-	if sim.settings.infinite_tiles_enabled && sim.gpu.tiled_post_pipeline.layout != vk.PipelineLayout(0) {
-		pipeline_layout = sim.gpu.tiled_post_pipeline.layout
-	}
 	post_set := sim.gpu.post_sets[frame_slot][source_index]
 	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline_layout, 0, 1, &post_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
-	instance_count := u32(1)
-	if sim.settings.infinite_tiles_enabled {
-		tile_count := infinite_render_tile_count(sim.runtime.camera_zoom)
-		instance_count = tile_count * tile_count
-	}
-	vk.CmdDraw(cmd, 6, instance_count, 0, 0)
+	vk.CmdDraw(cmd, 6, 1, 0, 0)
 	engine.vk_cmd_count_draw(vk_ctx)
 	if ui != nil {
 		engine.vk_cmd_label_begin(vk_ctx, cmd, "UI overlay")
@@ -2186,7 +2172,11 @@ particle_life_gpu_present_trails :: proc(sim: ^Particle_Life_Simulation, vk_ctx:
 		vk.CmdDraw(cmd, 3, 1, 0, 0)
 		engine.vk_cmd_count_draw(vk_ctx)
 	}
-	particle_life_draw_particles(sim, vk_ctx, cmd, &sim.gpu.trail_particle_pipeline)
+	if sim.settings.infinite_tiles_enabled {
+		particle_life_draw_infinite_tiles(sim, vk_ctx, cmd, &sim.gpu.trail_particle_pipeline, f32(sim.gpu.trail_width), f32(sim.gpu.trail_height))
+	} else {
+		particle_life_draw_particles(sim, vk_ctx, cmd, &sim.gpu.trail_particle_pipeline)
+	}
 	vk.CmdEndRenderPass(cmd)
 	sim.gpu.trail_images[write_index].layout = .COLOR_ATTACHMENT_OPTIMAL
 	sim.gpu.trail_initialized = true

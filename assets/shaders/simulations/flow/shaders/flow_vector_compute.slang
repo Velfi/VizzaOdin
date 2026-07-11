@@ -53,7 +53,47 @@ struct FlowVectorParams {
     float wave_band_softness;
     float time;
     float vector_magnitude;
+    uint _pad0;
+    uint image_fit_mode;
+    uint image_mirror_horizontal;
+    uint image_mirror_vertical;
+    uint image_invert_tone;
+    uint webcam_live;
+    uint target_width;
+    uint target_height;
+    uint _pad1;
 };
+
+float webcam_image_value(float2 target_uv, uint texture_width, uint texture_height) {
+    float target_width = float(max(params.target_width, 1u));
+    float target_height = float(max(params.target_height, 1u));
+    float source_width = float(max(texture_width, 1u));
+    float source_height = float(max(texture_height, 1u));
+    float2 p = target_uv * float2(target_width, target_height);
+    if (params.image_mirror_horizontal != 0u) p.x = target_width - p.x;
+    if (params.image_mirror_vertical != 0u) p.y = target_height - p.y;
+
+    float2 source_p;
+    bool inside = true;
+    if (params.image_fit_mode == 1u) { // Center
+        source_p.x = source_width > target_width ? p.x * source_width / target_width : p.x - (target_width - source_width) * 0.5;
+        source_p.y = source_height > target_height ? p.y * source_height / target_height : p.y - (target_height - source_height) * 0.5;
+    } else if (params.image_fit_mode == 2u) { // Fit H
+        float fitted_height = target_width * source_height / source_width;
+        source_p = float2(p.x * source_width / target_width, (p.y - (target_height - fitted_height) * 0.5) * source_height / fitted_height);
+    } else if (params.image_fit_mode == 3u) { // Fit V
+        float fitted_width = target_height * source_width / source_height;
+        source_p = float2((p.x - (target_width - fitted_width) * 0.5) * source_width / fitted_width, p.y * source_height / target_height);
+    } else { // Stretch
+        source_p = p * float2(source_width / target_width, source_height / target_height);
+    }
+    inside = all(source_p >= 0.0) && source_p.x < source_width && source_p.y < source_height;
+    if (!inside) return params.image_invert_tone != 0u ? 1.0 : 0.0;
+    source_p.y = source_height - 1.0 - source_p.y;
+    float3 rgb = LoadTexture(vector_field_image, int2(source_p), 0).rgb;
+    float value = dot(rgb, float3(0.2126, 0.7152, 0.0722));
+    return params.image_invert_tone != 0u ? 1.0 - value : value;
+}
 
 NoiseParams flow_noise_params() {
     NoiseParams n;
@@ -119,7 +159,9 @@ void main(uint3 global_id : SV_DispatchThreadID) {
             uint(clamp(tex_coords.x, 0.0, 1.0) * float(max(texture_width, 1u) - 1u)),
             uint(clamp(tex_coords.y, 0.0, 1.0) * float(max(texture_height, 1u) - 1u))
         );
-        let image_value = LoadTexture(vector_field_image, int2(texel_coords), 0).r;
+        let image_value = params.webcam_live != 0u
+            ? webcam_image_value(tex_coords, texture_width, texture_height)
+            : LoadTexture(vector_field_image, int2(texel_coords), 0).r;
         let angle = image_value * 6.28318530718;
         direction = float2(cos(angle), sin(angle)) * params.vector_magnitude;
     }
