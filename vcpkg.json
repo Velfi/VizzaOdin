@@ -6,7 +6,12 @@
   "dependencies": [
     "freetype",
     "harfbuzz",
-    "sdl3",
+    {
+      "name": "sdl3",
+      "features": [
+        "vulkan"
+      ]
+    },
     "vulkan-headers",
     "vulkan-loader"
   ]
