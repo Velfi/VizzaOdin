@@ -103,17 +103,24 @@ jobs:
           # binary-cache hit may have been configured with SDL_VULKAN=OFF even
           # though the headers are installed now. Do not accept a cached SDL
           # archive: configure and build it on this runner after the headers.
-          & "$vcpkgRoot\vcpkg.exe" remove "sdl3:$env:VCPKG_DEFAULT_TRIPLET" `
-            --x-install-root "$installRoot"
-          if ($LASTEXITCODE -ne 0) {
-            throw "vcpkg failed while removing the cached SDL3 package"
-          }
+          # Run explicit package operations outside the repository so vcpkg
+          # does not discover vcpkg.json and reject `remove` in manifest mode.
+          Push-Location $vcpkgRoot
+          try {
+            & "$vcpkgRoot\vcpkg.exe" remove "sdl3:$env:VCPKG_DEFAULT_TRIPLET" `
+              --x-install-root "$installRoot"
+            if ($LASTEXITCODE -ne 0) {
+              throw "vcpkg failed while removing the cached SDL3 package"
+            }
 
-          & "$vcpkgRoot\vcpkg.exe" install "sdl3:$env:VCPKG_DEFAULT_TRIPLET" `
-            --x-install-root "$installRoot" `
-            --no-binarycaching
-          if ($LASTEXITCODE -ne 0) {
-            throw "vcpkg failed to rebuild SDL3 with Vulkan headers"
+            & "$vcpkgRoot\vcpkg.exe" install "sdl3:$env:VCPKG_DEFAULT_TRIPLET" `
+              --x-install-root "$installRoot" `
+              --no-binarycaching
+            if ($LASTEXITCODE -ne 0) {
+              throw "vcpkg failed to rebuild SDL3 with Vulkan headers"
+            }
+          } finally {
+            Pop-Location
           }
 
           & "$vcpkgRoot\vcpkg.exe" install `
