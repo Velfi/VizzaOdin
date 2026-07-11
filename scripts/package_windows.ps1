@@ -300,6 +300,25 @@ function Copy-OptionalVulkanLoader {
 	return @($target)
 }
 
+function Assert-SdlVulkanBackend {
+	$sdlDll = Join-Path $VcpkgBinDir "SDL3.dll"
+	if (-not (Test-Path $sdlDll)) {
+		throw "Missing SDL runtime: $sdlDll"
+	}
+
+	# SDL loads vulkan-1.dll dynamically, so it does not appear in dumpbin's
+	# dependency table. The Windows Vulkan backend embeds the loader name in the
+	# DLL; its absence means SDL was configured without SDL_VIDEO_VULKAN and
+	# SDL_CreateWindow(SDL_WINDOW_VULKAN) will always fail at runtime.
+	$bytes = [System.IO.File]::ReadAllBytes($sdlDll)
+	$ascii = [System.Text.Encoding]::ASCII.GetString($bytes)
+	if ($ascii.IndexOf("vulkan-1.dll", [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+		throw "SDL3.dll was built without the Windows Vulkan backend. Rebuild the vcpkg sdl3 package with Vulkan headers available and SDL_VULKAN=ON."
+	}
+
+	Write-Host "Verified SDL3 Windows Vulkan backend: $sdlDll"
+}
+
 function ConvertTo-MsixVersion {
 	if ($PackageVersion) {
 		if ($PackageVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$') {
@@ -493,6 +512,7 @@ function Package-App {
 	Copy-Item -Path (Join-Path $BuildDir "shaders") -Destination (Join-Path $packageDir "build/shaders") -Recurse -Force
 
 	$startBinaries = @($packageExe)
+	Assert-SdlVulkanBackend
 	$startBinaries += Copy-OptionalVulkanLoader $packageDir
 	Copy-VcpkgDllClosure $startBinaries $packageDir
 

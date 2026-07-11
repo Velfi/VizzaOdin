@@ -54,9 +54,11 @@ jobs:
           path: |
             ${{ env.VIZZA_VCPKG_ROOT }}\installed
             ${{ env.VCPKG_BINARY_CACHE }}
-          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v3-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          # v4 intentionally invalidates SDL3 binaries configured before Vulkan
+          # headers were an explicit Windows build dependency.
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v4-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-vcpkg-v3-
+            ${{ runner.os }}-${{ runner.arch }}-vcpkg-v4-
 
       - name: Install Windows build dependencies
         shell: pwsh
@@ -81,9 +83,28 @@ jobs:
           if (-not (Test-Path "$vcpkgRoot\vcpkg.exe")) {
             & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
           }
+
+          # SDL decides whether to compile its Windows Vulkan backend during
+          # CMake configuration. Install the headers first so that decision is
+          # deterministic instead of depending on manifest build ordering.
+          Push-Location $vcpkgRoot
+          try {
+            & "$vcpkgRoot\vcpkg.exe" install vulkan-headers `
+              --triplet "$env:VCPKG_DEFAULT_TRIPLET" `
+              --x-install-root "$installRoot"
+            if ($LASTEXITCODE -ne 0) {
+              throw "vcpkg failed to install Vulkan headers"
+            }
+          } finally {
+            Pop-Location
+          }
+
           & "$vcpkgRoot\vcpkg.exe" install `
             --triplet "$env:VCPKG_DEFAULT_TRIPLET" `
             --x-install-root "$installRoot"
+          if ($LASTEXITCODE -ne 0) {
+            throw "vcpkg failed to install Windows build dependencies"
+          }
 
           "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
           "VCPKG_INSTALLED_DIR=$installedTripletDir" | Out-File -FilePath $env:GITHUB_ENV -Append
