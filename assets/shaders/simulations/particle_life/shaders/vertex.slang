@@ -116,10 +116,16 @@ VertexOutput main(
     let quad_uv = quad_uvs[vertex_index];
     
     // Map particles from world space to the texture's world bounds
-    let world_particle_pos = particle.position;
+    var world_particle_pos = particle.position;
+	if (viewport_push.enabled == 2) {
+		let world_size = float2(sim_params.width, sim_params.height);
+		var camera_delta = world_particle_pos - camera.position;
+		camera_delta -= round(camera_delta / world_size) * world_size;
+		world_particle_pos = camera.position + camera_delta;
+	}
     
     // Get the world bounds that this texture represents
-    let world_bounds = viewport_push.enabled != 0 ? viewport_push.world_bounds : viewport_params.world_bounds;
+    let world_bounds = viewport_push.enabled == 1 ? viewport_push.world_bounds : viewport_params.world_bounds;
     let world_left = world_bounds.x;
     let world_bottom = world_bounds.y;
     let world_right = world_bounds.z;

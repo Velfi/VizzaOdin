@@ -381,6 +381,7 @@ mcp_bridge_handle_jsonrpc :: proc(bridge: ^Mcp_Bridge, line: string) -> string {
 
 MCP_TOOLS_JSON :: `[
 {"name":"app_status","description":"Read status from the running Vizza app.","inputSchema":{"type":"object","properties":{}}},
+{"name":"gpu_status","description":"Read compact frame and GPU pass timings from the running Vizza app.","inputSchema":{"type":"object","properties":{}}},
 {"name":"profile_start","description":"Start a nonblocking UI/render profile for an app mode over a fixed number of frames.","inputSchema":{"type":"object","required":["mode"],"properties":{"mode":{"type":"string"},"frames":{"type":"number","description":"Frames to collect. Defaults to 240."},"ui_spike_ms":{"type":"number"},"render_spike_ms":{"type":"number"},"gpu_ui_spike_ms":{"type":"number"},"screenshot_spike_ms":{"type":"number"},"cap_ratio":{"type":"number"},"text_calls_per_frame":{"type":"number"},"min_width_cache_hit_rate":{"type":"number"}}}},
 {"name":"profile_status","description":"Read the current UI/render profile collection state.","inputSchema":{"type":"object","properties":{}}},
 {"name":"profile_report","description":"Return the latest UI/render profile report with sanitizer findings.","inputSchema":{"type":"object","properties":{}}},
@@ -434,6 +435,8 @@ mcp_bridge_call_tool :: proc(bridge: ^Mcp_Bridge, id, name, line: string) -> str
 	switch name {
 	case "app_status":
 		return mcp_bridge_tool_text(id, mcp_bridge_status_json(bridge))
+	case "gpu_status":
+		return mcp_bridge_tool_text(id, mcp_bridge_gpu_status_json(bridge))
 	case "profile_start":
 		return mcp_bridge_profile_start(id, bridge, line)
 	case "profile_status":
@@ -2256,6 +2259,29 @@ mcp_bridge_status_json :: proc(bridge: ^Mcp_Bridge) -> string {
 		mcp_bridge_json_escape(fixed_string(status.last_message[:])),
 	))
 	return strings.to_string(builder)
+}
+
+mcp_bridge_gpu_status_json :: proc(bridge: ^Mcp_Bridge) -> string {
+	sync.mutex_lock(&bridge.status_mutex)
+	status := bridge.status
+	sync.mutex_unlock(&bridge.status_mutex)
+	return fmt.tprintf(
+		"{{\"ok\":true,\"fps\":%.2f,\"frame_ms\":%.4f,\"gpu_supported\":%v,\"gpu_enabled\":%v,\"gpu_step_ms\":%.4f,\"gpu_present_ms\":%.4f,\"gpu_ui_ms\":%.4f,\"gpu_frame_ms\":%.4f,\"render_ms\":%.4f,\"submit_ms\":%.4f,\"screenshot_ms\":%.4f,\"draws\":%d,\"dispatches\":%d,\"render_passes\":%d}}",
+		status.last_fps,
+		status.last_frame_ms,
+		status.gpu_profiling_supported,
+		status.gpu_profiling_enabled,
+		status.gpu_simulation_step_ms,
+		status.gpu_simulation_present_ms,
+		status.gpu_ui_overlay_ms,
+		status.gpu_frame_total_ms,
+		status.render_ms,
+		status.submit_ms,
+		status.screenshot_ms,
+		status.command_draw_count,
+		status.command_compute_dispatch_count,
+		status.command_render_pass_count,
+	)
 }
 
 mcp_bridge_extract_id :: proc(line: string) -> string {

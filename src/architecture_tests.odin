@@ -33,6 +33,17 @@ test_simulation_substeps_preserve_real_time_with_bounded_steps :: proc(t: ^testi
 }
 
 @(test)
+test_particle_life_large_population_caps_catch_up_work :: proc(t: ^testing.T) {
+	large := rendervk.particle_life_simulation_substeps(0.1, 200_000)
+	testing.expect_value(t, large.count, 2)
+	testing.expect(t, large.delta_time <= f32(1.0 / 120.0) + 0.00001)
+	medium := rendervk.particle_life_simulation_substeps(0.1, 50_000)
+	testing.expect_value(t, medium.count, 4)
+	small := rendervk.particle_life_simulation_substeps(0.1, 15_000)
+	testing.expect_value(t, small.count, rendervk.SIMULATION_MAX_SUBSTEPS)
+}
+
+@(test)
 test_primordial_timestep_is_independent_of_render_rate :: proc(t: ^testing.T) {
 	configured := f32(0.016)
 	at_60 := rendervk.primordial_effective_step_dt(configured, 1.0 / 60.0)
@@ -664,15 +675,64 @@ test_particle_life_collision_distance_follows_particle_size :: proc(t: ^testing.
 	settings.particle_size = 4
 	settings.collision_distance = 0.04
 	testing.expect_value(t, game.particle_life_collision_distance(settings), f32(0.008))
-	testing.expect_value(t, game.particle_life_target_grid_cell_size(settings), f32(0.008))
+	testing.expect_value(t, game.particle_life_target_grid_cell_size(settings), f32(0.25))
 
 	settings.particle_size = 12
 	testing.expect_value(t, game.particle_life_collision_distance(settings), f32(0.024))
-	testing.expect_value(t, game.particle_life_target_grid_cell_size(settings), f32(0.024))
+	testing.expect_value(t, game.particle_life_target_grid_cell_size(settings), f32(0.25))
 }
 
 @(test)
-test_particle_life_collision_toggle_reuses_fine_grid :: proc(t: ^testing.T) {
+test_particle_life_grid_uses_larger_interaction_radius :: proc(t: ^testing.T) {
+	settings := game.particle_life_default_settings()
+	settings.collision_enabled = true
+	settings.max_distance = 0.4
+	settings.particle_size = 4
+	width, height := game.particle_life_target_grid_dimensions(settings, {2, 2})
+	radius := game.particle_life_target_neighbor_radius_cells(settings, width, height, {2, 2})
+	testing.expect_value(t, width, u32(20))
+	testing.expect_value(t, height, u32(20))
+	testing.expect_value(t, radius, u32(4))
+}
+
+@(test)
+test_particle_life_collision_grid_uses_particle_diameter :: proc(t: ^testing.T) {
+	settings := game.particle_life_default_settings()
+	settings.max_distance = 0.4
+	settings.particle_size = 20
+	width, height := game.particle_life_target_collision_grid_dimensions(settings, {2, 2})
+	testing.expect_value(t, width, u32(50))
+	testing.expect_value(t, height, u32(50))
+}
+
+@(test)
+test_particle_life_contiguous_bins_preserve_exact_membership :: proc(t: ^testing.T) {
+	cell_indices := [?]u32{2, 0, 2, 1, 0, 2}
+	counts := [?]u32{2, 1, 3}
+	offsets: [3]u32
+	cursors: [3]u32
+	indices: [6]u32
+	total := game.particle_life_grid_exclusive_offsets(counts[:], offsets[:])
+	testing.expect_value(t, total, u32(6))
+	testing.expect_value(t, offsets, [3]u32{0, 2, 3})
+	testing.expect(t, game.particle_life_grid_scatter_indices(cell_indices[:], offsets[:], cursors[:], indices[:]))
+	for cell in 0 ..< len(counts) {
+		seen: [6]bool
+		for slot: u32 = offsets[cell]; slot < offsets[cell] + counts[cell]; slot += 1 {
+			particle := indices[slot]
+			testing.expect_value(t, cell_indices[particle], u32(cell))
+			seen[particle] = true
+		}
+		for source_cell, particle in cell_indices {
+			if source_cell == u32(cell) {
+				testing.expect(t, seen[particle])
+			}
+		}
+	}
+}
+
+@(test)
+test_particle_life_collision_toggle_reuses_interaction_grid :: proc(t: ^testing.T) {
 	sim: game.Particle_Life_Simulation
 	game.particle_life_init(&sim, 320, 240)
 	world_size := game.particle_life_world_size(&sim)
@@ -683,18 +743,20 @@ test_particle_life_collision_toggle_reuses_fine_grid :: proc(t: ^testing.T) {
 	sim.gpu.grid_width = fine_width
 	sim.gpu.grid_height = fine_height
 	sim.gpu.neighbor_radius_cells = fine_radius
+	sim.gpu.collision_grid_width, sim.gpu.collision_grid_height = game.particle_life_target_collision_grid_dimensions(sim.settings, world_size)
 	testing.expect(t, game.particle_life_current_grid_satisfies_settings(&sim))
 
 	sim.settings.collision_enabled = false
 	testing.expect(t, game.particle_life_current_grid_satisfies_settings(&sim))
 
-	coarse_width, coarse_height := game.particle_life_target_grid_dimensions(sim.settings, world_size)
-	coarse_radius := game.particle_life_target_neighbor_radius_cells(sim.settings, coarse_width, coarse_height, world_size)
-	sim.gpu.grid_width = coarse_width
-	sim.gpu.grid_height = coarse_height
-	sim.gpu.neighbor_radius_cells = coarse_radius
+	interaction_width, interaction_height := game.particle_life_target_grid_dimensions(sim.settings, world_size)
+	interaction_radius := game.particle_life_target_neighbor_radius_cells(sim.settings, interaction_width, interaction_height, world_size)
+	sim.gpu.grid_width = interaction_width
+	sim.gpu.grid_height = interaction_height
+	sim.gpu.neighbor_radius_cells = interaction_radius
+	sim.gpu.collision_grid_width, sim.gpu.collision_grid_height = game.particle_life_target_collision_grid_dimensions(sim.settings, world_size)
 	sim.settings.collision_enabled = true
-	testing.expect(t, !game.particle_life_current_grid_satisfies_settings(&sim))
+	testing.expect(t, game.particle_life_current_grid_satisfies_settings(&sim))
 }
 
 @(test)
@@ -2199,7 +2261,7 @@ test_simulation_brush_mode_sets_match_cardinal_design :: proc(t: ^testing.T) {
 	particle := game.canvas_tool_set_for_mode(.Particle_Life)
 	testing.expect_value(t, particle.tools[0].name, "Gravity")
 	testing.expect_value(t, particle.tools[1].name, "Vortex")
-	testing.expect_value(t, particle.tools[2].name, "Particles")
+	testing.expect(t, !particle.tools[2].valid)
 	testing.expect(t, !particle.tools[3].valid)
 
 	flow := game.canvas_tool_set_for_mode(.Flow_Field)
@@ -2232,8 +2294,6 @@ test_brush_mode_actions_map_to_stable_shader_pairs :: proc(t: ^testing.T) {
 	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[0], true), u32(2))
 	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[1], false), u32(3))
 	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[1], true), u32(4))
-	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[2], false), u32(5))
-	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[2], true), u32(6))
 }
 
 @(test)

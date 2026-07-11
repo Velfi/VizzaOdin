@@ -14,6 +14,25 @@ Log_Level :: enum int {
 
 log_level: Log_Level = .Info
 log_level_loaded := false
+log_file: ^os.File
+
+// log_set_file adds a durable secondary sink without replacing stderr. This is
+// important for Windows GUI builds, where stderr may not be attached to a
+// console, while preserving terminal output for development builds.
+log_set_file :: proc(file: ^os.File) {
+	log_file = file
+}
+
+log_write :: proc(args: ..any) {
+	if os.stderr != nil {
+		fmt.fprintln(os.stderr, ..args)
+		_ = os.flush(os.stderr)
+	}
+	if log_file != nil && log_file != os.stderr {
+		fmt.fprintln(log_file, ..args)
+		_ = os.flush(log_file)
+	}
+}
 
 log_configure_from_env :: proc() {
 	if log_level_loaded {
@@ -39,31 +58,31 @@ log_enabled :: proc(level: Log_Level) -> bool {
 
 log_error :: proc(args: ..any) {
 	if log_enabled(.Error) {
-		fmt.eprintln(..args)
+		log_write(..args)
 	}
 }
 
 log_warn :: proc(args: ..any) {
 	if log_enabled(.Warn) {
-		fmt.eprintln(..args)
+		log_write(..args)
 	}
 }
 
 log_info :: proc(args: ..any) {
 	if log_enabled(.Info) {
-		fmt.eprintln(..args)
+		log_write(..args)
 	}
 }
 
 log_debug :: proc(args: ..any) {
 	if log_enabled(.Debug) {
-		fmt.eprintln(..args)
+		log_write(..args)
 	}
 }
 
 log_trace :: proc(args: ..any) {
 	if log_enabled(.Trace) {
-		fmt.eprintln(..args)
+		log_write(..args)
 	}
 }
 

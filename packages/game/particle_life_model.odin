@@ -12,6 +12,10 @@ import vk "vendor:vulkan"
 PARTICLE_LIFE_GRID_CLEAR_SHADER_SOURCE :: "assets/shaders/simulations/particle_life/shaders/grid_clear.slang"
 PARTICLE_LIFE_GRID_SCATTER_SHADER_SOURCE :: "assets/shaders/simulations/particle_life/shaders/grid_scatter.slang"
 PARTICLE_LIFE_GRID_SCATTER_PREDICTED_SHADER_SOURCE :: "assets/shaders/simulations/particle_life/shaders/grid_scatter_predicted.slang"
+PARTICLE_LIFE_GRID_PREFIX_SHADER_SOURCE :: "assets/shaders/simulations/particle_life/shaders/grid_prefix.slang"
+PARTICLE_LIFE_GRID_PREFIX_BLOCKS_SHADER_SOURCE :: "assets/shaders/simulations/particle_life/shaders/grid_prefix_blocks.slang"
+PARTICLE_LIFE_GRID_PREFIX_ADD_SHADER_SOURCE :: "assets/shaders/simulations/particle_life/shaders/grid_prefix_add.slang"
+PARTICLE_LIFE_GRID_INDEX_SCATTER_SHADER_SOURCE :: "assets/shaders/simulations/particle_life/shaders/grid_index_scatter.slang"
 PARTICLE_LIFE_COMPUTE_BINNED_SHADER_SOURCE :: "assets/shaders/simulations/particle_life/shaders/compute_binned.slang"
 PARTICLE_LIFE_COLLISION_SOLVE_SHADER_SOURCE :: "assets/shaders/simulations/particle_life/shaders/collision_solve.slang"
 PARTICLE_LIFE_COLLISION_APPLY_SHADER_SOURCE :: "assets/shaders/simulations/particle_life/shaders/collision_apply.slang"
@@ -36,6 +40,10 @@ PARTICLE_LIFE_INFINITE_PRESENT_FRAGMENT_SHADER_SOURCE :: "assets/shaders/simulat
 PARTICLE_LIFE_GRID_CLEAR_FALLBACK_SPV :: "build/shaders/simulations/particle_life/shaders/grid_clear"
 PARTICLE_LIFE_GRID_SCATTER_FALLBACK_SPV :: "build/shaders/simulations/particle_life/shaders/grid_scatter"
 PARTICLE_LIFE_GRID_SCATTER_PREDICTED_FALLBACK_SPV :: "build/shaders/simulations/particle_life/shaders/grid_scatter_predicted"
+PARTICLE_LIFE_GRID_PREFIX_FALLBACK_SPV :: "build/shaders/simulations/particle_life/shaders/grid_prefix"
+PARTICLE_LIFE_GRID_PREFIX_BLOCKS_FALLBACK_SPV :: "build/shaders/simulations/particle_life/shaders/grid_prefix_blocks"
+PARTICLE_LIFE_GRID_PREFIX_ADD_FALLBACK_SPV :: "build/shaders/simulations/particle_life/shaders/grid_prefix_add"
+PARTICLE_LIFE_GRID_INDEX_SCATTER_FALLBACK_SPV :: "build/shaders/simulations/particle_life/shaders/grid_index_scatter"
 PARTICLE_LIFE_COMPUTE_BINNED_FALLBACK_SPV :: "build/shaders/simulations/particle_life/shaders/compute_binned"
 PARTICLE_LIFE_COLLISION_SOLVE_FALLBACK_SPV :: "build/shaders/simulations/particle_life/shaders/collision_solve"
 PARTICLE_LIFE_COLLISION_APPLY_FALLBACK_SPV :: "build/shaders/simulations/particle_life/shaders/collision_apply"
@@ -72,6 +80,7 @@ PARTICLE_LIFE_COLOR_COUNT :: 9
 PARTICLE_LIFE_WORKGROUP_SIZE :: 64
 PARTICLE_LIFE_GRID_CLEAR_WORKGROUP_SIZE :: 64
 PARTICLE_LIFE_MAX_GRID_AXIS :: 256
+PARTICLE_LIFE_FORCE_GRID_CELL_SCALE :: f32(0.25)
 PARTICLE_LIFE_ANALYSIS_TILE_SIZE :: 16
 PARTICLE_LIFE_ANALYSIS_MAX_BLOBS :: 128
 PARTICLE_LIFE_ANALYSIS_COORD_SCALE :: f32(4096.0)
@@ -492,6 +501,10 @@ Particle_Life_Gpu_State :: struct {
 	grid_clear_shader_module: engine.Vk_Shader_Module,
 	grid_scatter_shader_module: engine.Vk_Shader_Module,
 	grid_scatter_predicted_shader_module: engine.Vk_Shader_Module,
+	grid_prefix_shader_module: engine.Vk_Shader_Module,
+	grid_prefix_blocks_shader_module: engine.Vk_Shader_Module,
+	grid_prefix_add_shader_module: engine.Vk_Shader_Module,
+	grid_index_scatter_shader_module: engine.Vk_Shader_Module,
 	compute_binned_shader_module: engine.Vk_Shader_Module,
 	collision_solve_shader_module: engine.Vk_Shader_Module,
 	collision_apply_shader_module: engine.Vk_Shader_Module,
@@ -518,6 +531,10 @@ Particle_Life_Gpu_State :: struct {
 	grid_clear_shader_spirv_path: string,
 	grid_scatter_shader_spirv_path: string,
 	grid_scatter_predicted_shader_spirv_path: string,
+	grid_prefix_shader_spirv_path: string,
+	grid_prefix_blocks_shader_spirv_path: string,
+	grid_prefix_add_shader_spirv_path: string,
+	grid_index_scatter_shader_spirv_path: string,
 	compute_binned_shader_spirv_path: string,
 	collision_solve_shader_spirv_path: string,
 	collision_apply_shader_spirv_path: string,
@@ -544,6 +561,10 @@ Particle_Life_Gpu_State :: struct {
 	grid_clear_pipeline: engine.Vk_Compute_Pipeline,
 	grid_scatter_pipeline: engine.Vk_Compute_Pipeline,
 	grid_scatter_predicted_pipeline: engine.Vk_Compute_Pipeline,
+	grid_prefix_pipeline: engine.Vk_Compute_Pipeline,
+	grid_prefix_blocks_pipeline: engine.Vk_Compute_Pipeline,
+	grid_prefix_add_pipeline: engine.Vk_Compute_Pipeline,
+	grid_index_scatter_pipeline: engine.Vk_Compute_Pipeline,
 	compute_binned_pipeline: engine.Vk_Compute_Pipeline,
 	collision_solve_pipeline: engine.Vk_Compute_Pipeline,
 	collision_apply_pipeline: engine.Vk_Compute_Pipeline,
@@ -576,6 +597,7 @@ Particle_Life_Gpu_State :: struct {
 	descriptor_pool: vk.DescriptorPool,
 	fade_descriptor_pool: vk.DescriptorPool,
 	sim_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	collision_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 	init_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 	color_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 	view_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
@@ -593,9 +615,13 @@ Particle_Life_Gpu_State :: struct {
 	force_randomize_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	force_update_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	grid_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
+	collision_grid_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	collision_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	grid_heads_buffer: engine.Vk_Buffer,
 	particle_next_buffer: engine.Vk_Buffer,
+	grid_offsets_buffer: engine.Vk_Buffer,
+	grid_cursors_buffer: engine.Vk_Buffer,
+	grid_block_sums_buffer: engine.Vk_Buffer,
 	collision_correction_buffer: engine.Vk_Buffer,
 	analysis_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	analysis_cells_buffer: engine.Vk_Buffer,
@@ -627,6 +653,9 @@ Particle_Life_Gpu_State :: struct {
 	grid_width: u32,
 	grid_height: u32,
 	neighbor_radius_cells: u32,
+	collision_grid_width: u32,
+	collision_grid_height: u32,
+	grid_cell_capacity: u32,
 	analysis_grid_axis: u32,
 	analysis_tile_count: u32,
 	active_frame_slot: int,
@@ -662,11 +691,7 @@ particle_life_collision_distance :: proc(settings: Particle_Life_Settings) -> f3
 }
 
 particle_life_target_grid_cell_size :: proc(settings: Particle_Life_Settings) -> f32 {
-	cell_size := max(settings.max_distance, 0.001)
-	if settings.collision_enabled {
-		cell_size = min(cell_size, particle_life_collision_distance(settings))
-	}
-	return cell_size
+	return max(settings.max_distance * PARTICLE_LIFE_FORCE_GRID_CELL_SCALE, 0.001)
 }
 
 particle_life_target_grid_axis :: proc(settings: Particle_Life_Settings) -> u32 {
@@ -675,7 +700,22 @@ particle_life_target_grid_axis :: proc(settings: Particle_Life_Settings) -> u32 
 }
 
 particle_life_target_grid_dimensions :: proc(settings: Particle_Life_Settings, world_size: [2]f32) -> (u32, u32) {
-	cell_size := particle_life_target_grid_cell_size(settings)
+	cell_size: f32
+	grid_width, grid_height: u32
+	scales := [4]f32{0.25, 1.0 / 3.0, 0.5, 1.0}
+	for scale in scales {
+		cell_size = max(settings.max_distance * scale, 0.001)
+		grid_width = u32(math.ceil(max(world_size[0], 0.0001) / cell_size))
+		grid_height = u32(math.ceil(max(world_size[1], 0.0001) / cell_size))
+		if grid_width <= PARTICLE_LIFE_MAX_GRID_AXIS && grid_height <= PARTICLE_LIFE_MAX_GRID_AXIS {
+			break
+		}
+	}
+	return max(min(grid_width, PARTICLE_LIFE_MAX_GRID_AXIS), 4), max(min(grid_height, PARTICLE_LIFE_MAX_GRID_AXIS), 4)
+}
+
+particle_life_target_collision_grid_dimensions :: proc(settings: Particle_Life_Settings, world_size: [2]f32) -> (u32, u32) {
+	cell_size := particle_life_collision_distance(settings)
 	grid_width := u32(math.ceil(max(world_size[0], 0.0001) / cell_size))
 	grid_height := u32(math.ceil(max(world_size[1], 0.0001) / cell_size))
 	return max(min(grid_width, PARTICLE_LIFE_MAX_GRID_AXIS), 4), max(min(grid_height, PARTICLE_LIFE_MAX_GRID_AXIS), 4)
@@ -695,9 +735,39 @@ particle_life_grid_satisfies_target :: proc(current_width, current_height, curre
 		current_neighbor_radius >= target_neighbor_radius
 }
 
+// CPU mirrors of the GPU contiguous-bin construction. These keep the exact
+// membership/order-independent invariants testable without a Vulkan device.
+particle_life_grid_exclusive_offsets :: proc(counts: []u32, offsets: []u32) -> u32 {
+	running: u32
+	for i in 0 ..< min(len(counts), len(offsets)) {
+		offsets[i] = running
+		running += counts[i]
+	}
+	return running
+}
+
+particle_life_grid_scatter_indices :: proc(cell_indices, offsets: []u32, cursors, out: []u32) -> bool {
+	for i in 0 ..< len(cursors) {
+		cursors[i] = 0
+	}
+	for cell_index, particle_index in cell_indices {
+		if int(cell_index) >= len(offsets) || int(cell_index) >= len(cursors) {
+			return false
+		}
+		destination := offsets[cell_index] + cursors[cell_index]
+		if int(destination) >= len(out) {
+			return false
+		}
+		out[destination] = u32(particle_index)
+		cursors[cell_index] += 1
+	}
+	return true
+}
+
 particle_life_current_grid_satisfies_settings :: proc(sim: ^Particle_Life_Simulation) -> bool {
 	world_size := particle_life_world_size(sim)
 	target_grid_width, target_grid_height := particle_life_target_grid_dimensions(sim.settings, world_size)
+	target_collision_width, target_collision_height := particle_life_target_collision_grid_dimensions(sim.settings, world_size)
 	// A finer existing grid is reusable only if its stored search radius covers
 	// the current distance at that finer cell size. Comparing against the target
 	// grid's radius can incorrectly accept a stale grid after max_distance moves.
@@ -714,7 +784,9 @@ particle_life_current_grid_satisfies_settings :: proc(sim: ^Particle_Life_Simula
 		target_grid_width,
 		target_grid_height,
 		current_neighbor_radius,
-	)
+	) && (!sim.settings.collision_enabled ||
+		sim.gpu.collision_grid_width >= target_collision_width &&
+		sim.gpu.collision_grid_height >= target_collision_height)
 }
 
 particle_life_target_analysis_grid_axis :: proc(settings: Particle_Life_Settings) -> u32 {

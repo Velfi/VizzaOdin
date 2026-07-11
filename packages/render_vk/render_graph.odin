@@ -36,6 +36,21 @@ simulation_substeps :: proc(frame_dt: f32) -> Simulation_Substeps {
 	return {count = count, delta_time = clamped_dt / f32(count)}
 }
 
+particle_life_simulation_substeps :: proc(frame_dt: f32, particle_count: u32) -> Simulation_Substeps {
+	steps := simulation_substeps(frame_dt)
+	// Catch-up work must not create a feedback loop where a slow force frame
+	// schedules still more complete force frames. Keep the same stable substep
+	// size and shed excess elapsed simulation time for large populations.
+	max_steps := SIMULATION_MAX_SUBSTEPS
+	if particle_count >= 100_000 {
+		max_steps = 2
+	} else if particle_count >= 50_000 {
+		max_steps = 4
+	}
+	steps.count = min(steps.count, max_steps)
+	return steps
+}
+
 simulation_frame_delta :: proc(frame_dt: f32) -> f32 {
 	return min(max(frame_dt, 0), SIMULATION_MAX_FRAME_SECONDS)
 }
@@ -533,7 +548,7 @@ render_pass_gray_scott_compute :: proc(ctx: ^Render_Context, pass: ^Render_Pass_
 	}
 	if ctx.app_mode != .Gray_Scott {
 		if ctx.app_mode == .Particle_Life && particle_life_ensure_gpu_runtime(ctx.particle_life, ctx.vk_ctx) {
-			steps := simulation_substeps(sim_dt)
+			steps := particle_life_simulation_substeps(sim_dt, ctx.particle_life.settings.particle_count)
 			for _ in 0 ..< steps.count {
 				particle_life_gpu_step(ctx.particle_life, ctx.vk_ctx, ctx.frame.command_buffer, steps.delta_time)
 			}

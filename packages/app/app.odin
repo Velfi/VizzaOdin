@@ -8,6 +8,8 @@ import "core:strings"
 // here rather than in the product domain or the minimal executable package.
 run_cli :: proc(args: []string = os.args) -> int {
 	crash_log_init()
+	exit_code := 1
+	defer crash_log_shutdown(exit_code)
 
 	mcp_enabled := false
 	theme_preview := false
@@ -46,13 +48,14 @@ run_cli :: proc(args: []string = os.args) -> int {
 		i += 1
 	}
 
-	return app_run({
+	exit_code = app_run({
 		mcp_enabled = mcp_enabled,
 		theme_preview = theme_preview,
 		steam_override = steam_override,
 		steam_app_id_override = steam_app_id_override,
 		steam_library_path_override = steam_library_path_override,
 	})
+	return exit_code
 }
 
 parse_u32 :: proc(value: string) -> (u32, bool) {

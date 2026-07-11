@@ -64,7 +64,7 @@ endif
 STEAM_REDIST_SRC := $(STEAM_SDK_LOCATION)/redistributable_bin/$(STEAM_REDIST_SUBDIR)/$(STEAM_REDIST_FILE)
 ODIN_FLAGS ?= -o:none
 
-.PHONY: help run run-macos-vulkan build build-steam run-steam copy-steam-redist check check-boundaries test fmt clean distclean shaders deps install-slangc mcp mcp-macos-vulkan theme-preview theme-preview-mcp profile-ui-trace package-macos steam-upload-preview ui-font-atlas tomlc17 textshape
+.PHONY: help run run-macos-vulkan build build-steam run-steam copy-steam-redist check check-boundaries test perf-particle-life fmt clean distclean shaders deps install-slangc mcp mcp-macos-vulkan theme-preview theme-preview-mcp profile-ui-trace package-macos steam-upload-preview ui-font-atlas tomlc17 textshape
 
 help:
 	@printf '%s\n' \
@@ -82,6 +82,7 @@ help:
 		'  shaders             Compile Slang shaders into build/shaders' \
 		'  check               Check package boundaries and Odin sources' \
 		'  test                Run Odin tests' \
+		'  perf-particle-life  Run the headless Particle Life GPU benchmark' \
 		'  fmt                 Format Odin packages' \
 		'  deps                Build native dependencies' \
 		'  ui-font-atlas       Regenerate UI font assets and metrics' \
@@ -156,6 +157,11 @@ check-boundaries:
 
 test: $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
 	odin test $(SRC) -extra-linker-flags:"$(TEXTSHAPE_LIBS)"
+
+perf-particle-life: shaders $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
+	mkdir -p $(BUILD_DIR)
+	odin build perf/particle_life $(ODIN_FLAGS) -extra-linker-flags:"$(TEXTSHAPE_LIBS)" -out:$(BUILD_DIR)/particle_life_perf
+	$(MACOS_VULKAN_ENV) $(BUILD_DIR)/particle_life_perf $(ARGS)
 
 deps: $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
 

@@ -161,6 +161,7 @@ VIDEO_FILE_DIALOG_FILTERS := [?]sdl.DialogFileFilter {
 VIDEO_RECORDING_FULLSCREEN_RESTORE_MAX_FRAMES :: u32(180)
 
 app_run :: proc(config: App_Run_Config = {}) -> int {
+	engine.log_info("app_run: begin mcp=", config.mcp_enabled, " theme_preview=", config.theme_preview, " steam_override=", config.steam_override)
 	app := new(App_State)
 	defer free(app)
 	defer engine.screenshot_state_destroy(&app.screenshot)
@@ -168,22 +169,28 @@ app_run :: proc(config: App_Run_Config = {}) -> int {
 	app.theme_preview = config.theme_preview
 
 	settings_path := settings_app_config_path()
+	engine.log_info("app_run: loading settings path=", settings_path)
 	settings_loaded: bool
 	app.settings, settings_loaded = settings_load_app(settings_path)
 	if !settings_loaded && settings_path != "config/app.toml" {
 		app.settings, _ = settings_load_app("config/app.toml")
 	}
+	engine.log_info("app_run: settings_loaded=", settings_loaded)
 	steam_config := steam_config_resolve(app.settings, config)
 	steam_state := steam_client_init(&app.steam, steam_config)
+	engine.log_info("app_run: steam_state=", steam_state)
 	defer steam_client_shutdown(&app.steam)
 	if steam_state == .Restart_Requested {
+		engine.log_info("app_run: clean early exit for Steam relaunch")
 		return 0
 	}
 
+	engine.log_info("app_run: SDL init begin")
 	if !sdl.Init({.VIDEO, .EVENTS, .GAMEPAD, .CAMERA}) {
 		engine.log_error("SDL init failed: ", sdl.GetError())
 		return 1
 	}
+	engine.log_info("app_run: SDL init complete")
 	defer sdl.Quit()
 	sdl.SetGamepadEventsEnabled(true)
 	// Deliver the click that gives the window mouse focus. Without this, a
@@ -198,6 +205,7 @@ app_run :: proc(config: App_Run_Config = {}) -> int {
 		engine.log_error("SDL window creation failed: ", sdl.GetError())
 		return 1
 	}
+	engine.log_info("app_run: SDL window created")
 	if app.settings.window_maximized {
 		sdl.MaximizeWindow(app.window)
 	}
@@ -240,8 +248,10 @@ app_run :: proc(config: App_Run_Config = {}) -> int {
 	}
 
 	if !frame_processor_bootstrap(app) {
+		engine.log_error("app_run: frame processor bootstrap failed")
 		return 1
 	}
+	engine.log_info("app_run: frame processor ready; entering main loop")
 	defer frame_processor_shutdown(app)
 
 	app.running = true
@@ -250,6 +260,7 @@ app_run :: proc(config: App_Run_Config = {}) -> int {
 		app_loop_tick(app)
 	}
 
+	engine.log_info("app_run: main loop ended")
 	return 0
 }
 

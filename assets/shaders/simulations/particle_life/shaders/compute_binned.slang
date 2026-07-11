@@ -14,6 +14,8 @@ RWStructuredBuffer<uint> particle_next;
 ConstantBuffer<GridParams> grid_params;
 [[vk::binding(6, 0)]]
 RWStructuredBuffer<Particle> particles_out;
+[[vk::binding(9, 0)]]
+StructuredBuffer<uint> grid_offsets;
 
 static uint rng_state;
 
@@ -82,12 +84,6 @@ float2 wrapped_distance(float2 pos_a, float2 pos_b) {
 
 float get_force(uint species_a, uint species_b) {
     let index = species_a * params.species_count + species_b;
-    uint force_count = 0;
-    uint force_stride = 0;
-    force_matrix.GetDimensions(force_count, force_stride);
-    if (index >= force_count) {
-        return 0.0;
-    }
     return force_matrix[index];
 }
 
@@ -106,15 +102,15 @@ float calculate_force(float distance, float attraction) {
     return 0.0;
 }
 
-void accumulate_neighbor_force(uint self_index, Particle particle, Particle other, inout float2 force) {
-    let delta = wrapped_distance(particle.position, other.position);
+void accumulate_neighbor_force(float2 particle_position, uint particle_species, uint other_index, inout float2 force) {
+	let delta = wrapped_distance(particle_position, particles[other_index].position);
     let distance_sq = dot(delta, delta);
     let max_distance_sq = params.max_distance * params.max_distance;
     if (distance_sq > max_distance_sq || distance_sq < 0.000001) {
         return;
     }
     let distance = sqrt(distance_sq);
-    let attraction = get_force(particle.species, other.species);
+	let attraction = get_force(particle_species, particles[other_index].species);
     let force_magnitude = calculate_force(distance, attraction);
     force += (delta / distance) * force_magnitude;
 }
@@ -133,9 +129,20 @@ void main(uint3 global_id : SV_DispatchThreadID) {
     var force = float2(0.0, 0.0);
     let center_cell = world_to_grid(particle.position);
     let radius = int(grid_params.neighbor_radius_cells);
+	let cell_width = grid_params.world_width / float(grid_params.grid_width);
+	let cell_height = grid_params.world_height / float(grid_params.grid_height);
+	let max_distance_sq = params.max_distance * params.max_distance;
 
     for (var dy = -radius; dy <= radius; dy++) {
         for (var dx = -radius; dx <= radius; dx++) {
+			// A particle can sit anywhere in its cell. Even with that conservative
+			// allowance, corner cells outside the circular influence range cannot
+			// contribute and need no linked-list traversal.
+			let cell_distance_x = float(max(abs(dx) - 1, 0)) * cell_width;
+			let cell_distance_y = float(max(abs(dy) - 1, 0)) * cell_height;
+			if (cell_distance_x * cell_distance_x + cell_distance_y * cell_distance_y > max_distance_sq) {
+				continue;
+			}
             var cx = int(center_cell.x) + dx;
             var cy = int(center_cell.y) + dy;
             if (params.wrap_edges == 1) {
@@ -145,15 +152,15 @@ void main(uint3 global_id : SV_DispatchThreadID) {
                 continue;
             }
 
-            var neighbor_index = grid_heads[grid_coord_to_index(uint2(uint(cx), uint(cy)))];
-            var guard = 0u;
-            while (neighbor_index != 0xffffffffu && guard < params.particle_count) {
-                if (neighbor_index != index) {
-                    accumulate_neighbor_force(index, particle, particles[neighbor_index], force);
-                }
-                neighbor_index = particle_next[neighbor_index];
-                guard += 1u;
-            }
+			let cell_index = grid_coord_to_index(uint2(uint(cx), uint(cy)));
+			let cell_start = grid_offsets[cell_index];
+			let cell_count = grid_heads[cell_index];
+			for (var slot = 0u; slot < cell_count; slot++) {
+				let neighbor_index = particle_next[cell_start + slot];
+				if (neighbor_index != index) {
+					accumulate_neighbor_force(particle.position, particle.species, neighbor_index, force);
+				}
+			}
         }
     }
 
@@ -166,7 +173,7 @@ void main(uint3 global_id : SV_DispatchThreadID) {
             let distance_to_cursor = sqrt(distance_to_cursor_sq);
             let direction_to_cursor = delta_to_cursor / distance_to_cursor;
             let distance_factor = 1.0 - (distance_to_cursor / params.cursor_size);
-            let cursor_force_strength = params.cursor_strength * distance_factor;
+            let cursor_force_strength = params.cursor_strength * distance_factor * 2.0;
             if (params.cursor_active == 1) {
                 force += direction_to_cursor * cursor_force_strength;
             } else if (params.cursor_active == 2) {
@@ -175,11 +182,6 @@ void main(uint3 global_id : SV_DispatchThreadID) {
                 force += float2(-direction_to_cursor.y, direction_to_cursor.x) * cursor_force_strength;
             } else if (params.cursor_active == 4) {
                 force += float2(direction_to_cursor.y, -direction_to_cursor.x) * cursor_force_strength;
-            } else if (params.cursor_active == 5) {
-                // Fixed-size GPU population: gather acts as local spawning without reallocating buffers.
-                force += direction_to_cursor * cursor_force_strength * 3.0;
-            } else if (params.cursor_active == 6) {
-                force -= direction_to_cursor * cursor_force_strength * 3.0;
             }
         }
     }

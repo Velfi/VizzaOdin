@@ -154,6 +154,19 @@ pwsh ./scripts/package_windows.ps1 -Msix
 scripts/release.sh 0.1.0
 ```
 
+Particle Life GPU performance can be measured without the application UI:
+
+```bash
+make perf-particle-life
+make perf-particle-life ARGS="--particles=10000,50000 --ranges=0.05,0.2,0.4 --iterations=50"
+```
+
+The harness uses a hidden Vulkan window and prints CSV rows containing the grid
+shape plus mean, median, p95, and maximum synchronized step time. Pass
+`--no-collisions` to isolate the force pass.
+Pass `--churn` to cycle through the supplied ranges every step and report how
+many times the grid resource was recreated.
+
 ### Test policy
 
 Tests protect durable behavior: simulation correctness, saved-data compatibility,

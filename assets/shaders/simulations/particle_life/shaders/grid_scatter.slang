@@ -79,7 +79,5 @@ void main(uint3 global_id : SV_DispatchThreadID) {
     let coord = world_to_grid(particle.position);
     let cell_index = grid_coord_to_index(coord);
 
-    uint old_head;
-    InterlockedExchange(grid_heads[cell_index], index, old_head);
-    particle_next[index] = old_head;
+	InterlockedAdd(grid_heads[cell_index], 1u);
 }

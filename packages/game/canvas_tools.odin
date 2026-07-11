@@ -96,7 +96,6 @@ canvas_tool_set_for_mode :: proc(mode: App_Mode) -> Canvas_Tool_Set {
 	case .Particle_Life:
 		set.tools[0] = {true, "Gravity", "Attract", "Repel", .Attract, .Repel, .Brush}
 		set.tools[1] = {true, "Vortex", "Clockwise", "Counterclockwise", .Vortex_Clockwise, .Vortex_Counterclockwise, .Brush}
-		set.tools[2] = {true, "Particles", "Gather", "Disperse", .Spawn_Particles, .Remove_Particles, .Brush}
 	case .Slime_Mold: return canvas_tool_set_for_kind(.Slime_Mold)
 	case .Flow_Field: return canvas_tool_set_for_kind(.Flow_Field)
 	case .Pellets: return canvas_tool_set_for_kind(.Pellets)

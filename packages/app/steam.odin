@@ -107,8 +107,10 @@ steam_config_resolve :: proc(settings: App_Settings, run_config: App_Run_Config)
 
 steam_client_init :: proc(client: ^Steam_Client, config: Steam_Config) -> Steam_Client_State {
 	client^ = {}
+	engine.log_info("steam_init: enabled=", config.enabled, " app_id=", config.app_id, " restart_if_necessary=", config.restart_if_necessary)
 	if !config.enabled {
 		client.state = .Disabled
+		engine.log_info("steam_init: disabled")
 		return client.state
 	}
 
@@ -132,6 +134,7 @@ steam_client_init :: proc(client: ^Steam_Client, config: Steam_Config) -> Steam_
 		engine.log_info("Steam requested relaunch through the Steam client; exiting this process")
 		return client.state
 	}
+	engine.log_info("steam_init: restart not requested; initializing API from ", loaded_path)
 
 	err_msg: [STEAM_ERR_MSG_CAP]u8
 	result := client.api.InitFlat(rawptr(&err_msg[0]))
