@@ -79,6 +79,9 @@ Pellets_Render_Params :: struct #align(16) {
 	screen_width: f32,
 	screen_height: f32,
 	foreground_color_mode: u32,
+	camera_position: [2]f32,
+	camera_zoom: f32,
+	tile_count: u32,
 }
 
 Pellets_Background_Params :: struct #align(16) {
@@ -185,6 +188,8 @@ Pellets_Gpu_State :: struct {
 	cell_size: f32,
 	frame_index: u32,
 	ready: bool,
+	present_tile_count: u32,
+	present_camera_position: [2]f32,
+	present_camera_zoom: f32,
+	present_camera_valid: bool,
 }
-
-

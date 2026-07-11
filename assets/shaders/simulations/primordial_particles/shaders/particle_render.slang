@@ -17,6 +17,9 @@ struct RenderParams {
 	float screen_width;
 	float screen_height;
 	uint foreground_color_mode;
+	float2 camera_position;
+	float camera_zoom;
+	uint tile_count;
 };
 
 struct VertexOutput {
@@ -71,7 +74,11 @@ float3 get_particle_color(Particle particle, uint particle_index) {
 
 [shader("vertex")]
 VertexOutput vs_main(uint vertex_index : SV_VertexID, uint instance_index : SV_InstanceID) {
-	let particle = particles[instance_index];
+	let tiles = max(render_params.tile_count, 1u);
+	let tiles_per_world = tiles * tiles;
+	let particle_index = instance_index / tiles_per_world;
+	let tile_index = instance_index % tiles_per_world;
+	let particle = particles[particle_index];
 
 	let quad_positions = float2[6](
 		float2(-1.0, -1.0),
@@ -96,11 +103,15 @@ VertexOutput vs_main(uint vertex_index : SV_VertexID, uint instance_index : SV_I
 	let aspect = max(render_params.screen_width / max(render_params.screen_height, 1.0), 0.0001);
 	let size = render_params.particle_size;
 	let offset = float2((quad_pos.x * size) / aspect, quad_pos.y * size);
-	let final_pos = particle.position + offset;
+	let tile_center = int2(round(render_params.camera_position / 2.0));
+	let tile_start = tile_center - int2(int(tiles / 2u));
+	let tile = tile_start + int2(int(tile_index % tiles), int(tile_index / tiles));
+	let world_pos = particle.position + float2(tile) * 2.0 + offset;
+	let final_pos = (world_pos - render_params.camera_position) * render_params.camera_zoom;
 
 	VertexOutput output;
 	output.position = float4(final_pos, 0.0, 1.0);
-	output.color = get_particle_color(particle, instance_index);
+	output.color = get_particle_color(particle, particle_index);
 	output.uv = quad_uv;
 	return output;
 }

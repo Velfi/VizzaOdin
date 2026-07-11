@@ -6,6 +6,67 @@ import engine "../engine"
 import "core:fmt"
 import "core:math"
 
+particle_life_draw_force_and_physics_controls :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.Gui_Context, panel: uifw.Rect, section: int) {
+	if section < 0 || section == 4 || section == PARTICLE_LIFE_SECTION_FORCES {
+	if section == PARTICLE_LIFE_SECTION_FORCES {
+		uifw.gui_heading(ctx, "Forces")
+	}
+	if uifw.gui_button(ctx, "Regenerate Matrix", "pl_randomize") {
+		particle_life_randomize_forces(sim)
+		uifw.gui_notice(ctx, "Force matrix randomized. Restore Previous Matrix is available here.")
+	}
+	if sim.runtime.force_randomize_undo_available && uifw.gui_button(ctx, "Restore Previous Matrix", "pl_undo_randomize") {
+		if particle_life_undo_randomize_forces(sim) {
+			uifw.gui_notice(ctx, "Previous force matrix restored.")
+		}
+	}
+	matrix_hint := ctx.input.active_device == .Controller ? "Select a cell, press Accept, then adjust it with the D-pad." : "Drag horizontally across a cell to change its force."
+	uifw.gui_text_block(ctx, matrix_hint, panel.w - ctx.style.panel_padding * 2, ctx.style.text_muted)
+	force_index := int(max(min(sim.settings.force_generator, u32(len(PARTICLE_LIFE_FORCE_GENERATOR_NAMES) - 1)), 0))
+	if uifw.gui_selector(ctx, fmt.tprintf("Force Generator: %s", PARTICLE_LIFE_FORCE_GENERATOR_NAMES[force_index]), "pl_force_generator", &force_index, PARTICLE_LIFE_FORCE_GENERATOR_NAMES[:]) {
+		sim.settings.force_generator = u32(force_index)
+	}
+	_ = shared_range_slider_f32(ctx, "Random Force Range", "pl_force_range", &sim.settings.force_random_min, &sim.settings.force_random_max, -1.5, 1.5)
+	shared_range_explanation(ctx, "pl_force_range", "Random Force Range sets the weakest and strongest values used when the matrix is regenerated.")
+	particle_life_draw_force_matrix_editor(sim, ctx)
+	}
+
+	if section < 0 || section == 5 {
+	uifw.gui_spacer(ctx, 8)
+	uifw.gui_heading(ctx, "Physics")
+	if section < 0 {
+		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Max Force: %.2f", sim.settings.max_force), "pl_force", &sim.settings.max_force, 0.1, 10.0)
+		shared_control_explanation(ctx, "pl_force", "Max Force is the strongest attraction or repulsion particles can feel.")
+		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Range: %.2f", sim.settings.max_distance), "pl_range", &sim.settings.max_distance, 0.01, 1.0)
+		shared_control_explanation(ctx, "pl_range", "Range is how far a particle can influence another particle.")
+		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Beta: %.2f", sim.settings.beta), "pl_beta", &sim.settings.beta, 0.1, 0.9)
+		shared_control_explanation(ctx, "pl_beta", "Beta sets where close-range repulsion gives way to the longer-range force.")
+	}
+	particle_life_draw_force_curve_editor(sim, ctx)
+	_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Friction: %.2f", sim.settings.friction), "pl_friction", &sim.settings.friction, 0.01, 1.0)
+	shared_control_explanation(ctx, "pl_friction", "Friction controls how quickly motion settles. Higher values calm particles sooner.")
+	_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Brownian: %.3f", sim.settings.brownian_motion), "pl_brownian", &sim.settings.brownian_motion, 0.0, 1.0)
+	shared_control_explanation(ctx, "pl_brownian", "Brownian motion adds small random nudges, keeping particles from moving too perfectly.")
+	_ = uifw.gui_toggle(ctx, fmt.tprintf("Dense Cell Sampling: %v", sim.settings.force_dense_sampling), "pl_dense_cell_sampling", &sim.settings.force_dense_sampling)
+	shared_control_explanation(ctx, "pl_dense_cell_sampling", "Caps work in overcrowded grid cells using rotating weighted samples. Disable for fully exact force evaluation.")
+
+	uifw.gui_spacer(ctx, 8)
+	uifw.gui_heading(ctx, "Local Constraints")
+	if uifw.gui_toggle(ctx, fmt.tprintf("Collisions: %v", sim.settings.collision_enabled), "pl_collision_enabled", &sim.settings.collision_enabled) {
+		if !particle_life_current_grid_satisfies_settings(sim) {
+			particle_life_request_resource_rebuild(sim)
+		}
+	}
+	if sim.settings.collision_enabled {
+		uifw.gui_text_block(ctx, fmt.tprintf("Distance follows particle size: %.4f", particle_life_collision_distance(sim.settings)), panel.w - ctx.style.panel_padding * 2, ctx.style.text_muted)
+		_ = uifw.gui_numeric_u32(ctx, "Iterations", "pl_collision_iterations", &sim.settings.collision_iterations, 1, 8)
+		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Relaxation: %.2f", sim.settings.collision_relaxation), "pl_collision_relaxation", &sim.settings.collision_relaxation, 0.0, 1.0)
+		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Damping: %.2f", sim.settings.collision_damping), "pl_collision_damping", &sim.settings.collision_damping, 0.0, 1.0)
+	}
+	}
+
+}
+
 particle_life_controls_content_height :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.Gui_Context, section := -1) -> f32 {
 	row := ctx.style.row_height + ctx.style.spacing
 	undo_row := sim.runtime.force_randomize_undo_available ? row : f32(0)
@@ -448,64 +509,7 @@ particle_life_draw_controls :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.G
 	_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Particle Size: %.1f", sim.settings.particle_size), "pl_size", &sim.settings.particle_size, 2, 34)
 	}
 
-	if section < 0 || section == 4 || section == PARTICLE_LIFE_SECTION_FORCES {
-	if section == PARTICLE_LIFE_SECTION_FORCES {
-		uifw.gui_heading(ctx, "Forces")
-	}
-	if uifw.gui_button(ctx, "Regenerate Matrix", "pl_randomize") {
-		particle_life_randomize_forces(sim)
-		uifw.gui_notice(ctx, "Force matrix randomized. Restore Previous Matrix is available here.")
-	}
-	if sim.runtime.force_randomize_undo_available && uifw.gui_button(ctx, "Restore Previous Matrix", "pl_undo_randomize") {
-		if particle_life_undo_randomize_forces(sim) {
-			uifw.gui_notice(ctx, "Previous force matrix restored.")
-		}
-	}
-	matrix_hint := ctx.input.active_device == .Controller ? "Select a cell, press Accept, then adjust it with the D-pad." : "Drag horizontally across a cell to change its force."
-	uifw.gui_text_block(ctx, matrix_hint, panel.w - ctx.style.panel_padding * 2, ctx.style.text_muted)
-	force_index := int(max(min(sim.settings.force_generator, u32(len(PARTICLE_LIFE_FORCE_GENERATOR_NAMES) - 1)), 0))
-	if uifw.gui_selector(ctx, fmt.tprintf("Force Generator: %s", PARTICLE_LIFE_FORCE_GENERATOR_NAMES[force_index]), "pl_force_generator", &force_index, PARTICLE_LIFE_FORCE_GENERATOR_NAMES[:]) {
-		sim.settings.force_generator = u32(force_index)
-	}
-	_ = shared_range_slider_f32(ctx, "Random Force Range", "pl_force_range", &sim.settings.force_random_min, &sim.settings.force_random_max, -1.5, 1.5)
-	shared_range_explanation(ctx, "pl_force_range", "Random Force Range sets the weakest and strongest values used when the matrix is regenerated.")
-	particle_life_draw_force_matrix_editor(sim, ctx)
-	}
-
-	if section < 0 || section == 5 {
-	uifw.gui_spacer(ctx, 8)
-	uifw.gui_heading(ctx, "Physics")
-	if section < 0 {
-		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Max Force: %.2f", sim.settings.max_force), "pl_force", &sim.settings.max_force, 0.1, 10.0)
-		shared_control_explanation(ctx, "pl_force", "Max Force is the strongest attraction or repulsion particles can feel.")
-		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Range: %.2f", sim.settings.max_distance), "pl_range", &sim.settings.max_distance, 0.01, 1.0)
-		shared_control_explanation(ctx, "pl_range", "Range is how far a particle can influence another particle.")
-		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Beta: %.2f", sim.settings.beta), "pl_beta", &sim.settings.beta, 0.1, 0.9)
-		shared_control_explanation(ctx, "pl_beta", "Beta sets where close-range repulsion gives way to the longer-range force.")
-	}
-	particle_life_draw_force_curve_editor(sim, ctx)
-	_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Friction: %.2f", sim.settings.friction), "pl_friction", &sim.settings.friction, 0.01, 1.0)
-	shared_control_explanation(ctx, "pl_friction", "Friction controls how quickly motion settles. Higher values calm particles sooner.")
-	_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Brownian: %.3f", sim.settings.brownian_motion), "pl_brownian", &sim.settings.brownian_motion, 0.0, 1.0)
-	shared_control_explanation(ctx, "pl_brownian", "Brownian motion adds small random nudges, keeping particles from moving too perfectly.")
-	_ = uifw.gui_toggle(ctx, fmt.tprintf("Dense Cell Sampling: %v", sim.settings.force_dense_sampling), "pl_dense_cell_sampling", &sim.settings.force_dense_sampling)
-	shared_control_explanation(ctx, "pl_dense_cell_sampling", "Caps work in overcrowded grid cells using rotating weighted samples. Disable for fully exact force evaluation.")
-
-	uifw.gui_spacer(ctx, 8)
-	uifw.gui_heading(ctx, "Local Constraints")
-	if uifw.gui_toggle(ctx, fmt.tprintf("Collisions: %v", sim.settings.collision_enabled), "pl_collision_enabled", &sim.settings.collision_enabled) {
-		if !particle_life_current_grid_satisfies_settings(sim) {
-			particle_life_request_resource_rebuild(sim)
-		}
-	}
-	if sim.settings.collision_enabled {
-		uifw.gui_text_block(ctx, fmt.tprintf("Distance follows particle size: %.4f", particle_life_collision_distance(sim.settings)), panel.w - ctx.style.panel_padding * 2, ctx.style.text_muted)
-		_ = uifw.gui_numeric_u32(ctx, "Iterations", "pl_collision_iterations", &sim.settings.collision_iterations, 1, 8)
-		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Relaxation: %.2f", sim.settings.collision_relaxation), "pl_collision_relaxation", &sim.settings.collision_relaxation, 0.0, 1.0)
-		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Damping: %.2f", sim.settings.collision_damping), "pl_collision_damping", &sim.settings.collision_damping, 0.0, 1.0)
-	}
-	}
-
+	particle_life_draw_force_and_physics_controls(sim, ctx, panel, section)
 	if section < 0 || section == 7 || section == PARTICLE_LIFE_SECTION_ADVANCED {
 	uifw.gui_spacer(ctx, 8)
 	uifw.gui_heading(ctx, "Camera")

@@ -1028,6 +1028,53 @@ test_slime_mold_camera_uses_shared_unfocused_controls :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_toroidal_remaining_sims_use_shared_camera_and_wrapped_pointer :: proc(t: ^testing.T) {
+	kinds := [?]game.Remaining_Sim_Kind{.Pellets, .Voronoi_CA, .Primordial}
+	for kind in kinds {
+		sim: game.Remaining_Sim_State
+		game.remaining_sim_init(&sim)
+		game.remaining_sim_apply_frame_input_for_kind(&sim, kind, {
+			window_width = 100,
+			window_height = 100,
+			mouse_pos = {100, 50},
+			key_d = true,
+			key_e = true,
+			delta_time = 1.0 / 60.0,
+			camera_sensitivity = 1,
+		})
+		testing.expect(t, sim.camera.target_position[0] > 0)
+		testing.expect(t, sim.camera.target_zoom > 1)
+		testing.expect(t, sim.cursor_world[0] >= -1 && sim.cursor_world[0] < 1)
+		testing.expect(t, sim.cursor_world[1] >= -1 && sim.cursor_world[1] < 1)
+
+		game.remaining_sim_apply_frame_input_for_kind(&sim, kind, {
+			camera_reset = true,
+			delta_time = 1.0 / 60.0,
+			camera_sensitivity = 1,
+		})
+		testing.expect_value(t, sim.camera.position, [2]f32{})
+		testing.expect_value(t, sim.camera.zoom, f32(1))
+	}
+}
+
+@(test)
+test_shared_camera_uniform_and_toroidal_coordinates :: proc(t: ^testing.T) {
+	camera: game.Camera_Control_State
+	game.camera_controls_init(&camera)
+	camera.position = {3, -2}
+	camera.target_position = camera.position
+	camera.zoom = 0.5
+	camera.target_zoom = camera.zoom
+	uniform := game.camera_uniform_data(&camera, 400, 200)
+	testing.expect_value(t, uniform.position, camera.position)
+	testing.expect_value(t, uniform.zoom, f32(0.5))
+	testing.expect_value(t, uniform.aspect_ratio, f32(2))
+	testing.expect_value(t, game.toroidal_world_position({3.25, -2.25}), [2]f32{-0.75, -0.25})
+	testing.expect_value(t, game.infinite_render_tile_count(1), u32(7))
+	testing.expect(t, game.infinite_render_tile_count(0.05) > game.infinite_render_tile_count(1))
+}
+
+@(test)
 test_slime_mold_camera_accepts_controller_pan_and_zoom :: proc(t: ^testing.T) {
 	sim: game.Remaining_Sim_State
 	game.remaining_sim_init(&sim)
@@ -2362,4 +2409,43 @@ test_canvas_tool_number_shortcuts_select_slots_directly :: proc(t: ^testing.T) {
 	game.canvas_tool_update_selection(&set, &state, {canvas_tool_slot = 4})
 	testing.expect_value(t, state.selected_slot, 2)
 	testing.expect(t, !state.changed)
+}
+
+@(test)
+test_particle_life_force_generator_dispatch_matches_strategy_families :: proc(t: ^testing.T) {
+	for generator: u32 = 0; generator <= 21; generator += 1 {
+		dispatched: [game.PARTICLE_LIFE_MAX_SPECIES * game.PARTICLE_LIFE_MAX_SPECIES]f32
+		direct: [game.PARTICLE_LIFE_MAX_SPECIES * game.PARTICLE_LIFE_MAX_SPECIES]f32
+		seed := u32(0x51f15e + generator * 97)
+		game.particle_life_generate_force_matrix(&dispatched, 7, generator, -0.75, 0.65, seed)
+		direct_seed := seed
+		if generator >= 1 && generator <= 6 {
+			_ = game.particle_life_generate_force_classic(&direct, 7, generator, &direct_seed, -0.75, 0.65)
+		} else if generator >= 7 && generator <= 13 {
+			_ = game.particle_life_generate_force_structured(&direct, 7, generator, &direct_seed, -0.75, 0.65)
+		} else {
+			_ = game.particle_life_generate_force_numeric(&direct, 7, generator, &direct_seed, -0.75, 0.65)
+		}
+		for value, index in dispatched {
+			testing.expect_value(t, value, direct[index])
+		}
+	}
+}
+
+@(test)
+test_refactored_dispatch_families_reject_unknown_inputs :: proc(t: ^testing.T) {
+	bridge := new(host.Mcp_Bridge)
+	defer free(bridge)
+	_, handled := host.mcp_bridge_call_application_tool(bridge, "1", "not_a_tool", "{}")
+	testing.expect(t, !handled)
+	state := new(host.Render_Worker_State)
+	defer free(state)
+	runtime := new(host.Render_Worker_Runtime)
+	defer free(runtime)
+	command := host.Ui_To_Render_Command{kind = game.Ui_To_Render_Command_Kind(999)}
+	testing.expect(t, !host.render_worker_handle_lifecycle_command(state, runtime, command))
+	testing.expect(t, !host.render_worker_handle_settings_command(state, runtime, command))
+	testing.expect(t, !host.render_worker_handle_recording_command(state, runtime, command))
+	testing.expect(t, !host.render_worker_handle_simulation_command(state, runtime, command))
+	testing.expect(t, !host.render_worker_handle_preset_command(state, runtime, command))
 }

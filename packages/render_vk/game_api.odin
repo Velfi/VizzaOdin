@@ -284,6 +284,8 @@ flow_background_color :: game.flow_background_color
 flow_mouse_button_down_from_cursor :: game.flow_mouse_button_down_from_cursor
 noise_sync_indices :: game.noise_sync_indices
 Camera_Control_State :: game.Camera_Control_State
+Camera_Uniform_Data :: game.Camera_Uniform_Data
+camera_uniform_data :: game.camera_uniform_data
 SLIME_AGENT_COUNT :: game.SLIME_AGENT_COUNT
 SLIME_MIN_AGENT_COUNT :: game.SLIME_MIN_AGENT_COUNT
 SLIME_MAX_AGENT_COUNT :: game.SLIME_MAX_AGENT_COUNT

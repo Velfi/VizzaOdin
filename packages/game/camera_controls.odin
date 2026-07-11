@@ -21,6 +21,45 @@ Camera_Control_State :: struct {
 	smoothing_factor: f32,
 }
 
+Camera_Uniform_Data :: struct #align(16) {
+	transform_matrix: [16]f32,
+	position: [2]f32,
+	zoom: f32,
+	aspect_ratio: f32,
+}
+
+camera_uniform_data :: proc(camera: ^Camera_Control_State, width, height: f32) -> Camera_Uniform_Data {
+	control: Camera_Control_State
+	if camera != nil {
+		control = camera^
+	} else {
+		camera_controls_init(&control)
+	}
+	camera_controls_sync(&control)
+	zoom := max(control.zoom, CAMERA_MIN_ZOOM)
+	return {
+		transform_matrix = {
+			zoom, 0, 0, 0,
+			0, zoom, 0, 0,
+			0, 0, 1, 0,
+			-control.position[0] * zoom, -control.position[1] * zoom, 0, 1,
+		},
+		position = control.position,
+		zoom = zoom,
+		aspect_ratio = max(width, 1) / max(height, 1),
+	}
+}
+
+toroidal_world_coordinate :: proc(value: f32) -> f32 {
+	wrapped := math.mod(value + 1, 2)
+	if wrapped < 0 {wrapped += 2}
+	return wrapped - 1
+}
+
+toroidal_world_position :: proc(position: [2]f32) -> [2]f32 {
+	return {toroidal_world_coordinate(position[0]), toroidal_world_coordinate(position[1])}
+}
+
 camera_controls_init :: proc(camera: ^Camera_Control_State) {
 	camera^ = {
 		zoom = 1,

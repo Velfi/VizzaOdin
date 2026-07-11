@@ -25,6 +25,9 @@ struct RenderParams {
     float screen_width;
     float screen_height;
     uint foreground_color_mode; // 0 = density, 1 = velocity, 2 = random
+    float2 camera_position;
+    float camera_zoom;
+    uint tile_count;
 };
 
 struct VertexOutput {
@@ -79,39 +82,15 @@ float3 get_particle_color(Particle particle) {
     return base_color + clumped_brightness;
 }
 
-// Calculate wrapped position based on instance index
-float2 get_wrapped_position(float2 base_position, uint wrap_instance) {
-    // Each particle gets rendered 9 times: center + 8 wrapped positions
-    // Instance 0 = center, 1-8 = wrapped positions
-    if (wrap_instance == 0) {
-        return base_position;
-    }
-    
-    // Calculate wrap offsets for the 8 surrounding positions
-    let wrap_offsets = float2[8](
-        float2(-2.0, -2.0), // top-left
-        float2( 0.0, -2.0), // top
-        float2( 2.0, -2.0), // top-right
-        float2(-2.0,  0.0), // left
-        float2( 2.0,  0.0), // right
-        float2(-2.0,  2.0), // bottom-left
-        float2( 0.0,  2.0), // bottom
-        float2( 2.0,  2.0)  // bottom-right
-    );
-    
-    let offset = wrap_offsets[wrap_instance - 1];
-    return base_position + offset;
-}
-
 [shader("vertex")]
 VertexOutput vs_main(
     uint vertex_index : SV_VertexID,
     uint instance_index : SV_InstanceID,
 ) {
-    // Each particle gets rendered 9 times (center + 8 wrapped positions)
-    // So we need to calculate which particle and which wrap instance
-    let particle_index = instance_index / 9;
-    let wrap_instance = instance_index % 9;
+    let tiles = max(params.tile_count, 1u);
+    let tiles_per_world = tiles * tiles;
+    let particle_index = instance_index / tiles_per_world;
+    let tile_index = instance_index % tiles_per_world;
     let vertex_id = vertex_index; // 0-5 within the quad
     
     let particle = particles[particle_index];
@@ -133,12 +112,13 @@ VertexOutput vs_main(
     // Use the pre-calculated particle size that matches collision detection exactly
     let size = params.particle_size; // Already calculated on backend to match collision size
     
-    // Get the wrapped position for this instance
-    let wrapped_position = get_wrapped_position(particle.position, wrap_instance);
-    let world_pos = wrapped_position + pos * size;
+    let tile_center = int2(round(params.camera_position / 2.0));
+    let tile_start = tile_center - int2(int(tiles / 2u));
+    let tile = tile_start + int2(int(tile_index % tiles), int(tile_index / tiles));
+    let world_pos = particle.position + float2(tile) * 2.0 + pos * size;
     
     // Convert to clip coordinates using camera transformation
-    let clip_pos = float4(world_pos.x, world_pos.y, 0.0, 1.0);
+    let clip_pos = float4((world_pos - params.camera_position) * params.camera_zoom, 0.0, 1.0);
     let transformed_pos = clip_pos;
     
     // Color based on mass and merged count

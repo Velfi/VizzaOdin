@@ -39,6 +39,9 @@ Voronoi_Params :: struct #align(16) {
 	resolution_x: f32,
 	resolution_y: f32,
 	jump_distance: f32,
+	camera_position: [2]f32,
+	camera_zoom: f32,
+	tile_count: u32,
 }
 
 Voronoi_Uniforms :: struct #align(16) {
@@ -98,5 +101,5 @@ Voronoi_Gpu_State :: struct {
 	time_accum: f32,
 	needs_rebuild: bool,
 	ready: bool,
+	present_tile_count: u32,
 }
-

@@ -90,6 +90,99 @@ gray_scott_xy_plot_height :: proc(ctx: ^uifw.Gui_Context) -> f32 {
 	return max(ctx.style.row_height * 3.25, f32(206))
 }
 
+gray_scott_draw_mask_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Context, worker: ^Product_Context, section: int) -> bool {
+	changed := false
+	if section < 0 || section == 6 || section == GRAY_SCOTT_SECTION_MASK {
+	if section == GRAY_SCOTT_SECTION_MASK {
+		uifw.gui_heading(ctx, "Mask")
+		uifw.gui_text_block(ctx, "Shape the reaction field with a procedural pattern, selected image, or live camera.", ctx.content_width, ctx.style.text_muted)
+	}
+	pattern_index := int(u32(sim.settings.mask_pattern))
+	if uifw.gui_selector(ctx, fmt.tprintf("Mask Pattern: %s", GRAY_SCOTT_MASK_PATTERN_NAMES[pattern_index]), "mask_pattern", &pattern_index, GRAY_SCOTT_MASK_PATTERN_NAMES[:]) {
+		sim.settings.mask_pattern = Gray_Scott_Mask_Pattern(pattern_index)
+		changed = true
+	}
+	if sim.settings.mask_pattern != .Disabled {
+		target_index := gray_scott_mask_target_to_index(sim.settings.mask_target)
+		if uifw.gui_selector(ctx, fmt.tprintf("Mask Target: %s", GRAY_SCOTT_MASK_TARGET_NAMES[target_index]), "mask_target", &target_index, GRAY_SCOTT_MASK_TARGET_NAMES[:]) {
+			sim.settings.mask_target = gray_scott_mask_target_from_index(target_index)
+			changed = true
+		}
+		if uifw.gui_toggle(ctx, fmt.tprintf("Mirror Horizontal: %v", sim.settings.mask_mirror_horizontal), "mirror_h", &sim.settings.mask_mirror_horizontal) {
+			changed = true
+		}
+		if uifw.gui_toggle(ctx, fmt.tprintf("Mirror Vertical: %v", sim.settings.mask_mirror_vertical), "mirror_v", &sim.settings.mask_mirror_vertical) {
+			changed = true
+		}
+		if uifw.gui_toggle(ctx, fmt.tprintf("Invert Tone: %v", sim.settings.mask_invert_tone), "invert_tone", &sim.settings.mask_invert_tone) {
+			changed = true
+		}
+		if uifw.gui_slider_f32(ctx, fmt.tprintf("Mask Strength: %.2f", sim.settings.mask_strength), "mask_strength", &sim.settings.mask_strength, 0.0, 1.0) {
+			changed = true
+		}
+		if sim.settings.mask_pattern == .Nutrient_Map {
+			fit_index := int(u32(sim.settings.nutrient_image_fit_mode))
+			image_options := shared_default_image_selector_options()
+			image_options.fit_label = "Image Fit"
+			image_options.fit_key = "nutrient_image_fit"
+			image_options.load_label = "Reload Selected"
+			image_options.load_key = "load_nutrient_png"
+			image_options.browse_label = "Choose Image..."
+			image_options.browse_key = "browse_nutrient_png"
+			image_options.clear_key = "clear_nutrient_image"
+			image_options.selected_label = "Selected Image"
+			image_options.empty_label = fmt.tprintf("No image selected (%s)", IMAGE_FILE_FORMAT_LABEL)
+			image_options.selected_path = fixed_string(sim.settings.nutrient_image_path[:])
+			image_result := shared_image_selector(ctx, &fit_index, GRAY_SCOTT_IMAGE_FIT_MODE_NAMES[:], image_options)
+			if image_result.fit_changed {
+				sim.settings.nutrient_image_fit_mode = Gray_Scott_Image_Fit_Mode(u32(max(min(fit_index, len(GRAY_SCOTT_IMAGE_FIT_MODE_NAMES) - 1), 0)))
+				gray_scott_request_nutrient_upload(sim)
+				changed = true
+			}
+			if image_result.load_requested {
+				gray_scott_request_nutrient_upload(sim)
+				changed = true
+			}
+			if image_result.browse_requested {
+				sim.runtime.nutrient_image_dialog_requested = true
+				changed = true
+			}
+			if image_result.clear_requested {
+				write_fixed_string(sim.settings.nutrient_image_path[:], "")
+				sim.runtime.nutrient_image_loaded = false
+				gray_scott_request_nutrient_upload(sim)
+				changed = true
+			}
+			webcam_options := shared_default_webcam_controls_options()
+			webcam_options.active = sim.runtime.webcam_active
+			webcam_options.device_count = gray_scott_webcam_device_count()
+			webcam_result := shared_webcam_controls(ctx, webcam_options)
+			if webcam_result.action == .Stop {
+				gray_scott_stop_webcam(sim)
+				gray_scott_request_nutrient_upload(sim)
+				changed = true
+			} else if webcam_result.action == .Start {
+				preferred_camera := worker == nil ? "" : worker.settings.preferred_camera
+				if gray_scott_start_webcam(sim, preferred_camera) {
+					changed = true
+				}
+			}
+			status := sim.runtime.nutrient_image_loaded ? "Loaded selected image" : "Using procedural nutrient map"
+			if sim.runtime.webcam_active {
+				status = fmt.tprintf("Webcam frames: %d", sim.runtime.webcam_frames)
+			} else if sim.runtime.webcam_permission_denied {
+				status = "Webcam permission denied"
+			} else if gray_scott_webcam_device_count() == 0 {
+				status = "No webcam devices"
+			}
+			uifw.gui_label(ctx, status)
+		}
+	}
+	}
+
+	return changed
+}
+
 gray_scott_controls_content_height :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Context, section := -1) -> f32 {
 	row := ctx.style.row_height + ctx.style.spacing
 	undo_row := sim.runtime.randomize_undo_available ? row : f32(0)
@@ -433,94 +526,7 @@ gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Con
 	shared_control_explanation(ctx, "stability", "Stability controls the safety margin for automatic step subdivision. Lower is safer; higher is faster.")
 	}
 
-	if section < 0 || section == 6 || section == GRAY_SCOTT_SECTION_MASK {
-	if section == GRAY_SCOTT_SECTION_MASK {
-		uifw.gui_heading(ctx, "Mask")
-		uifw.gui_text_block(ctx, "Shape the reaction field with a procedural pattern, selected image, or live camera.", ctx.content_width, ctx.style.text_muted)
-	}
-	pattern_index := int(u32(sim.settings.mask_pattern))
-	if uifw.gui_selector(ctx, fmt.tprintf("Mask Pattern: %s", GRAY_SCOTT_MASK_PATTERN_NAMES[pattern_index]), "mask_pattern", &pattern_index, GRAY_SCOTT_MASK_PATTERN_NAMES[:]) {
-		sim.settings.mask_pattern = Gray_Scott_Mask_Pattern(pattern_index)
-		changed = true
-	}
-	if sim.settings.mask_pattern != .Disabled {
-		target_index := gray_scott_mask_target_to_index(sim.settings.mask_target)
-		if uifw.gui_selector(ctx, fmt.tprintf("Mask Target: %s", GRAY_SCOTT_MASK_TARGET_NAMES[target_index]), "mask_target", &target_index, GRAY_SCOTT_MASK_TARGET_NAMES[:]) {
-			sim.settings.mask_target = gray_scott_mask_target_from_index(target_index)
-			changed = true
-		}
-		if uifw.gui_toggle(ctx, fmt.tprintf("Mirror Horizontal: %v", sim.settings.mask_mirror_horizontal), "mirror_h", &sim.settings.mask_mirror_horizontal) {
-			changed = true
-		}
-		if uifw.gui_toggle(ctx, fmt.tprintf("Mirror Vertical: %v", sim.settings.mask_mirror_vertical), "mirror_v", &sim.settings.mask_mirror_vertical) {
-			changed = true
-		}
-		if uifw.gui_toggle(ctx, fmt.tprintf("Invert Tone: %v", sim.settings.mask_invert_tone), "invert_tone", &sim.settings.mask_invert_tone) {
-			changed = true
-		}
-		if uifw.gui_slider_f32(ctx, fmt.tprintf("Mask Strength: %.2f", sim.settings.mask_strength), "mask_strength", &sim.settings.mask_strength, 0.0, 1.0) {
-			changed = true
-		}
-		if sim.settings.mask_pattern == .Nutrient_Map {
-			fit_index := int(u32(sim.settings.nutrient_image_fit_mode))
-			image_options := shared_default_image_selector_options()
-			image_options.fit_label = "Image Fit"
-			image_options.fit_key = "nutrient_image_fit"
-			image_options.load_label = "Reload Selected"
-			image_options.load_key = "load_nutrient_png"
-			image_options.browse_label = "Choose Image..."
-			image_options.browse_key = "browse_nutrient_png"
-			image_options.clear_key = "clear_nutrient_image"
-			image_options.selected_label = "Selected Image"
-			image_options.empty_label = fmt.tprintf("No image selected (%s)", IMAGE_FILE_FORMAT_LABEL)
-			image_options.selected_path = fixed_string(sim.settings.nutrient_image_path[:])
-			image_result := shared_image_selector(ctx, &fit_index, GRAY_SCOTT_IMAGE_FIT_MODE_NAMES[:], image_options)
-			if image_result.fit_changed {
-				sim.settings.nutrient_image_fit_mode = Gray_Scott_Image_Fit_Mode(u32(max(min(fit_index, len(GRAY_SCOTT_IMAGE_FIT_MODE_NAMES) - 1), 0)))
-				gray_scott_request_nutrient_upload(sim)
-				changed = true
-			}
-			if image_result.load_requested {
-				gray_scott_request_nutrient_upload(sim)
-				changed = true
-			}
-			if image_result.browse_requested {
-				sim.runtime.nutrient_image_dialog_requested = true
-				changed = true
-			}
-			if image_result.clear_requested {
-				write_fixed_string(sim.settings.nutrient_image_path[:], "")
-				sim.runtime.nutrient_image_loaded = false
-				gray_scott_request_nutrient_upload(sim)
-				changed = true
-			}
-			webcam_options := shared_default_webcam_controls_options()
-			webcam_options.active = sim.runtime.webcam_active
-			webcam_options.device_count = gray_scott_webcam_device_count()
-			webcam_result := shared_webcam_controls(ctx, webcam_options)
-			if webcam_result.action == .Stop {
-				gray_scott_stop_webcam(sim)
-				gray_scott_request_nutrient_upload(sim)
-				changed = true
-			} else if webcam_result.action == .Start {
-				preferred_camera := worker == nil ? "" : worker.settings.preferred_camera
-				if gray_scott_start_webcam(sim, preferred_camera) {
-					changed = true
-				}
-			}
-			status := sim.runtime.nutrient_image_loaded ? "Loaded selected image" : "Using procedural nutrient map"
-			if sim.runtime.webcam_active {
-				status = fmt.tprintf("Webcam frames: %d", sim.runtime.webcam_frames)
-			} else if sim.runtime.webcam_permission_denied {
-				status = "Webcam permission denied"
-			} else if gray_scott_webcam_device_count() == 0 {
-				status = "No webcam devices"
-			}
-			uifw.gui_label(ctx, status)
-		}
-	}
-	}
-
+	if gray_scott_draw_mask_controls(sim, ctx, worker, section) {changed = true}
 	if section < 0 || section == 7 {
 	uifw.gui_spacer(ctx, 8)
 	uifw.gui_heading(ctx, "Camera")

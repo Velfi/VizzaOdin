@@ -121,9 +121,12 @@ voronoi_upload_lut :: proc(gpu: ^Voronoi_Gpu_State, settings: ^Voronoi_Settings)
 	_ = color_scheme_write_u32_buffer(scheme, data)
 }
 
-voronoi_write_params :: proc(gpu: ^Voronoi_Gpu_State, frame_slot: int, settings: ^Voronoi_Settings) {
+voronoi_write_params :: proc(gpu: ^Voronoi_Gpu_State, frame_slot: int, settings: ^Voronoi_Settings, camera: ^Camera_Control_State = nil) {
 	if gpu.params_buffers[frame_slot].mapped == nil {return}
 	params := cast(^Voronoi_Params)gpu.params_buffers[frame_slot].mapped
+	camera_data := camera_uniform_data(camera, f32(gpu.width), f32(gpu.height))
+	tile_count := infinite_render_tile_count(camera_data.zoom)
+	gpu.present_tile_count = tile_count
 	params^ = {
 		count = f32(gpu.point_count),
 		color_mode = f32(settings.color_mode),
@@ -133,6 +136,9 @@ voronoi_write_params :: proc(gpu: ^Voronoi_Gpu_State, frame_slot: int, settings:
 		resolution_x = f32(gpu.width),
 		resolution_y = f32(gpu.height),
 		jump_distance = f32(max(gpu.width, gpu.height)),
+		camera_position = camera_data.position,
+		camera_zoom = camera_data.zoom,
+		tile_count = tile_count,
 	}
 }
 
@@ -162,7 +168,7 @@ voronoi_create_descriptors :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_C
 		{binding = 2, descriptorType = .STORAGE_IMAGE, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
 	render_bindings := [3]vk.DescriptorSetLayoutBinding{
-		{binding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+		{binding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.VERTEX, .FRAGMENT}},
 		{binding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
 		{binding = 2, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, stageFlags = {.FRAGMENT}},
 	}
@@ -483,16 +489,27 @@ voronoi_transfer_to_compute_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 }
 
-voronoi_gpu_present :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame) {
+voronoi_gpu_present :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, camera: ^Camera_Control_State = nil) {
 	viewport := vk.Viewport{x = 0, y = 0, width = f32(vk_ctx.swapchain_extent.width), height = f32(vk_ctx.swapchain_extent.height), minDepth = 0, maxDepth = 1}
 	scissor := vk.Rect2D{offset = {0, 0}, extent = vk_ctx.swapchain_extent}
-	voronoi_gpu_present_viewport(gpu, vk_ctx, frame, viewport, scissor)
+	voronoi_gpu_present_viewport(gpu, vk_ctx, frame, viewport, scissor, camera)
 }
 
-voronoi_gpu_present_viewport :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, viewport: vk.Viewport, scissor: vk.Rect2D) {
+voronoi_gpu_present_viewport :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, viewport: vk.Viewport, scissor: vk.Rect2D, camera: ^Camera_Control_State = nil) {
 	if !gpu.ready || gpu.render_pipeline.pipeline == vk.Pipeline(0) {return}
 	image := gpu.jfa_result_is_scratch ? &gpu.jfa_scratch_image : &gpu.jfa_image
 	voronoi_transition_image(vk_ctx, frame.command_buffer, image, .SHADER_READ_ONLY_OPTIMAL)
+	frame_slot := int(frame.frame_index)
+	// Only camera fields differ from the step upload; settings fields remain in
+	// the same mapped uniform and are refreshed by the simulation step.
+	if gpu.params_buffers[frame_slot].mapped != nil {
+		params := cast(^Voronoi_Params)gpu.params_buffers[frame_slot].mapped
+		camera_data := camera_uniform_data(camera, viewport.width, viewport.height)
+		params.camera_position = camera_data.position
+		params.camera_zoom = camera_data.zoom
+		params.tile_count = infinite_render_tile_count(camera_data.zoom)
+		gpu.present_tile_count = params.tile_count
+	}
 	voronoi_gpu_draw_prepared_viewport(gpu, vk_ctx, frame, viewport, scissor)
 }
 
@@ -507,7 +524,8 @@ voronoi_gpu_draw_prepared_viewport :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^eng
 	render_set := gpu.render_sets[int(frame.frame_index)]
 	vk.CmdBindDescriptorSets(frame.command_buffer, .GRAPHICS, gpu.render_pipeline.layout, 0, 1, &render_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
-	vk.CmdDraw(frame.command_buffer, 3, 1, 0, 0)
+	tile_count := max(gpu.present_tile_count, 1)
+	vk.CmdDraw(frame.command_buffer, 6, tile_count * tile_count, 0, 0)
 	engine.vk_cmd_count_draw(vk_ctx)
 }
 

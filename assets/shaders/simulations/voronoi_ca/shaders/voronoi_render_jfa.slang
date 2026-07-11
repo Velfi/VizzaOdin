@@ -27,6 +27,9 @@ struct VoronoiParams {
   float resolution_x;
   float resolution_y;
   float jump_distance;
+  float2 camera_position;
+  float camera_zoom;
+  uint tile_count;
 };
 [[vk::binding(0, 0)]]
 ConstantBuffer<VoronoiParams> params;
@@ -67,11 +70,18 @@ float hash_u32_to_unit_float(uint n) {
 }
 
 [shader("vertex")]
-VSOut vs_main(uint vi : SV_VertexID) {
-  var p = float2[3](float2(-1.0, -3.0), float2(3.0, 1.0), float2(-1.0, 1.0));
+VSOut vs_main(uint vi : SV_VertexID, uint instance_index : SV_InstanceID) {
+  var p = float2[6](
+    float2(-1.0, -1.0), float2(1.0, -1.0), float2(-1.0, 1.0),
+    float2(-1.0, 1.0), float2(1.0, -1.0), float2(1.0, 1.0));
   VSOut out;
   let pos = p[vi];
-  out.pos = float4(pos, 0.0, 1.0);
+  let tiles = max(params.tile_count, 1u);
+  let center = int2(round(params.camera_position / 2.0));
+  let start = center - int2(int(tiles / 2u));
+  let tile = start + int2(int(instance_index % tiles), int(instance_index / tiles));
+  let world_pos = pos + float2(tile) * 2.0;
+  out.pos = float4((world_pos - params.camera_position) * params.camera_zoom, 0.0, 1.0);
   // Flip Y so UV origin matches textureLoad's top-left origin
   out.uv = float2(pos.x * 0.5 + 0.5, -pos.y * 0.5 + 0.5);
   return out;

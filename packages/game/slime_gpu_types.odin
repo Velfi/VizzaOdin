@@ -150,24 +150,12 @@ Slime_Gpu_State :: struct {
 }
 
 slime_camera_uniform_for_state :: proc(width, height: u32, control: ^Camera_Control_State = nil) -> Slime_Camera {
-	camera: Camera_Control_State
-	if control != nil {
-		camera = control^
-	} else {
-		camera_controls_init(&camera)
-	}
-	camera_controls_sync(&camera)
-	zoom := max(camera.zoom, CAMERA_MIN_ZOOM)
+	data := camera_uniform_data(control, f32(width), f32(height))
 	return {
-		transform_matrix = {
-			zoom, 0, 0, 0,
-			0, zoom, 0, 0,
-			0, 0, 1, 0,
-			-camera.position[0] * zoom, -camera.position[1] * zoom, 0, 1,
-		},
-		position = camera.position,
-		zoom = zoom,
-		aspect_ratio = f32(width) / max(f32(height), 1),
+		transform_matrix = data.transform_matrix,
+		position = data.position,
+		zoom = data.zoom,
+		aspect_ratio = data.aspect_ratio,
 	}
 }
 
