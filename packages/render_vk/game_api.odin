@@ -21,10 +21,7 @@ Particle_Life_Settings :: game.Particle_Life_Settings
 Particle_Life_Simulation :: game.Particle_Life_Simulation
 Pellets_Gpu_State :: game.Pellets_Gpu_State
 Pellets_Settings :: game.Pellets_Settings
-Post_Processing_Gpu_State :: game.Post_Processing_Gpu_State
 Post_Processing_Settings :: game.Post_Processing_Settings
-Post_Processing_Image :: game.Post_Processing_Image
-Post_Blur_Params :: game.Post_Blur_Params
 Primordial_Gpu_State :: game.Primordial_Gpu_State
 Primordial_Settings :: game.Primordial_Settings
 Remaining_Sim_State :: game.Remaining_Sim_State

@@ -1323,9 +1323,12 @@ app_pointer_device_for_actions :: proc(actions: Input_Action_Frame, fallback: ui
 
 // Frame input is an ordered event stream, not a mergeable state snapshot:
 // opposite navigation taps, repeated accepts, text edits, and pointer
-// positions must reach the render/UI owner in their original order. Apply
-// backpressure only after the generous command queue fills instead of
-// collapsing distinct interactions into one synthetic frame.
+// positions must reach the render/UI owner in their original order. Keep only
+// a small number of frames in flight so a producer faster than presentation
+// cannot turn the command queue into seconds of input latency. The queue keeps
+// its larger physical capacity for control-command bursts.
+FRAME_INPUT_MAX_PENDING :: 2
+
 app_push_frame_command :: proc(app: ^App_State, cmd: Ui_To_Render_Command) -> bool {
 	if app.frame_processor_mode == .Main_Thread {
 		if engine.queue_try_push(&app.ui_to_render, cmd) {
@@ -1336,7 +1339,7 @@ app_push_frame_command :: proc(app: ^App_State, cmd: Ui_To_Render_Command) -> bo
 		frame_processor_pump(app)
 		return engine.queue_try_push(&app.ui_to_render, cmd)
 	}
-	return engine.queue_push_blocking(&app.ui_to_render, cmd)
+	return engine.queue_push_blocking_below_count(&app.ui_to_render, cmd, FRAME_INPUT_MAX_PENDING)
 }
 
 app_send_frame :: proc(app: ^App_State) {
