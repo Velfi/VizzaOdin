@@ -2284,6 +2284,126 @@ test_remaining_sim_controller_section_uses_supplied_panel_scroll :: proc(t: ^tes
 }
 
 @(test)
+test_primordial_motion_scroll_extent_includes_spacer_and_collision_rows :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1920, 1080, 1)
+
+	sim: game.Remaining_Sim_State
+	game.remaining_sim_init(&sim)
+	sim.primordial.collision_enabled = false
+	row := ctx.style.row_height + ctx.style.spacing
+	spacer := f32(8) + ctx.style.spacing
+	base := game.remaining_sim_controller_section_content_height(&sim, &ctx, .Primordial, 6, 760)
+	expected_base := spacer +
+		ctx.style.heading_line_height + ctx.style.spacing +
+		game.shared_two_axis_pad_height(&ctx) + row * 5
+	testing.expect_value(t, base, expected_base)
+
+	sim.primordial.collision_enabled = true
+	with_collisions := game.remaining_sim_controller_section_content_height(&sim, &ctx, .Primordial, 6, 760)
+	testing.expect_value(t, with_collisions - base, row * 2)
+}
+
+test_scroll_extent_covers_rendered_layout :: proc(t: ^testing.T, ctx: ^uifw.Gui_Context) {
+	testing.expect(t, ctx.scroll_measure_count > 0)
+	testing.expect(t, ctx.scroll_measure_declared[0] + 0.01 >= ctx.scroll_measure_used[0])
+}
+
+@(test)
+test_all_simulation_controller_sections_cover_their_rendered_layout :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1920, 1080, 1)
+	panel := uifw.Rect{0, 0, 760, 520}
+	scroll := f32(0)
+	editor: game.Color_Scheme_Editor_State
+	game.color_scheme_editor_init(&editor)
+
+	gray: game.Gray_Scott_Simulation
+	game.gray_scott_init(&gray, 1280, 720)
+	for section in game.GRAY_SCOTT_CONTROLLER_SECTIONS {
+		uifw.gui_begin_frame(&ctx, {})
+		_ = game.gray_scott_draw_controls(&gray, &ctx, panel, &scroll, nil, &editor, section)
+		test_scroll_extent_covers_rendered_layout(t, &ctx)
+	}
+	uifw.gui_begin_frame(&ctx, {})
+	_ = game.gray_scott_draw_controls(&gray, &ctx, panel, &scroll, nil, &editor, -1)
+	test_scroll_extent_covers_rendered_layout(t, &ctx)
+
+	particle: game.Particle_Life_Simulation
+	game.particle_life_init(&particle, 1280, 720)
+	for section in game.PARTICLE_LIFE_CONTROLLER_SECTIONS {
+		uifw.gui_begin_frame(&ctx, {})
+		game.particle_life_draw_controls(&particle, &ctx, panel, &scroll, nil, &editor, section)
+		test_scroll_extent_covers_rendered_layout(t, &ctx)
+	}
+	uifw.gui_begin_frame(&ctx, {})
+	game.particle_life_draw_controls(&particle, &ctx, panel, &scroll, nil, &editor, -1)
+	test_scroll_extent_covers_rendered_layout(t, &ctx)
+
+	remaining: game.Remaining_Sim_State
+	game.remaining_sim_init(&remaining)
+	audit_remaining := proc(kind: game.Remaining_Sim_Kind, sections: []int, remaining: ^game.Remaining_Sim_State, ctx: ^uifw.Gui_Context, panel: uifw.Rect, editor: ^game.Color_Scheme_Editor_State, scroll: ^f32, t: ^testing.T) {
+		for section in sections {
+			uifw.gui_begin_frame(ctx, {})
+			game.remaining_sim_draw_controls(remaining, ctx, kind, panel, editor, nil, section, scroll)
+			test_scroll_extent_covers_rendered_layout(t, ctx)
+		}
+	}
+	audit_remaining(.Flow_Field, game.FLOW_FIELD_CONTROLLER_SECTIONS[:], &remaining, &ctx, panel, &editor, &scroll, t)
+	audit_remaining(.Pellets, game.PELLETS_CONTROLLER_SECTIONS[:], &remaining, &ctx, panel, &editor, &scroll, t)
+	audit_remaining(.Voronoi_CA, game.VORONOI_CONTROLLER_SECTIONS[:], &remaining, &ctx, panel, &editor, &scroll, t)
+	audit_remaining(.Moire, game.MOIRE_CONTROLLER_SECTIONS[:], &remaining, &ctx, panel, &editor, &scroll, t)
+	audit_remaining(.Vectors, game.VECTORS_CONTROLLER_SECTIONS[:], &remaining, &ctx, panel, &editor, &scroll, t)
+	audit_remaining(.Primordial, game.PRIMORDIAL_CONTROLLER_SECTIONS[:], &remaining, &ctx, panel, &editor, &scroll, t)
+
+	full_sidebar_kinds := [?]game.Remaining_Sim_Kind{.Flow_Field, .Pellets, .Voronoi_CA, .Moire, .Vectors, .Primordial, .Slime_Mold}
+	for kind in full_sidebar_kinds {
+		uifw.gui_begin_frame(&ctx, {})
+		game.remaining_sim_draw_controls(&remaining, &ctx, kind, panel, &editor, nil, -1, &scroll)
+		test_scroll_extent_covers_rendered_layout(t, &ctx)
+	}
+
+	particle.settings.trails_enabled = true
+	particle.settings.collision_enabled = true
+	for section in game.PARTICLE_LIFE_CONTROLLER_SECTIONS {
+		uifw.gui_begin_frame(&ctx, {})
+		game.particle_life_draw_controls(&particle, &ctx, panel, &scroll, nil, &editor, section)
+		test_scroll_extent_covers_rendered_layout(t, &ctx)
+	}
+
+	remaining.flow.field_animation_enabled = true
+	remaining.flow.emitter_mode = .Ring
+	remaining.primordial.collision_enabled = true
+	remaining.primordial.traces_enabled = true
+	remaining.pellets.trails_enabled = true
+	remaining.voronoi.borders_enabled = true
+	audit_remaining(.Flow_Field, game.FLOW_FIELD_CONTROLLER_SECTIONS[:], &remaining, &ctx, panel, &editor, &scroll, t)
+	audit_remaining(.Pellets, game.PELLETS_CONTROLLER_SECTIONS[:], &remaining, &ctx, panel, &editor, &scroll, t)
+	audit_remaining(.Voronoi_CA, game.VORONOI_CONTROLLER_SECTIONS[:], &remaining, &ctx, panel, &editor, &scroll, t)
+	audit_remaining(.Primordial, game.PRIMORDIAL_CONTROLLER_SECTIONS[:], &remaining, &ctx, panel, &editor, &scroll, t)
+
+	settings := game.settings_default()
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, settings)
+	ui.mode = .Slime_Mold
+	ui.slime_controller.panel_open = true
+	for mode in game.Control_Ui_Mode {
+		ui.slime_controller.mode = mode
+		count := game.slime_controller_ui_visible_instrument_count(mode)
+		for index in 0 ..< count {
+			ui.slime_controller.active_index = index
+			uifw.gui_begin_frame(&ctx, {})
+			game.slime_controller_ui_draw_panel(&ui, &ctx, &remaining, panel, nil)
+			test_scroll_extent_covers_rendered_layout(t, &ctx)
+		}
+	}
+}
+
+@(test)
 test_shared_range_slider_normalizes_reversed_endpoints :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)

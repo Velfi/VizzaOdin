@@ -349,6 +349,10 @@ primordial_write_step_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int
 			aspect_ratio = width / max(height, 1),
 			grid_axis = PRIMORDIAL_GRID_AXIS,
 			grid_cell_size = 2.0 / f32(PRIMORDIAL_GRID_AXIS),
+			collision_enabled = settings.collision_enabled ? u32(1) : u32(0),
+			collision_distance = max(settings.particle_size * 2.0, 0.0001),
+			collision_relaxation = clamp(settings.collision_relaxation, 0, 1),
+			collision_damping = clamp(settings.collision_damping, 0, 1),
 		}
 	}
 	if gpu.density_params_buffers[frame_slot].mapped != nil {

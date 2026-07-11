@@ -400,6 +400,8 @@ gui_tooltip_place :: proc(ctx: ^Gui_Context, bounds: Rect, text: string, from_ho
 	ctx.tooltip_from_hover = from_hover
 	ctx.tooltip_rect = gui_overlay_nudge_into_view(ctx, {x, y, w, h})
 	ctx.tooltip_text = text
+	ctx.tooltip_numeric_controls = false
+	ctx.tooltip_numeric_text_editing = false
 }
 
 gui_tooltip :: proc(ctx: ^Gui_Context, bounds: Rect, text: string) {
@@ -426,6 +428,81 @@ gui_tooltip_for_id :: proc(ctx: ^Gui_Context, id: Gui_Id, text: string) {
 	}
 }
 
+gui_numeric_tooltip_for_id :: proc(ctx: ^Gui_Context, id: Gui_Id, text: string, text_editing: bool) {
+	gui_tooltip_for_id(ctx, id, text)
+	if ctx.tooltip_visible && ctx.tooltip_text == text {
+		ctx.tooltip_numeric_controls = true
+		ctx.tooltip_numeric_text_editing = text_editing
+	}
+}
+
+gui_hint_keycap :: proc(ctx: ^Gui_Context, x: ^f32, y, h: f32, label: string) {
+	w := gui_text_width(ctx, label) + ctx.style.spacing_2
+	rect := Rect{x^, y, w, h}
+	gui_round_rect(ctx, rect, ctx.style.radius_control * 0.55, gui_apply_opacity(ctx.style.control_hot, 0.75))
+	gui_round_stroke(ctx, rect, ctx.style.radius_control * 0.55, ctx.style.panel_border, ctx.style.border_width)
+	gui_text_centered(ctx, rect, label, ctx.style.text)
+	x^ += w + ctx.style.spacing_1
+}
+
+gui_hint_label :: proc(ctx: ^Gui_Context, x: ^f32, y, h: f32, label: string, gap := true) {
+	w := gui_text_width(ctx, label)
+	gui_text_clipped(ctx, {x^, y, w, h}, {x^, y + max((h - ctx.style.body_text_height) * 0.5, 0)}, label, ctx.style.text_muted)
+	x^ += w + (gap ? ctx.style.spacing_2 : 0)
+}
+
+gui_numeric_tooltip_controller_icon :: proc(ctx: ^Gui_Context, x: ^f32, y, size: f32, slot: int) {
+	count := f32(UI_KENNEY_INPUT_ICON_COUNT)
+	index := int(ctx.input.controller_prompt_style) * UI_KENNEY_INPUT_ICONS_PER_STYLE + slot
+	gui_image_uv_filtered(ctx, {x^, y, size, size}, Gui_Image_Id(UI_KENNEY_INPUT_ATLAS_TEXTURE_ID), ctx.style.text, {f32(index) / count, 0, 1 / count, 1}, {brightness = 1, contrast = 1})
+	x^ += size + ctx.style.spacing_1
+}
+
+gui_draw_numeric_tooltip_controls :: proc(ctx: ^Gui_Context, content: Rect) {
+	line_h := max(ctx.style.body_line_height, f32(18))
+	y := content.y
+	if ctx.tooltip_numeric_text_editing {
+		x := content.x
+		gui_hint_keycap(ctx, &x, y, line_h, "Enter")
+		gui_hint_label(ctx, &x, y, line_h, "Commit")
+		gui_hint_keycap(ctx, &x, y, line_h, "Esc")
+		gui_hint_label(ctx, &x, y, line_h, "Cancel", false)
+		return
+	}
+	if ctx.input.active_device == .Controller {
+		// Atlas slots: D-pad, shoulders, South, East, left stick.
+		x := content.x
+		gui_numeric_tooltip_controller_icon(ctx, &x, y, line_h, 0)
+		gui_hint_label(ctx, &x, y, line_h, "Adjust")
+		secondary_slot := ctx.input.controller_south_is_accept ? 4 : 3
+		gui_numeric_tooltip_controller_icon(ctx, &x, y, line_h, secondary_slot)
+		gui_hint_label(ctx, &x, y, line_h, "Cycle step", false)
+		y += line_h + ctx.style.spacing_1
+		x = content.x
+		gui_numeric_tooltip_controller_icon(ctx, &x, y, line_h, 5)
+		gui_hint_label(ctx, &x, y, line_h, "Fine")
+		accept_slot := ctx.input.controller_south_is_accept ? 3 : 4
+		gui_numeric_tooltip_controller_icon(ctx, &x, y, line_h, accept_slot)
+		gui_hint_label(ctx, &x, y, line_h, "Commit")
+		gui_hint_label(ctx, &x, y, line_h, "0.01x  0.1x  1x  10x  100x", false)
+		return
+	}
+	x := content.x
+	gui_hint_keycap(ctx, &x, y, line_h, "-/+")
+	gui_hint_label(ctx, &x, y, line_h, "Adjust")
+	gui_hint_keycap(ctx, &x, y, line_h, "Drag")
+	gui_hint_label(ctx, &x, y, line_h, "Adjust")
+	gui_hint_keycap(ctx, &x, y, line_h, "RMB")
+	gui_hint_label(ctx, &x, y, line_h, "Cycle step", false)
+	y += line_h + ctx.style.spacing_1
+	x = content.x
+	gui_hint_keycap(ctx, &x, y, line_h, "Shift")
+	gui_hint_label(ctx, &x, y, line_h, "Fine")
+	gui_hint_keycap(ctx, &x, y, line_h, "Ctrl/Cmd")
+	gui_hint_label(ctx, &x, y, line_h, "10x")
+	gui_hint_label(ctx, &x, y, line_h, "0.01x  0.1x  1x  10x  100x", false)
+}
+
 gui_draw_tooltip_overlay :: proc(ctx: ^Gui_Context) {
 	if !ctx.tooltip_visible {
 		return
@@ -436,7 +513,11 @@ gui_draw_tooltip_overlay :: proc(ctx: ^Gui_Context) {
 	gui_round_stroke(ctx, rect, ctx.style.radius_control, ctx.style.panel_border, ctx.style.border_width)
 	content := gui_inset(rect, 8)
 	gui_scissor_begin(ctx, content)
-	gui_text_wrapped_at(ctx, {content.x, content.y}, ctx.tooltip_text, content.w, ctx.style.text)
+	if ctx.tooltip_numeric_controls {
+		gui_draw_numeric_tooltip_controls(ctx, content)
+	} else {
+		gui_text_wrapped_at(ctx, {content.x, content.y}, ctx.tooltip_text, content.w, ctx.style.text)
+	}
 	gui_scissor_end(ctx)
 }
 

@@ -118,7 +118,7 @@ controller_prompt_draw_context_hint :: proc(gui: ^uifw.Gui_Context, rect: uifw.R
 		items := [?]Controller_Prompt_Hint {
 			{icons = {.Dpad, .Dpad, .Dpad}, icon_count = 1, label = "Adjust"},
 			{icons = {.Left_Stick, .Dpad, .Dpad}, icon_count = 1, label = "Fine"},
-			{icon_count = 0, label = "Secondary: step"},
+			{icons = {back, .Dpad, .Dpad}, icon_count = 1, label = "Step"},
 			{icons = {accept, .Dpad, .Dpad}, icon_count = 1, label = "Commit"},
 			{icons = {back, .Dpad, .Dpad}, icon_count = 1, label = "Cancel"},
 		}

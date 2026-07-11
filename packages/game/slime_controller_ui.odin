@@ -520,7 +520,7 @@ slime_controller_ui_panel_content_height :: proc(gui: ^uifw.Gui_Context, sim: ^R
 
 	#partial switch instrument {
 	case .Look:
-		row_count = 5
+		row_count = 6
 		extra = 8
 		if mode != .Couch && settings.post_processing.blur_enabled {
 			slider_count = 2
@@ -541,7 +541,7 @@ slime_controller_ui_panel_content_height :: proc(gui: ^uifw.Gui_Context, sim: ^R
 		extra = shared_two_axis_pad_height(gui) + 8
 	case .World:
 		row_count = 10
-		extra = shared_two_axis_pad_height(gui)
+		extra = shared_two_axis_pad_height(gui) + 8
 		if settings.position_generator == 7 {
 			row_count += 5
 		}

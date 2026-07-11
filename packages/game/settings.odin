@@ -995,8 +995,8 @@ settings_save_particle_life :: proc(path: string, settings: Particle_Life_Settin
 
 settings_write_primordial_toml :: proc(settings: Primordial_Settings, out: []u8) -> string {
 	color_scheme := settings.color_scheme
-	return fmt.bprintf(out, "[primordial]\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\nparticle_count = %d\nrandom_seed = %d\nposition_generator = \"%s\"\nalpha = %.6f\nbeta = %.6f\nvelocity = %.6f\nradius = %.6f\ndt = %.6f\nparticle_size = %.6f\ndensity_radius = %.6f\nbackground_color_mode = \"%s\"\nforeground_color_mode = \"%s\"\ntraces_enabled = %v\ntrace_fade = %.6f\nwrap_edges = %v\n",
-		color_scheme_name_get(&color_scheme), settings.color_scheme_reversed, settings.post_processing.blur_enabled, settings.post_processing.blur_radius, settings.post_processing.blur_sigma, settings.particle_count, settings.random_seed, PRIMORDIAL_POSITION_GENERATOR_NAMES[settings.position_generator_index], settings.alpha, settings.beta, settings.velocity, settings.radius, settings.dt, settings.particle_size, settings.density_radius, VECTOR_BACKGROUND_MODE_NAMES[settings.background_index], PRIMORDIAL_FOREGROUND_MODE_NAMES[settings.foreground_index], settings.traces_enabled, settings.trace_fade, settings.wrap_edges)
+	return fmt.bprintf(out, "[primordial]\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\nparticle_count = %d\nrandom_seed = %d\nposition_generator = \"%s\"\nalpha = %.6f\nbeta = %.6f\nvelocity = %.6f\nradius = %.6f\ndt = %.6f\nparticle_size = %.6f\ncollision_enabled = %v\ncollision_relaxation = %.6f\ncollision_damping = %.6f\ndensity_radius = %.6f\nbackground_color_mode = \"%s\"\nforeground_color_mode = \"%s\"\ntraces_enabled = %v\ntrace_fade = %.6f\nwrap_edges = %v\n",
+		color_scheme_name_get(&color_scheme), settings.color_scheme_reversed, settings.post_processing.blur_enabled, settings.post_processing.blur_radius, settings.post_processing.blur_sigma, settings.particle_count, settings.random_seed, PRIMORDIAL_POSITION_GENERATOR_NAMES[settings.position_generator_index], settings.alpha, settings.beta, settings.velocity, settings.radius, settings.dt, settings.particle_size, settings.collision_enabled, settings.collision_relaxation, settings.collision_damping, settings.density_radius, VECTOR_BACKGROUND_MODE_NAMES[settings.background_index], PRIMORDIAL_FOREGROUND_MODE_NAMES[settings.foreground_index], settings.traces_enabled, settings.trace_fade, settings.wrap_edges)
 }
 
 settings_save_primordial :: proc(path: string, settings: Primordial_Settings) -> bool {
@@ -1026,6 +1026,9 @@ settings_load_primordial :: proc(path: string, defaults: Primordial_Settings) ->
 	if v, ok := toml_f64(result.toptab, "primordial.radius"); ok {settings.radius = f32(v)}
 	if v, ok := toml_f64(result.toptab, "primordial.dt"); ok {settings.dt = f32(v)}
 	if v, ok := toml_f64(result.toptab, "primordial.particle_size"); ok {settings.particle_size = f32(v)}
+	if v, ok := toml_bool(result.toptab, "primordial.collision_enabled"); ok {settings.collision_enabled = v}
+	if v, ok := toml_f64(result.toptab, "primordial.collision_relaxation"); ok {settings.collision_relaxation = f32(v)}
+	if v, ok := toml_f64(result.toptab, "primordial.collision_damping"); ok {settings.collision_damping = f32(v)}
 	if v, ok := toml_f64(result.toptab, "primordial.density_radius"); ok {settings.density_radius = f32(v)}
 	if v, ok := toml_string(result.toptab, "primordial.background_color_mode"); ok {value: Vector_Background_Mode; if vector_background_mode_from_name(v, &value) {settings.background_color_mode = value; settings.background_index = int(value)}}
 	if v, ok := toml_string(result.toptab, "primordial.foreground_color_mode"); ok {value: Primordial_Foreground_Mode; if primordial_foreground_mode_from_name(v, &value) {settings.foreground_color_mode = value; settings.foreground_index = int(value)}}

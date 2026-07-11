@@ -397,6 +397,7 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 			delta_time = cmd.frame_input.delta_time,
 			active_device = cmd.frame_input.active_device,
 			controller_prompt_style = cmd.frame_input.controller_prompt_style,
+			controller_south_is_accept = app_controller_south_is_accept(runtime.app_ui.settings),
 			pointer_enabled = cmd.frame_input.pointer_enabled,
 			virtual_cursor_pos = cmd.frame_input.virtual_cursor_pos,
 			nav_x = cmd.frame_input.nav_x,

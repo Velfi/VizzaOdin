@@ -41,7 +41,7 @@ remaining_sim_scroll_spacer_height :: proc(gui: ^uifw.Gui_Context, height: f32) 
 	return height + gui.style.spacing
 }
 
-remaining_sim_controls_specific_content_height :: proc(kind: Remaining_Sim_Kind, gui: ^uifw.Gui_Context) -> f32 {
+remaining_sim_controls_specific_content_height :: proc(sim: ^Remaining_Sim_State, kind: Remaining_Sim_Kind, gui: ^uifw.Gui_Context) -> f32 {
 	rows := 0
 	sections := 0
 
@@ -53,7 +53,8 @@ remaining_sim_controls_specific_content_height :: proc(kind: Remaining_Sim_Kind,
 		rows = 3 + 2 + 16 + 3 + 3 + 3
 		sections = 1
 	case .Primordial:
-		rows = 3 + 3 + 3 + 9 + 2
+		rows = 3 + 3 + 3 + 10 + 2
+		if sim.primordial.collision_enabled {rows += 2}
 		sections = 1
 	case .Voronoi_CA:
 		rows = 3 + 1 + 3 + 15
@@ -85,7 +86,7 @@ remaining_sim_controls_content_height :: proc(sim: ^Remaining_Sim_State, gui: ^u
 	height += remaining_sim_scroll_heading_height(gui) // Presets
 	height += remaining_sim_scroll_row_height(gui, preset_fieldset_content_rows(&sim.preset_ui))
 	height += remaining_sim_scroll_spacer_height(gui, 8)
-	height += remaining_sim_controls_specific_content_height(kind, gui)
+	height += remaining_sim_controls_specific_content_height(sim, kind, gui)
 	height += remaining_sim_scroll_heading_height(gui) * 7
 	height += remaining_sim_scroll_row_height(gui, 22)
 	height += remaining_sim_scroll_spacer_height(gui, 8)
@@ -135,19 +136,19 @@ remaining_sim_controller_section_content_height :: proc(sim: ^Remaining_Sim_Stat
 		switch section {
 		case 3: return heading * 2 + row * 6 + uifw.gui_slider_height(gui)
 		case 5:
-			height := heading + row * (sim.flow.field_animation_enabled ? 4 : 3)
+			height := spacer + heading + row * (sim.flow.field_animation_enabled ? 4 : 3)
 			if sim.flow.vector_field_type == .Noise {height += noise_settings_controls_content_height(gui, &sim.flow.noise)}
 			if sim.flow.vector_field_type == .Image {height += row * 9}
 			return height
 		case 6: return heading + row * (sim.flow.emitter_mode == .Ring ? 13 : 12)
-		case 7: return heading + row * 6
+		case 7: return 8 + heading + row * 6
 		case:
 		}
 	case .Pellets:
 		switch section {
 		case 3: return heading * 2 + shared_two_axis_pad_height(gui) + row * 6
 		case 5: return heading + row * 6
-		case 6: return heading + row * 5
+		case 6: return 8 + heading + row * 5
 		case:
 		}
 	case .Voronoi_CA:
@@ -163,7 +164,7 @@ remaining_sim_controller_section_content_height :: proc(sim: ^Remaining_Sim_Stat
 		}
 	case .Vectors:
 		if section == 3 {
-			height := heading + row * 5
+			height := heading + row * 6
 			if sim.vectors.vector_field_type == .Noise {height += noise_settings_controls_content_height(gui, &sim.vectors.noise)}
 			if sim.vectors.vector_field_type == .Image {height += row * 9}
 			return height
@@ -172,13 +173,16 @@ remaining_sim_controller_section_content_height :: proc(sim: ^Remaining_Sim_Stat
 	case .Primordial:
 		switch section {
 		case 3: return heading * 2 + shared_two_axis_pad_height(gui) + row * 5
-		case 5: return heading + row * 3
-		case 6: return heading + row * 4 + shared_two_axis_pad_height(gui)
+		case 5: return 8 + heading + row * 3
+		case 6:
+			rows := 5
+			if sim.primordial.collision_enabled {rows += 2}
+			return spacer + heading + row * f32(rows) + shared_two_axis_pad_height(gui)
 		case:
 		}
 	case:
 	}
-	return remaining_sim_controls_specific_content_height(kind, gui)
+	return remaining_sim_controls_specific_content_height(sim, kind, gui)
 }
 
 remaining_sim_draw_controls :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, panel: uifw.Rect, color_editor: ^Color_Scheme_Editor_State, worker: ^Product_Context = nil, section := -1, panel_scroll: ^f32 = nil) {
@@ -799,6 +803,11 @@ remaining_sim_draw_primordial_settings :: proc(sim: ^Remaining_Sim_State, gui: ^
 	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Velocity: %.2f", settings.velocity), "velocity", &settings.velocity, 0.01, 0.01, 2)
 	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Radius: %.3f", settings.radius), "radius", &settings.radius, 0.001, 0.001, 0.5)
 	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Time Step: %.3f", settings.dt), "primordial_dt", &settings.dt, 0.001, 0, 0.25)
+	_ = uifw.gui_toggle(gui, fmt.tprintf("Collisions: %v", settings.collision_enabled), "primordial_collisions", &settings.collision_enabled)
+	if settings.collision_enabled {
+		_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Collision Relaxation: %.2f", settings.collision_relaxation), "primordial_collision_relaxation", &settings.collision_relaxation, 0.05, 0, 1)
+		_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Collision Damping: %.2f", settings.collision_damping), "primordial_collision_damping", &settings.collision_damping, 0.01, 0, 1)
+	}
 	shared_control_explanation(gui, "primordial_dt", "Time Step is how much simulated time moves forward per update. Higher is faster but less precise.")
 	_ = uifw.gui_toggle(gui, fmt.tprintf("Wrap Edges: %v", settings.wrap_edges), "wrap_edges", &settings.wrap_edges)
 	}

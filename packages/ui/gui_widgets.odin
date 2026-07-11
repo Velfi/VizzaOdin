@@ -262,6 +262,18 @@ gui_numeric_current_scale :: proc(ctx: ^Gui_Context, id: Gui_Id) -> f32 {
 	return 1
 }
 
+gui_numeric_context_hint :: proc(ctx: ^Gui_Context, id: Gui_Id, text_editing: bool) {
+	hint := "Click the value to type it. Use +/- or drag horizontally to adjust; Shift is fine and Ctrl/Cmd is 10x."
+	if text_editing {
+		hint = "Type a value, then press Enter to commit or Escape to cancel."
+	} else if ctx.input.active_device == .Controller {
+		hint = "D-pad adjusts. Press Secondary to cycle the step: 0.01x, 0.1x, 1x, 10x, or 100x. Accept commits; Back cancels."
+	} else if ctx.focus_edit_id == id {
+		hint = "Arrows adjust. Press the secondary mouse button to cycle the step: 0.01x, 0.1x, 1x, 10x, or 100x. Shift is fine; Ctrl/Cmd is 10x."
+	}
+	gui_numeric_tooltip_for_id(ctx, id, hint, text_editing)
+}
+
 gui_numeric_track :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, value, min_value, max_value: f32, editing, prominent: bool, mapping := Gui_Numeric_Mapping.Linear) {
 	range := max(max_value - min_value, 0.000001)
 	t := gui_numeric_normalized(value, min_value, max_value, mapping)
@@ -467,6 +479,7 @@ gui_numeric_u32 :: proc(ctx: ^Gui_Context, label, key: string, value: ^u32, min_
 		gui_numeric_draw_step(ctx, bounds, fmt.tprintf("%d", effective_step))
 	}
 	gui_numeric_track(ctx, id, bounds, f32(value^), f32(min_value), f32(max_value), value_editing && !editing_text, false)
+	gui_numeric_context_hint(ctx, id, editing_text)
 	return changed
 }
 
@@ -590,6 +603,7 @@ gui_numeric_f32_keyed :: proc(ctx: ^Gui_Context, label, key: string, value: ^f32
 		gui_numeric_draw_step(ctx, bounds, fmt.tprintf("%g", speed * adjust_scale))
 	}
 	gui_numeric_track(ctx, id, bounds, value^, min_value, max_value, value_editing && !editing, false, mapping)
+	gui_numeric_context_hint(ctx, id, editing)
 	return changed
 }
 

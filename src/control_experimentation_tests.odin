@@ -112,6 +112,34 @@ test_numeric_precision_mode_cycles_without_requiring_a_button_chord :: proc(t: ^
 }
 
 @(test)
+test_numeric_context_hint_explains_device_specific_magnitude_controls :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	ctx.controller_explicit_activation = true
+	value := f32(50)
+	id := uifw.gui_make_id(&ctx, "hint_number")
+	ctx.focused = id
+	ctx.focus_edit_id = id
+
+	uifw.gui_begin_frame(&ctx, {
+		active_device = .Controller,
+		window_width = 640,
+		window_height = 360,
+		mouse_pos = {-100, -100},
+	})
+	uifw.gui_layout_begin(&ctx, {12, 12, 280, 60}, .Column, 0, 44)
+	_ = uifw.gui_numeric_f32(&ctx, "Value: 50", "hint_number", &value, 1, 0, 100)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect(t, ctx.tooltip_visible)
+	testing.expect(t, !ctx.tooltip_from_hover)
+	testing.expect(t, ctx.tooltip_numeric_controls)
+	testing.expect_value(t, ctx.tooltip_text, "D-pad adjusts. Press Secondary to cycle the step: 0.01x, 0.1x, 1x, 10x, or 100x. Accept commits; Back cancels.")
+}
+
+@(test)
 test_numeric_tracks_support_order_of_magnitude_and_signed_detail_mappings :: proc(t: ^testing.T) {
 	linear_mid := uifw.gui_numeric_normalized(500, 0, 1000, .Linear)
 	log_mid := uifw.gui_numeric_normalized(1, 0.001, 1000, .Logarithmic)

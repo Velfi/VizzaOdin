@@ -56,6 +56,10 @@ struct SimParams {
     float aspect_ratio;
     uint grid_axis;
     float grid_cell_size;
+    uint collision_enabled;
+    float collision_distance;
+    float collision_relaxation;
+    float collision_damping;
 };
 
 [[vk::binding(0, 0)]]
@@ -161,6 +165,45 @@ uint2 count_neighbors(uint particle_index) {
     return uint2(left_count, right_count);
 }
 
+float2 collision_correction(uint particle_index) {
+    if (sim_params.collision_enabled == 0) return float2(0.0, 0.0);
+    let particle = particles_in[particle_index];
+    let axis = int(sim_params.grid_axis);
+    let cell_size = sim_params.grid_cell_size;
+    let center = int2(clamp(int((particle.position.x + 1.0) / cell_size), 0, axis - 1), clamp(int((particle.position.y + 1.0) / cell_size), 0, axis - 1));
+    let cell_radius = min(int(ceil(sim_params.collision_distance / cell_size)), axis / 2);
+    let minimum_sq = sim_params.collision_distance * sim_params.collision_distance;
+    float2 correction = float2(0.0, 0.0);
+    for (var oy = -cell_radius; oy <= cell_radius; oy++) for (var ox = -cell_radius; ox <= cell_radius; ox++) {
+        var cx = center.x + ox; var cy = center.y + oy;
+        if (sim_params.wrap_edges == 1) { cx = (cx % axis + axis) % axis; cy = (cy % axis + axis) % axis; }
+        else if (cx < 0 || cy < 0 || cx >= axis || cy >= axis) continue;
+        var other_index = grid_heads[uint(cy * axis + cx)];
+        var guard = 0u;
+        while (other_index != 0xffffffffu && guard < sim_params.particle_count) {
+            if (other_index != particle_index) {
+                var delta = particle.position - particles_in[other_index].position;
+                if (sim_params.wrap_edges == 1) {
+                    if (delta.x > 1.0) delta.x -= 2.0; else if (delta.x < -1.0) delta.x += 2.0;
+                    if (delta.y > 1.0) delta.y -= 2.0; else if (delta.y < -1.0) delta.y += 2.0;
+                }
+                let distance_sq = dot(delta, delta);
+                if (distance_sq < minimum_sq) {
+                    var normal = float2(1.0, 0.0); var distance = 0.0;
+                    if (distance_sq > 0.00000001) { distance = sqrt(distance_sq); normal = delta / distance; }
+                    else { let angle = float(min(particle_index, other_index) * 1664525u + max(particle_index, other_index) * 1013904223u) / 4294967295.0 * 2.0 * PI; normal = float2(cos(angle), sin(angle)); if (particle_index > other_index) normal = -normal; }
+                    correction += normal * (sim_params.collision_distance - distance) * 0.5;
+                }
+            }
+            other_index = grid_next[other_index]; guard++;
+        }
+    }
+    let correction_length = length(correction);
+    let max_correction = sim_params.collision_distance * 0.5;
+    if (correction_length > max_correction) correction *= max_correction / correction_length;
+    return correction * sim_params.collision_relaxation;
+}
+
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void main(uint3 global_id : SV_DispatchThreadID) {
@@ -246,6 +289,10 @@ void main(uint3 global_id : SV_DispatchThreadID) {
     
     particle.position.x += dx;
     particle.position.y += dy;
+
+    let correction = collision_correction(particle_index);
+    particle.position += correction;
+    if (dot(correction, correction) > 0.0) speed *= sim_params.collision_damping;
     
     // Apply edge wrapping if enabled (using [-1,1] world space)
     if (sim_params.wrap_edges == 1) {

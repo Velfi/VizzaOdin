@@ -155,6 +155,7 @@ Input_State :: struct {
 	delta_time: f32,
 	active_device: Input_Device_Kind,
 	controller_prompt_style: Controller_Prompt_Style,
+	controller_south_is_accept: bool,
 	pointer_enabled: bool,
 	virtual_cursor_pos: Vec2,
 	nav_x: f32,
@@ -647,6 +648,8 @@ Gui_Context :: struct {
 	tooltip_from_hover: bool,
 	tooltip_rect: Rect,
 	tooltip_text: string,
+	tooltip_numeric_controls: bool,
+	tooltip_numeric_text_editing: bool,
 	notice_text: [192]u8,
 	notice_text_len: int,
 	notice_seconds: f32,
@@ -673,6 +676,11 @@ Gui_Context :: struct {
 	next_scroll_hit_count: int,
 	scroll_focus_records: [MAX_GUI_SCROLL_FOCUS_RECORDS]Gui_Scroll_Focus_Record,
 	scroll_focus_record_count: int,
+	last_scroll_declared_height: f32,
+	last_scroll_used_height: f32,
+	scroll_measure_declared: [MAX_GUI_SCROLL_HITS]f32,
+	scroll_measure_used: [MAX_GUI_SCROLL_HITS]f32,
+	scroll_measure_count: int,
 	id_stack: [MAX_GUI_ID_DEPTH]Gui_Id,
 	id_depth: int,
 	debug_registered_ids: [MAX_GUI_DEBUG_IDS]Gui_Id,
@@ -943,6 +951,8 @@ gui_begin_frame :: proc(ctx: ^Gui_Context, input: Input_State) {
 	ctx.combo_popup_visible = false
 	ctx.tooltip_visible = false
 	ctx.tooltip_from_hover = false
+	ctx.tooltip_numeric_controls = false
+	ctx.tooltip_numeric_text_editing = false
 	if ctx.notice_seconds > 0 {
 		// Notices must remain transient even when a host redraw supplies a zero
 		// delta (for example, an event-driven redraw or a resumed window).
@@ -957,6 +967,7 @@ gui_begin_frame :: proc(ctx: ^Gui_Context, input: Input_State) {
 	ctx.next_overlay_input_rect_count = 0
 	ctx.overlay_input_depth = 0
 	ctx.scroll_depth = 0
+	ctx.scroll_measure_count = 0
 	ctx.scroll_focus_record_count = 0
 	ctx.wheel_scroll_consumed = false
 	ctx.wheel_scroll_depth = -1
@@ -1517,6 +1528,10 @@ gui_scroll_begin_internal :: proc(ctx: ^Gui_Context, viewport: Rect, content_hei
 }
 
 gui_scroll_end :: proc(ctx: ^Gui_Context) {
+	if ctx.layout_depth > 0 {
+		layout := ctx.layout_stack[ctx.layout_depth - 1]
+		ctx.last_scroll_used_height = max(layout.cursor.y - layout.bounds.y - layout.gap, 0)
+	}
 	gui_layout_end(ctx)
 	gui_input_clip_end(ctx)
 	gui_scissor_end(ctx)
@@ -1526,6 +1541,12 @@ gui_scroll_end :: proc(ctx: ^Gui_Context) {
 	}
 	ctx.scroll_depth -= 1
 	frame := ctx.scroll_stack[ctx.scroll_depth]
+	ctx.last_scroll_declared_height = frame.content_height
+	if ctx.scroll_measure_count < len(ctx.scroll_measure_declared) {
+		ctx.scroll_measure_declared[ctx.scroll_measure_count] = frame.content_height
+		ctx.scroll_measure_used[ctx.scroll_measure_count] = ctx.last_scroll_used_height
+		ctx.scroll_measure_count += 1
+	}
 	gui_scroll_edge_fades(ctx, frame.viewport, frame.content_height, frame.scroll)
 	gui_scrollbar(ctx, frame.viewport, frame.content_height, frame.scroll)
 }

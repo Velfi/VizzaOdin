@@ -60,6 +60,10 @@ Primordial_Sim_Params :: struct #align(16) {
 	aspect_ratio: f32,
 	grid_axis: u32,
 	grid_cell_size: f32,
+	collision_enabled: u32,
+	collision_distance: f32,
+	collision_relaxation: f32,
+	collision_damping: f32,
 }
 
 Primordial_Density_Params :: struct #align(16) {
