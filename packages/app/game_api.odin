@@ -8,11 +8,15 @@ import rendervk "../render_vk"
 // are narrowed.
 App_Mode :: game.App_Mode
 App_Settings :: game.App_Settings
+Ui_Component_Fixture :: game.Ui_Component_Fixture
+Ui_Component_Fixture_State :: game.Ui_Component_Fixture_State
 app_input_axis :: game.app_input_axis
 app_controller_south_is_accept :: game.app_controller_south_is_accept
 app_controller_start_is_pause :: game.app_controller_start_is_pause
 app_controller_right_shoulder_is_next :: game.app_controller_right_shoulder_is_next
 app_controller_right_trigger_is_primary :: game.app_controller_right_trigger_is_primary
+app_ui_navigate_immediate :: game.app_ui_navigate_immediate
+app_ui_mode_transition_cancel :: game.app_ui_mode_transition_cancel
 Color_Scheme_Name :: game.Color_Scheme_Name
 Flow_Foreground_Mode :: game.Flow_Foreground_Mode
 Flow_Settings :: game.Flow_Settings

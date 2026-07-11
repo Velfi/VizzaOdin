@@ -240,15 +240,26 @@ noise_sync_indices :: proc(settings: ^Noise_Settings) {
 
 noise_sample_2d :: proc(settings: ^Noise_Settings, x, y: f32, t: f32 = 0) -> f32 {
 	p := noise_transform_position(settings, x, y)
-	p = noise_apply_domain_warp(settings, p, t)
+	return noise_sample_transformed_2d(settings, p, t)
+}
+
+// Samples coordinates that already have placement frequency, rotation, anchor,
+// and offset applied. Dense renderers can hoist the invariant transform out of
+// their inner loop instead of recomputing sin/cos for every sample.
+noise_sample_transformed_2d :: proc(settings: ^Noise_Settings, p: [2]f32, t: f32 = 0) -> f32 {
+	warped := noise_apply_domain_warp(settings, p, t)
 	v: f32
 	if settings.fractal_mode == .Single {
-		v = noise_sample_kind(settings, p, t, settings.seed)
+		v = noise_sample_kind(settings, warped, t, settings.seed)
 	} else {
-		v = noise_sample_fractal(settings, p, t)
+		v = noise_sample_fractal(settings, warped, t)
 	}
 	v = math.clamp(v * settings.amplitude * settings.noise_strength, -1, 1)
 	return v
+}
+
+noise_sample01_transformed_2d :: proc(settings: ^Noise_Settings, p: [2]f32, t: f32 = 0) -> f32 {
+	return math.clamp(noise_sample_transformed_2d(settings, p, t) * 0.5 + 0.5, 0, 1)
 }
 
 noise_sample01_2d :: proc(settings: ^Noise_Settings, x, y: f32, t: f32 = 0) -> f32 {

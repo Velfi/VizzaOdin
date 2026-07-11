@@ -551,6 +551,12 @@ render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Rend
 		mode_before_navigation := runtime.app_ui.mode
 		app_ui_navigate(&runtime.app_ui, cmd.app_mode)
 		render_worker_apply_main_menu_palette_after_navigation(runtime, mode_before_navigation)
+	case .Set_Ui_Component_Fixture:
+		runtime.app_ui.component_fixture = cmd.component_fixture
+		runtime.app_ui.component_fixture_state = cmd.component_fixture_state
+		runtime.app_ui.component_fixture_value = cmd.component_fixture_value
+		app_ui_navigate_immediate(&runtime.app_ui, .Theme_Preview)
+		app_ui_mode_transition_cancel(&runtime.app_ui)
 	case .Apply_Builtin_Preset:
 		if render_worker_apply_builtin_preset(runtime, cmd.app_mode, cmd.builtin_preset_index) {
 			render_worker_publish_preset_result(state, true, fmt.tprintf("Applied built-in preset %d for %v", cmd.builtin_preset_index, cmd.app_mode))

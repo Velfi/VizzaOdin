@@ -428,7 +428,7 @@ test_gui_stable_id_label_preserves_focus_across_value_change :: proc(t: ^testing
 	uifw.gui_begin_frame(&ctx, {key_right = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 80}, .Column, 0, 44)
 	uifw.gui_push_id(&ctx, "settings")
-	testing.expect(t, uifw.gui_number_drag_f32(&ctx, "Value: 1", "value", &value, 1, 0, 10))
+	testing.expect(t, uifw.gui_numeric_f32(&ctx, "Value: 1", "value", &value, 1, 0, 10))
 	uifw.gui_pop_id(&ctx)
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
@@ -439,7 +439,7 @@ test_gui_stable_id_label_preserves_focus_across_value_change :: proc(t: ^testing
 	uifw.gui_begin_frame(&ctx, {})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 80}, .Column, 0, 44)
 	uifw.gui_push_id(&ctx, "settings")
-	_ = uifw.gui_number_drag_f32(&ctx, "Value: 2", "value", &value, 1, 0, 10)
+	_ = uifw.gui_numeric_f32(&ctx, "Value: 2", "value", &value, 1, 0, 10)
 	uifw.gui_pop_id(&ctx)
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
@@ -460,7 +460,7 @@ test_gui_number_input_disabled_draws_muted_and_ignores_input :: proc(t: ^testing
 
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {12, 12}, mouse_down = true, mouse_pressed = true, wheel_delta = 1})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 44}, .Column, 0, 44)
-	changed := uifw.gui_number_drag_f32(&ctx, "Value: 10", "value", &value, 1, 0, 100, false)
+	changed := uifw.gui_numeric_f32(&ctx, "Value: 10", "value", &value, 1, 0, 100, false)
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
 
@@ -521,12 +521,12 @@ test_gui_number_input_supports_mouse_drag_and_typing :: proc(t: ^testing.T) {
 	value := f32(10)
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {10, 10}, mouse_down = true, mouse_pressed = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 80}, .Column, 0, 44)
-	_ = uifw.gui_number_drag_f32(&ctx, "Number", "number", &value, 1, 0, 100)
+	_ = uifw.gui_numeric_f32(&ctx, "Number", "number", &value, 1, 0, 100)
 	uifw.gui_layout_end(&ctx)
 
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {30, 10}, mouse_down = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 80}, .Column, 0, 44)
-	testing.expect(t, uifw.gui_number_drag_f32(&ctx, "Number", "number", &value, 1, 0, 100))
+	testing.expect(t, uifw.gui_numeric_f32(&ctx, "Number", "number", &value, 1, 0, 100))
 	uifw.gui_layout_end(&ctx)
 	testing.expect(t, value > 10)
 
@@ -536,7 +536,7 @@ test_gui_number_input_supports_mouse_drag_and_typing :: proc(t: ^testing.T) {
 	ctx.focused = uifw.gui_make_id(&ctx, "number")
 	uifw.gui_begin_frame(&ctx, {text_input = text_input, text_input_len = 2})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 80}, .Column, 0, 44)
-	testing.expect(t, uifw.gui_number_drag_f32(&ctx, "Number", "number", &value, 1, 0, 100))
+	testing.expect(t, uifw.gui_numeric_f32(&ctx, "Number", "number", &value, 1, 0, 100))
 	uifw.gui_layout_end(&ctx)
 	testing.expect_value(t, value, f32(42))
 }
@@ -554,19 +554,19 @@ test_gui_number_input_arrows_choose_value_or_text_mode :: proc(t: ^testing.T) {
 
 	uifw.gui_begin_frame(&ctx, {key_right = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 80}, .Column, 0, 44)
-	testing.expect(t, uifw.gui_number_drag_f32(&ctx, "Number", "number", &value, 1, 0, 100))
+	testing.expect(t, uifw.gui_numeric_f32(&ctx, "Number", "number", &value, 1, 0, 100))
 	uifw.gui_layout_end(&ctx)
 	testing.expect_value(t, value, f32(11))
 	testing.expect_value(t, ctx.text_edit_id, uifw.GUI_ID_NONE)
 
 	ctx.text_edit_id = id
-	uifw.gui_number_edit_set_value(&ctx, value)
+	uifw.gui_numeric_edit_set_value(&ctx, value)
 	ctx.text_edit_caret = 0
 	ctx.text_edit_anchor = 0
 
 	uifw.gui_begin_frame(&ctx, {key_right = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 80}, .Column, 0, 44)
-	testing.expect(t, !uifw.gui_number_drag_f32(&ctx, "Number", "number", &value, 1, 0, 100))
+	testing.expect(t, !uifw.gui_numeric_f32(&ctx, "Number", "number", &value, 1, 0, 100))
 	uifw.gui_layout_end(&ctx)
 	testing.expect_value(t, value, f32(11))
 	testing.expect_value(t, ctx.text_edit_caret, 1)
@@ -583,13 +583,13 @@ test_gui_number_input_drag_does_not_scrub_while_editing :: proc(t: ^testing.T) {
 	ctx.focused = id
 	ctx.active = id
 	ctx.text_edit_id = id
-	uifw.gui_number_edit_set_value(&ctx, value)
+	uifw.gui_numeric_edit_set_value(&ctx, value)
 	ctx.text_edit_caret = ctx.text_edit_len
 	ctx.text_edit_anchor = ctx.text_edit_len
 
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {30, 10}, mouse_down = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 80}, .Column, 0, 44)
-	testing.expect(t, !uifw.gui_number_drag_f32(&ctx, "Number", "number", &value, 1, 0, 100))
+	testing.expect(t, !uifw.gui_numeric_f32(&ctx, "Number", "number", &value, 1, 0, 100))
 	uifw.gui_layout_end(&ctx)
 	testing.expect_value(t, value, f32(10))
 }
@@ -1626,6 +1626,22 @@ test_gui_tooltip_nudges_inside_viewport :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_gui_tooltip_width_scales_with_large_text :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	ctx.style.body_char_width = 30
+	ctx.style.body_line_height = 60
+	uifw.gui_begin_frame(&ctx, {window_width = 1680, window_height = 570, mouse_pos = {20, 20}})
+	uifw.gui_tooltip(&ctx, {0, 0, 80, 80}, "Sensor Angle and Distance set how wide and how far ahead each agent can sense trails.")
+
+	testing.expect(t, ctx.tooltip_visible)
+	testing.expect(t, ctx.tooltip_rect.w > 420)
+	testing.expect(t, ctx.tooltip_rect.h <= 570 - ctx.style.spacing_1 * 2)
+}
+
+@(test)
 test_gui_text_input_accepts_text_and_backspace :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
@@ -2024,7 +2040,7 @@ test_gui_number_input_paste_filters_to_numeric_text :: proc(t: ^testing.T) {
 
 	uifw.gui_begin_frame(&ctx, {key_ctrl = true, key_v = true, clipboard_paste = clipboard, clipboard_paste_len = clipboard_len})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 80}, .Column, 0, 44)
-	testing.expect(t, uifw.gui_number_drag_f32(&ctx, "Number", "number", &value, 1, 0, 100))
+	testing.expect(t, uifw.gui_numeric_f32(&ctx, "Number", "number", &value, 1, 0, 100))
 	uifw.gui_layout_end(&ctx)
 	testing.expect_value(t, value, f32(42))
 	testing.expect_value(t, string(ctx.text_edit_buffer[:ctx.text_edit_len]), "42")

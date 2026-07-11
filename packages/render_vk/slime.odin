@@ -14,7 +14,8 @@ slime_gpu_ensure :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, sett
 }
 
 slime_gpu_ensure_size :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, settings: ^Slime_Settings, width, height: u32) -> bool {
-	return slime_gpu_ensure_size_count(gpu, vk_ctx, settings, width, height, SLIME_AGENT_COUNT)
+	agent_count := max(min(settings.agent_count, SLIME_MAX_AGENT_COUNT), SLIME_MIN_AGENT_COUNT)
+	return slime_gpu_ensure_size_count(gpu, vk_ctx, settings, width, height, agent_count)
 }
 
 slime_gpu_ensure_size_count :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, settings: ^Slime_Settings, width, height, agent_count: u32) -> bool {
@@ -282,10 +283,12 @@ slime_write_uniforms :: proc(gpu: ^Slime_Gpu_State, frame_slot: int, settings: ^
 			random_seed = settings.random_seed,
 			position_generator = settings.position_generator,
 			delta_time = max(dt, 0),
+			agent_count = gpu.agent_count,
 			webcam_live = gpu.webcam_live ? 1 : 0,
 			webcam_fit_mode = u32(gpu.webcam_fit_mode),
 			webcam_width = gpu.webcam_images[frame_slot].width,
 			webcam_height = gpu.webcam_images[frame_slot].height,
+			isotropic_jitter = settings.isotropic_jitter ? 1 : 0,
 		}
 	}
 	if gpu.cursor_buffers[frame_slot].mapped != nil {

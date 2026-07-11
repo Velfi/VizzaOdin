@@ -64,7 +64,7 @@ endif
 STEAM_REDIST_SRC := $(STEAM_SDK_LOCATION)/redistributable_bin/$(STEAM_REDIST_SUBDIR)/$(STEAM_REDIST_FILE)
 ODIN_FLAGS ?= -o:none
 
-.PHONY: help run run-macos-vulkan build build-steam run-steam copy-steam-redist check check-boundaries test perf-particle-life fmt clean distclean shaders deps install-slangc mcp mcp-macos-vulkan theme-preview theme-preview-mcp profile-ui-trace package-macos steam-upload-preview ui-font-atlas tomlc17 textshape
+.PHONY: help run run-macos-vulkan build build-steam run-steam copy-steam-redist check check-boundaries test perf-particle-life fmt clean distclean shaders deps install-slangc mcp mcp-macos-vulkan theme-preview theme-preview-mcp ui-component profile-ui-trace package-macos steam-upload-preview ui-font-atlas tomlc17 textshape
 
 help:
 	@printf '%s\n' \
@@ -74,6 +74,7 @@ help:
 		'  mcp                 Build and run in MCP mode' \
 		'  theme-preview       Build and run the theme preview' \
 		'  theme-preview-mcp   Run the theme preview in MCP mode' \
+		'  ui-component       Render one component (COMPONENT=number STATE=editing)' \
 		'  profile-ui-trace    Build, launch, and record an Instruments trace' \
 		'' \
 		'Build and validation:' \
@@ -115,6 +116,9 @@ theme-preview: shaders build
 
 theme-preview-mcp: shaders build
 	$(MACOS_VULKAN_ENV) $(BUILD_DIR)/$(APP) --theme-preview --mcp
+
+ui-component: shaders build
+	python3 scripts/render_ui_component.py "$${COMPONENT:-number}" --state "$${STATE:-rest}" --value "$${VALUE:-0.58}" $${OUTPUT:+--output "$$OUTPUT"}
 
 profile-ui-trace: shaders build
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \

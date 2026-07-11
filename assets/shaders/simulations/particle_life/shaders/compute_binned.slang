@@ -16,6 +16,8 @@ ConstantBuffer<GridParams> grid_params;
 RWStructuredBuffer<Particle> particles_out;
 [[vk::binding(9, 0)]]
 StructuredBuffer<uint> grid_offsets;
+[[vk::binding(12, 0)]]
+RWStructuredBuffer<float2> far_force_cache;
 
 static uint rng_state;
 
@@ -102,7 +104,7 @@ float calculate_force(float distance, float attraction) {
     return 0.0;
 }
 
-void accumulate_neighbor_force(float2 particle_position, uint particle_species, uint other_index, inout float2 force) {
+void accumulate_neighbor_force(float2 particle_position, uint particle_species, uint other_index, float near_distance_sq, float sample_weight, inout float2 near_force, inout float2 far_force) {
 	let delta = wrapped_distance(particle_position, particles[other_index].position);
     let distance_sq = dot(delta, delta);
     let max_distance_sq = params.max_distance * params.max_distance;
@@ -112,7 +114,12 @@ void accumulate_neighbor_force(float2 particle_position, uint particle_species, 
     let distance = sqrt(distance_sq);
 	let attraction = get_force(particle_species, particles[other_index].species);
     let force_magnitude = calculate_force(distance, attraction);
-    force += (delta / distance) * force_magnitude;
+    let contribution = (delta / distance) * force_magnitude * sample_weight;
+    if (distance_sq <= near_distance_sq) {
+        near_force += contribution;
+    } else {
+        far_force += contribution;
+    }
 }
 
 [shader("compute")]
@@ -126,12 +133,21 @@ void main(uint3 global_id : SV_DispatchThreadID) {
     init_rng(index);
 
     var particle = particles[index];
-    var force = float2(0.0, 0.0);
+    var near_force = float2(0.0, 0.0);
+    var far_force = float2(0.0, 0.0);
     let center_cell = world_to_grid(particle.position);
     let radius = int(grid_params.neighbor_radius_cells);
 	let cell_width = grid_params.world_width / float(grid_params.grid_width);
 	let cell_height = grid_params.world_height / float(grid_params.grid_height);
 	let max_distance_sq = params.max_distance * params.max_distance;
+    // Refresh complete workgroups together so inactive lanes do not serialize
+    // behind active far-field traversal. Particle indices are spatially mixed,
+    // so rotating workgroups still distributes refreshes across the world.
+    let refresh_stride = max(params.force_refresh_stride, 1u);
+    let refresh_phase = params.random_seed % refresh_stride;
+    let refresh_far_force = refresh_stride == 1u || ((index / 64u) % refresh_stride) == refresh_phase;
+    let near_distance = min(params.max_distance, 0.05);
+    let near_distance_sq = near_distance * near_distance;
 
     for (var dy = -radius; dy <= radius; dy++) {
         for (var dx = -radius; dx <= radius; dx++) {
@@ -140,7 +156,8 @@ void main(uint3 global_id : SV_DispatchThreadID) {
 			// contribute and need no linked-list traversal.
 			let cell_distance_x = float(max(abs(dx) - 1, 0)) * cell_width;
 			let cell_distance_y = float(max(abs(dy) - 1, 0)) * cell_height;
-			if (cell_distance_x * cell_distance_x + cell_distance_y * cell_distance_y > max_distance_sq) {
+			let cell_distance_sq = cell_distance_x * cell_distance_x + cell_distance_y * cell_distance_y;
+			if (cell_distance_sq > max_distance_sq || (!refresh_far_force && cell_distance_sq > near_distance_sq)) {
 				continue;
 			}
             var cx = int(center_cell.x) + dx;
@@ -155,14 +172,28 @@ void main(uint3 global_id : SV_DispatchThreadID) {
 			let cell_index = grid_coord_to_index(uint2(uint(cx), uint(cy)));
 			let cell_start = grid_offsets[cell_index];
 			let cell_count = grid_heads[cell_index];
-			for (var slot = 0u; slot < cell_count; slot++) {
+			let sample_limit = params.force_sample_limit;
+			let sample_count = sample_limit == 0u ? cell_count : min(cell_count, sample_limit);
+			let sample_weight = sample_count > 0u ? float(cell_count) / float(sample_count) : 1.0;
+			// Sparse cells remain exact. Dense cells use evenly spaced samples with a
+			// rotating offset, avoiding both a fixed-neighbor bias and unbounded work.
+			let sample_offset = cell_count > 0u ? (index * 1664525u + cell_index * 1013904223u + params.random_seed) % cell_count : 0u;
+			for (var sample = 0u; sample < sample_count; sample++) {
+				let slot = (sample_offset + (sample * cell_count) / sample_count) % cell_count;
 				let neighbor_index = particle_next[cell_start + slot];
 				if (neighbor_index != index) {
-					accumulate_neighbor_force(particle.position, particle.species, neighbor_index, force);
+					accumulate_neighbor_force(particle.position, particle.species, neighbor_index, near_distance_sq, sample_weight, near_force, far_force);
 				}
 			}
         }
     }
+
+    if (refresh_far_force) {
+        far_force_cache[index] = far_force;
+    } else {
+        far_force = far_force_cache[index];
+    }
+    var force = near_force + far_force;
 
     if (params.cursor_active > 0) {
         let cursor_pos = float2(params.cursor_x, params.cursor_y);

@@ -578,7 +578,9 @@ Slime_Settings :: struct {
 	color_scheme: Color_Scheme_Name,
 	color_scheme_reversed: bool,
 	post_processing: Post_Processing_Settings,
+	agent_count: u32,
 	agent_jitter: f32,
+	isotropic_jitter: bool,
 	agent_heading_start: f32,
 	agent_heading_end: f32,
 	agent_sensor_angle: f32,
@@ -814,7 +816,9 @@ slime_settings_default :: proc() -> Slime_Settings {
 	settings: Slime_Settings
 	settings = {
 		post_processing = post_processing_default_settings(),
+		agent_count = SLIME_AGENT_COUNT,
 		agent_jitter = 0.04,
+		isotropic_jitter = true,
 		agent_heading_start = 0.0,
 		agent_heading_end = 360.0,
 		agent_sensor_angle = 0.3,
@@ -1026,6 +1030,7 @@ remaining_sim_apply_builtin_preset :: proc(sim: ^Remaining_Sim_State, kind: Rema
 		}
 		slime_settings_preserve_color_scheme(&settings, sim.slime)
 		sim.slime = settings
+		slime_request_reset(sim)
 	case:
 	}
 }

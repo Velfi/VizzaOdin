@@ -34,11 +34,12 @@ struct SimSizeUniform {
     uint random_seed;
     uint position_generator;
     float delta_time;
-    float _pad_time;
+    uint agent_count;
     uint webcam_live;
     uint webcam_fit_mode;
     uint webcam_width;
     uint webcam_height;
+    uint isotropic_jitter;
 };
 
 struct CursorParams {
@@ -198,20 +199,12 @@ float sample_combined_map_fast(float2 pos) {
 
 // Get mask factor for the current position
 float get_mask_factor(float x, float y) {
-    // Sample from precomputed mask map with unified mirror/invert
+    if (sim_size.mask_pattern == 0) { return 0.0; }
     return sample_mask_with_mirror_invert(float2(x, y));
 }
 
 // Parameters for the simulation (now mostly from uniform)
 static const float TIME_STEP = 0.016; // Legacy movement amount at 60 Hz.
-
-// Constants for spatial partitioning
-static const uint WORKGROUP_SIZE_X = 16;
-static const uint WORKGROUP_SIZE_Y = 16;
-static const float CELL_SIZE = 20.0;  // Size of each cell in the spatial grid
-
-// Shared memory for storing local agent positions
-groupshared float4[256] local_agents;
 
 [shader("compute")]
 [numthreads(16,  16,  1)]
@@ -230,10 +223,7 @@ void update_agents(
     let random_seed_index = workgroup_linear_id * 256 + thread_in_workgroup;
     
     // Bounds check - exit if this thread doesn't correspond to a valid agent
-    uint agent_count = 0;
-    uint agent_stride = 0;
-    agents.GetDimensions(agent_count, agent_stride);
-    if (agent_index >= agent_count) {
+    if (agent_index >= sim_size.agent_count) {
         return;
     }
 
@@ -245,9 +235,12 @@ void update_agents(
     var speed = agent.w;
 
     // Get mask factor for this position, apply curve and strength
-    var mask_factor = get_mask_factor(x, y);
-    mask_factor = pow(clamp(mask_factor, 0.0, 1.0), max(0.0001, sim_size.mask_curve));
-    mask_factor = clamp(mask_factor * sim_size.mask_strength, 0.0, 1.0);
+    var mask_factor = 0.0;
+    if (sim_size.mask_pattern != 0) {
+        mask_factor = get_mask_factor(x, y);
+        mask_factor = pow(clamp(mask_factor, 0.0, 1.0), max(0.0001, sim_size.mask_curve));
+        mask_factor = clamp(mask_factor * sim_size.mask_strength, 0.0, 1.0);
+    }
     
     // Apply mask to parameters based on target
     var effective_sensor_distance = sim_size.agent_sensor_distance;
@@ -312,14 +305,10 @@ void update_agents(
     // Update angle based on sensor readings
     if (left_value > right_value) {
         // Calculate shortest path to turn left
-        let target_angle = angle - TAU;
-        let angle_diff = target_angle - angle;
-        angle += min(effective_turn_rate * frame_scale, abs(angle_diff)) * sign(angle_diff);
+        angle -= min(effective_turn_rate * frame_scale, TAU);
     } else if (right_value > left_value) {
         // Calculate shortest path to turn right
-        let target_angle = angle + TAU;
-        let angle_diff = target_angle - angle;
-        angle += min(effective_turn_rate * frame_scale, abs(angle_diff)) * sign(angle_diff);
+        angle += min(effective_turn_rate * frame_scale, TAU);
     } else {
         // If equal, do nothing
     }
@@ -397,8 +386,17 @@ void update_agents(
     let jitter_y_seed = hash(random_seed_index * 1664525u + 1073741827u);
     let random_x = random_float(jitter_x_seed);
     let random_y = random_float(jitter_y_seed);
-    x += (random_x * 2.0 - 1.0) * jitter_strength;
-    y += (random_y * 2.0 - 1.0) * jitter_strength;
+    if (sim_size.isotropic_jitter != 0) {
+        // Uniform disk sampling is rotationally symmetric. This scale keeps
+        // the same RMS displacement as the legacy square distribution.
+        let jitter_angle = random_x * TAU;
+        let jitter_radius = sqrt(random_y) * jitter_strength * 1.15470054;
+        x += cos(jitter_angle) * jitter_radius;
+        y += sin(jitter_angle) * jitter_radius;
+    } else {
+        x += (random_x * 2.0 - 1.0) * jitter_strength;
+        y += (random_y * 2.0 - 1.0) * jitter_strength;
+    }
 
     // Wrap agent position to stay within bounds (toroidal)
     x = x % float(sim_size.width);
@@ -430,9 +428,12 @@ void decay_trail(uint3 id : SV_DispatchThreadID) {
     let idx = y * sim_size.width + x;
     
     // Get mask factor for this position, apply curve and strength
-    var mask_factor = get_mask_factor(float(x), float(y));
-    mask_factor = pow(clamp(mask_factor, 0.0, 1.0), max(0.0001, sim_size.mask_curve));
-    mask_factor = clamp(mask_factor * sim_size.mask_strength, 0.0, 1.0);
+    var mask_factor = 0.0;
+    if (sim_size.mask_pattern != 0) {
+        mask_factor = get_mask_factor(float(x), float(y));
+        mask_factor = pow(clamp(mask_factor, 0.0, 1.0), max(0.0001, sim_size.mask_curve));
+        mask_factor = clamp(mask_factor * sim_size.mask_strength, 0.0, 1.0);
+    }
     
     // Apply mask to decay rate if target is PheromoneDecay
     var effective_decay_rate = sim_size.decay_rate;
@@ -467,7 +468,7 @@ void diffuse_trail(uint3 id : SV_DispatchThreadID) {
     let idx = y * sim_size.width + x;
     
     // Get mask factor for this position
-    let mask_factor = get_mask_factor(float(x), float(y));
+    let mask_factor = sim_size.mask_pattern != 0 ? get_mask_factor(float(x), float(y)) : 0.0;
     
     // Apply mask to diffusion rate if target is PheromoneDiffusion
     var effective_diffusion_rate = sim_size.diffusion_rate;
@@ -512,10 +513,7 @@ void update_agent_speeds(uint3 id : SV_DispatchThreadID) {
     let agent_index = id.x + id.y * agents_per_row;
     
     // Bounds check - exit if this thread doesn't correspond to a valid agent
-    uint agent_count = 0;
-    uint agent_stride = 0;
-    agents.GetDimensions(agent_count, agent_stride);
-    if (agent_index >= agent_count) {
+    if (agent_index >= sim_size.agent_count) {
         return;
     }
     
@@ -650,11 +648,7 @@ void reset_agents(uint3 global_id : SV_DispatchThreadID) {
     // global_id.x = linear thread index across all workgroups
     // global_id.y = second dimension for large dispatches  
     let agent_index = global_id.x + global_id.y * 65535u * 64u;
-    uint total_agents = 0;
-    uint total_stride = 0;
-    agents.GetDimensions(total_agents, total_stride);
-    
-    if (agent_index >= total_agents) {
+    if (agent_index >= sim_size.agent_count) {
         return;
     }
     

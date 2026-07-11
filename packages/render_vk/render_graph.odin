@@ -51,6 +51,22 @@ particle_life_simulation_substeps :: proc(frame_dt: f32, particle_count: u32) ->
 	return steps
 }
 
+primordial_simulation_substeps :: proc(frame_dt: f32, particle_count: u32) -> Simulation_Substeps {
+	steps := simulation_substeps(frame_dt)
+	max_steps := SIMULATION_MAX_SUBSTEPS
+	if particle_count >= 100_000 {
+		max_steps = 1
+	} else if particle_count >= 50_000 {
+		max_steps = 2
+	}
+	if steps.count > max_steps {
+		total_dt := steps.delta_time * f32(steps.count)
+		steps.count = max_steps
+		steps.delta_time = total_dt / f32(max_steps)
+	}
+	return steps
+}
+
 simulation_frame_delta :: proc(frame_dt: f32) -> f32 {
 	return min(max(frame_dt, 0), SIMULATION_MAX_FRAME_SECONDS)
 }
@@ -564,7 +580,7 @@ render_pass_gray_scott_compute :: proc(ctx: ^Render_Context, pass: ^Render_Pass_
 				ctx.app_ui.moire.paused,
 			)
 		} else if ctx.app_mode == .Primordial && ctx.app_ui != nil && ctx.primordial_gpu != nil {
-			steps := simulation_substeps(sim_dt)
+			steps := primordial_simulation_substeps(sim_dt, ctx.app_ui.primordial.primordial.particle_count)
 			for _ in 0 ..< steps.count {
 				primordial_gpu_step(ctx.primordial_gpu, ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.primordial, steps.delta_time)
 			}
@@ -676,6 +692,7 @@ render_pass_main_menu_preview_step :: proc(ctx: ^Render_Context) {
 		preview_vectors := ctx.app_ui.vectors
 		render_main_menu_apply_vectors_palette(&preview_vectors.vectors, palette_name)
 		_ = vectors_gpu_prepare_viewport(ctx.preview_vectors_gpu, ctx.vk_ctx, &preview_vectors.vectors, preview_vectors.time, f32(preview_width), f32(preview_height))
+		vectors_gpu_dispatch_field(ctx.preview_vectors_gpu, ctx.vk_ctx, ctx.frame.command_buffer)
 		ctx.backend.last_main_menu_preview_warmed_mode_count += 1
 	}
 	if ctx.preview_primordial_gpu != nil && render_main_menu_preview_mode_visible(ctx, .Primordial) {
@@ -1216,8 +1233,10 @@ render_pass_simulation_present :: proc(ctx: ^Render_Context, pass: ^Render_Pass_
 		return true
 	}
 	if ctx.app_mode == .Vectors && ctx.app_ui != nil && ctx.vectors_gpu != nil {
+		_ = vectors_gpu_prepare_viewport(ctx.vectors_gpu, ctx.vk_ctx, &ctx.app_ui.vectors.vectors, ctx.app_ui.vectors.time, f32(ctx.vk_ctx.swapchain_extent.width), f32(ctx.vk_ctx.swapchain_extent.height))
+		vectors_gpu_dispatch_field(ctx.vectors_gpu, ctx.vk_ctx, ctx.frame.command_buffer)
 		engine.vk_cmd_begin_swapchain_render_pass(ctx.vk_ctx, ctx.frame, vectors_clear_color(&ctx.app_ui.vectors.vectors))
-		vectors_gpu_draw(ctx.vectors_gpu, ctx.vk_ctx, ctx.frame, &ctx.app_ui.vectors.vectors, ctx.app_ui.vectors.time)
+		vectors_gpu_draw_prepared_viewport(ctx.vectors_gpu, ctx.vk_ctx, ctx.frame, {x = 0, y = 0, width = f32(ctx.vk_ctx.swapchain_extent.width), height = f32(ctx.vk_ctx.swapchain_extent.height), minDepth = 0, maxDepth = 1}, {offset = {0, 0}, extent = ctx.vk_ctx.swapchain_extent})
 		if draw_ui_in_pass {
 			ui_start := time.tick_now()
 			engine.vk_cmd_label_begin(ctx.vk_ctx, ctx.frame.command_buffer, "UI overlay")

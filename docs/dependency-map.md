@@ -62,7 +62,7 @@ The GUI is small and purpose-built:
 - Emit renderer-neutral draw commands: rects, borders, text, images, scissor regions.
 - Keep layout predictable: rows, columns, panels, collapsible sections.
 - Current widgets cover buttons, toggles, checkboxes, switches, radio groups,
-  sliders, number drags, selectors, comboboxes, HSV color controls, image
+  sliders, numeric inputs, selectors, comboboxes, HSV color controls, image
   samples, progress indicators, panels, cards, and collapsibles.
 - Render through the Vulkan UI renderer after simulation rendering.
 

@@ -5,12 +5,16 @@ import vk "vendor:vulkan"
 
 PRIMORDIAL_UPDATE_SHADER_SOURCE :: "assets/shaders/simulations/primordial_particles/shaders/particle_update.slang"
 PRIMORDIAL_DENSITY_SHADER_SOURCE :: "assets/shaders/simulations/primordial_particles/shaders/density_compute.slang"
+PRIMORDIAL_GRID_CLEAR_SHADER_SOURCE :: "assets/shaders/simulations/primordial_particles/shaders/grid_clear.slang"
+PRIMORDIAL_GRID_POPULATE_SHADER_SOURCE :: "assets/shaders/simulations/primordial_particles/shaders/grid_populate.slang"
 PRIMORDIAL_BACKGROUND_SHADER_SOURCE :: "assets/shaders/simulations/primordial_particles/shaders/background_render.slang"
 PRIMORDIAL_RENDER_SHADER_SOURCE :: "assets/shaders/simulations/primordial_particles/shaders/particle_render.slang"
 PRIMORDIAL_FADE_VERTEX_SHADER_SOURCE :: "assets/shaders/simulations/primordial_particles/shaders/fade_vertex.slang"
 PRIMORDIAL_FADE_FRAGMENT_SHADER_SOURCE :: "assets/shaders/simulations/primordial_particles/shaders/fade_fragment.slang"
 PRIMORDIAL_UPDATE_FALLBACK_SPV :: "build/shaders/simulations/primordial_particles/shaders/particle_update"
 PRIMORDIAL_DENSITY_FALLBACK_SPV :: "build/shaders/simulations/primordial_particles/shaders/density_compute"
+PRIMORDIAL_GRID_CLEAR_FALLBACK_SPV :: "build/shaders/simulations/primordial_particles/shaders/grid_clear"
+PRIMORDIAL_GRID_POPULATE_FALLBACK_SPV :: "build/shaders/simulations/primordial_particles/shaders/grid_populate"
 PRIMORDIAL_BACKGROUND_VERTEX_FALLBACK_SPV :: "build/shaders/simulations/primordial_particles/shaders/background_render_vertex"
 PRIMORDIAL_BACKGROUND_FRAGMENT_FALLBACK_SPV :: "build/shaders/simulations/primordial_particles/shaders/background_render_fragment"
 PRIMORDIAL_RENDER_VERTEX_FALLBACK_SPV :: "build/shaders/simulations/primordial_particles/shaders/particle_render_vertex"
@@ -24,6 +28,8 @@ PRIMORDIAL_ENTRY :: cstring("main")
 PRIMORDIAL_VERTEX_ENTRY :: cstring("main")
 PRIMORDIAL_FRAGMENT_ENTRY :: cstring("main")
 PRIMORDIAL_WORKGROUP_SIZE :: u32(64)
+PRIMORDIAL_GRID_AXIS :: u32(128)
+PRIMORDIAL_GRID_CELL_COUNT :: PRIMORDIAL_GRID_AXIS * PRIMORDIAL_GRID_AXIS
 PRIMORDIAL_RETIRED_TRACE_TARGET_CAP :: 4
 
 Primordial_Particle :: struct #align(8) {
@@ -52,15 +58,17 @@ Primordial_Sim_Params :: struct #align(16) {
 	cursor_size: f32,
 	cursor_strength: f32,
 	aspect_ratio: f32,
-	_pad1: f32,
-	_pad0: f32,
+	grid_axis: u32,
+	grid_cell_size: f32,
 }
 
 Primordial_Density_Params :: struct #align(16) {
 	particle_count: u32,
 	density_radius: f32,
 	coloring_mode: u32,
-	_padding: u32,
+	grid_axis: u32,
+	grid_cell_size: f32,
+	_padding: [3]u32,
 }
 
 Primordial_Render_Params :: struct #align(16) {
@@ -97,6 +105,8 @@ Primordial_Retired_Trace_Targets :: struct {
 Primordial_Gpu_State :: struct {
 	update_shader: engine.Vk_Shader_Module,
 	density_shader: engine.Vk_Shader_Module,
+	grid_clear_shader: engine.Vk_Shader_Module,
+	grid_populate_shader: engine.Vk_Shader_Module,
 	background_vertex_shader: engine.Vk_Shader_Module,
 	background_fragment_shader: engine.Vk_Shader_Module,
 	render_vertex_shader: engine.Vk_Shader_Module,
@@ -105,6 +115,8 @@ Primordial_Gpu_State :: struct {
 	fade_fragment_shader: engine.Vk_Shader_Module,
 	update_pipeline: engine.Vk_Compute_Pipeline,
 	density_pipeline: engine.Vk_Compute_Pipeline,
+	grid_clear_pipeline: engine.Vk_Compute_Pipeline,
+	grid_populate_pipeline: engine.Vk_Compute_Pipeline,
 	background_pipeline: engine.Vk_Graphics_Pipeline,
 	render_pipeline: engine.Vk_Graphics_Pipeline,
 	trace_particle_pipeline: engine.Vk_Graphics_Pipeline,
@@ -112,17 +124,23 @@ Primordial_Gpu_State :: struct {
 	blit_pipeline: engine.Vk_Graphics_Pipeline,
 	update_set_layout: vk.DescriptorSetLayout,
 	density_set_layout: vk.DescriptorSetLayout,
+	grid_clear_set_layout: vk.DescriptorSetLayout,
+	grid_populate_set_layout: vk.DescriptorSetLayout,
 	background_set_layout: vk.DescriptorSetLayout,
 	render_set_layout: vk.DescriptorSetLayout,
 	fade_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool: vk.DescriptorPool,
 	update_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
 	density_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
+	grid_clear_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	grid_populate_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
 	background_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 	render_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
 	fade_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
 	blit_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
 	particle_buffers: [2]engine.Vk_Buffer,
+	grid_heads_buffer: engine.Vk_Buffer,
+	grid_next_buffer: engine.Vk_Buffer,
 	sim_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	density_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	background_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
@@ -140,10 +158,10 @@ Primordial_Gpu_State :: struct {
 	trace_initialized: bool,
 	trace_write_index: u32,
 	state_index: u32,
+	grid_state_index: u32,
+	grid_state_valid: bool,
 	particle_count: u32,
 	initialized_seed: u32,
 	initialized_position_generator: u32,
 	ready: bool,
 }
-
-

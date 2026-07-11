@@ -9,7 +9,10 @@ import "core:c"
 import sdl "vendor:sdl3"
 
 app_ui_draw_theme_preview :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx: ^engine.Vk_Context) {
-	_ = ui
+	if ui.component_fixture != .None {
+		app_ui_draw_component_fixture(ui, gui)
+		return
+	}
 	width := f32(vk_ctx.swapchain_extent.width)
 	height := f32(vk_ctx.swapchain_extent.height)
 	margin := f32(28)
@@ -33,6 +36,85 @@ app_ui_draw_theme_preview :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_
 	app_ui_theme_preview_text_palette(gui, text_palette)
 	app_ui_theme_preview_media_layout(gui, media_layout)
 	app_ui_theme_preview_advanced(ui, gui, advanced)
+	uifw.gui_panel_end(gui)
+}
+
+app_ui_component_fixture_name :: proc(fixture: Ui_Component_Fixture) -> string {
+	switch fixture {
+	case .Button: return "Button"
+	case .Toggle: return "Toggle"
+	case .Slider: return "Slider"
+	case .Number: return "Universal Number"
+	case .Integer: return "Universal Integer"
+	case .Selector: return "Selector"
+	case .Text_Input: return "Text Input"
+	case .None: return "Component"
+	}
+	return "Component"
+}
+
+app_ui_component_fixture_apply_state :: proc(gui: ^uifw.Gui_Context, id: uifw.Gui_Id, state: Ui_Component_Fixture_State) {
+	switch state {
+	case .Hover: gui.hot = id
+	case .Active: gui.active = id
+	case .Focused: gui.focused = id
+	case .Editing:
+		gui.focused = id
+		gui.focus_edit_id = id
+		gui.controller_explicit_activation = true
+	case .Rest, .Disabled:
+	}
+}
+
+app_ui_draw_component_fixture :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
+	window_w := f32(max(gui.input.window_width, 1))
+	window_h := f32(max(gui.input.window_height, 1))
+	card_w := min(max(window_w * 0.56, f32(320)), max(window_w - 48, 1))
+	component_h := gui.style.row_height
+	if ui.component_fixture == .Slider do component_h = uifw.gui_slider_height(gui)
+	if ui.component_fixture == .Number || ui.component_fixture == .Integer {
+		expanded := ui.component_fixture_state == .Active || ui.component_fixture_state == .Editing
+		component_h = expanded ? max(gui.style.row_height + gui.style.small_line_height, f32(60)) : gui.style.row_height
+	}
+	content_h := gui.style.heading_line_height + gui.style.body_line_height + component_h + gui.style.spacing * 3 + gui.style.spacing_2
+	card_h := min(max(content_h + gui.style.panel_padding * 2, f32(150)), max(window_h - 48, 1))
+	card := uifw.Rect{(window_w - card_w) * 0.5, (window_h - card_h) * 0.5, card_w, card_h}
+	uifw.gui_panel_begin(gui, card)
+	uifw.gui_heading(gui, app_ui_component_fixture_name(ui.component_fixture))
+	uifw.gui_label(gui, fmt.tprintf("Fixture state: %v", ui.component_fixture_state))
+	uifw.gui_spacer(gui, gui.style.spacing_2)
+	key := "component_fixture_target"
+	id := uifw.gui_make_id(gui, key)
+	app_ui_component_fixture_apply_state(gui, id, ui.component_fixture_state)
+	enabled := ui.component_fixture_state != .Disabled
+
+	switch ui.component_fixture {
+	case .Button:
+		_ = uifw.gui_button_at(gui, id, uifw.gui_next_rect(gui), "Run Simulation", enabled)
+	case .Toggle:
+		value := ui.component_fixture_value >= 0.5
+		_ = uifw.gui_toggle(gui, "Enable trails", key, &value)
+	case .Slider:
+		value := ui.component_fixture_value
+		_ = uifw.gui_slider_f32(gui, fmt.tprintf("Strength: %.2f", value), key, &value, 0, 1)
+	case .Number:
+		value := ui.component_fixture_value
+		_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Interaction Radius: %.3f px", value), key, &value, 0.01, 0.001, 1000, enabled, .Logarithmic)
+	case .Integer:
+		value := u32(max(ui.component_fixture_value, 0))
+		_ = uifw.gui_numeric_u32(gui, "Agent Count", key, &value, 1, 100_000_000, 100, enabled, unit = "agents")
+	case .Selector:
+		options := [?]string{"Linear", "Logarithmic", "Symmetric log"}
+		index := min(max(int(ui.component_fixture_value), 0), len(options) - 1)
+		_ = uifw.gui_selector(gui, fmt.tprintf("Mapping: %s", options[index]), key, &index, options[:])
+	case .Text_Input:
+		buffer: [64]u8
+		copy(buffer[:], "Exact numeric value")
+		length := len("Exact numeric value")
+		_ = uifw.gui_text_input(gui, "Enter a value", key, buffer[:], &length)
+	case .None:
+	}
+
 	uifw.gui_panel_end(gui)
 }
 
@@ -76,9 +158,9 @@ app_ui_theme_preview_inputs :: proc(gui: ^uifw.Gui_Context, bounds: uifw.Rect) {
 
 	uifw.gui_spacer(gui, gui.style.spacing_2)
 	number_value := f32(42)
-	_ = uifw.gui_number_drag_f32(gui, "Number Drag: 42", "number", &number_value, 1, 0, 100)
-	app_ui_preview_drag_state(gui, "Number Drag: hover", "number_hover", .Hot)
-	app_ui_preview_drag_state(gui, "Number Drag: active", "number_active", .Active)
+	_ = uifw.gui_numeric_f32(gui, "Numeric Input: 42", "number", &number_value, 1, 0, 100)
+	app_ui_preview_numeric_state(gui, "Numeric Input: hover", "number_hover", .Hot)
+	app_ui_preview_numeric_state(gui, "Numeric Input: active", "number_active", .Active)
 
 	uifw.gui_spacer(gui, gui.style.spacing_2)
 	selector_options := [?]string{"Linear", "Nearest", "Lanczos"}
@@ -307,11 +389,11 @@ app_ui_preview_slider_state :: proc(gui: ^uifw.Gui_Context, label, key: string, 
 	_ = uifw.gui_slider_f32(gui, label, key, value, 0, 1)
 }
 
-app_ui_preview_drag_state :: proc(gui: ^uifw.Gui_Context, label, key: string, state: Preview_State) {
+app_ui_preview_numeric_state :: proc(gui: ^uifw.Gui_Context, label, key: string, state: Preview_State) {
 	id := uifw.gui_make_id(gui, key)
 	app_ui_preview_apply_state(gui, id, state)
 	value := f32(64)
-	_ = uifw.gui_number_drag_f32(gui, label, key, &value, 1, 0, 100)
+	_ = uifw.gui_numeric_f32(gui, label, key, &value, 1, 0, 100)
 }
 
 app_ui_preview_apply_state :: proc(gui: ^uifw.Gui_Context, id: uifw.Gui_Id, state: Preview_State) {
@@ -420,12 +502,12 @@ app_ui_draw_options_display :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, w
 	if uifw.gui_toggle(gui, "FPS Limiter", "fps_limiter", &ui.settings.default_fps_limit_enabled) {
 		app_ui_mark_settings_changed(ui, worker)
 	}
-	fps_limit := f32(ui.settings.default_fps_limit)
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("FPS Limit: %d", ui.settings.default_fps_limit), "fps_limit", &fps_limit, 1, 1, 1200, ui.settings.default_fps_limit_enabled) {
+	fps_limit := u32(max(ui.settings.default_fps_limit, 1))
+	if uifw.gui_numeric_u32(gui, "FPS Limit", "fps_limit", &fps_limit, 1, 1200, 1, ui.settings.default_fps_limit_enabled) {
 		ui.settings.default_fps_limit = i32(fps_limit)
 		app_ui_mark_settings_changed(ui, worker)
 	}
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("UI Scale: %.1f", ui.settings.ui_scale), "ui_scale", &ui.settings.ui_scale, 0.1, 0.5, 3.0) {
+	if uifw.gui_numeric_f32(gui, fmt.tprintf("UI Scale: %.1f", ui.settings.ui_scale), "ui_scale", &ui.settings.ui_scale, 0.1, 0.5, 3.0) {
 		app_ui_mark_settings_changed(ui, worker)
 	}
 	if uifw.gui_selector(gui, fmt.tprintf("Texture Filtering: %s", TEXTURE_FILTERING_OPTIONS[ui.texture_filtering_index]), "texture_filtering", &ui.texture_filtering_index, TEXTURE_FILTERING_OPTIONS[:]) {
@@ -438,13 +520,13 @@ app_ui_draw_options_display :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, w
 app_ui_draw_options_window :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, worker: ^Product_Context) {
 	uifw.gui_heading(gui, "Window Defaults")
 	uifw.gui_push_id(gui, "window")
-	width := f32(ui.settings.window_width)
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Default Width: %d", ui.settings.window_width), "width", &width, 50, 800, 3840) {
+	width := u32(max(ui.settings.window_width, 800))
+	if uifw.gui_numeric_u32(gui, "Default Width", "width", &width, 800, 3840, 50) {
 		ui.settings.window_width = i32(width)
 		app_ui_mark_settings_changed(ui, worker)
 	}
-	height := f32(ui.settings.window_height)
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Default Height: %d", ui.settings.window_height), "height", &height, 50, 600, 2160) {
+	height := u32(max(ui.settings.window_height, 600))
+	if uifw.gui_numeric_u32(gui, "Default Height", "height", &height, 600, 2160, 50) {
 		ui.settings.window_height = i32(height)
 		app_ui_mark_settings_changed(ui, worker)
 	}
@@ -457,8 +539,8 @@ app_ui_draw_options_window :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, wo
 app_ui_draw_options_interface :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, worker: ^Product_Context) {
 	uifw.gui_heading(gui, "Interface")
 	uifw.gui_push_id(gui, "ui_behavior")
-	delay := f32(ui.settings.auto_hide_delay)
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("UI Hide Delay: %d ms", ui.settings.auto_hide_delay), "auto_hide_delay", &delay, 500, 1000, 10000) {
+	delay := u32(max(ui.settings.auto_hide_delay, 1000))
+	if uifw.gui_numeric_u32(gui, "UI Hide Delay", "auto_hide_delay", &delay, 1000, 10000, 500, unit = "ms", grouped = false) {
 		ui.settings.auto_hide_delay = i32(delay)
 		app_ui_mark_settings_changed(ui, worker)
 	}
@@ -516,10 +598,10 @@ app_ui_draw_options_camera :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, wo
 	}
 	uifw.gui_spacer(gui, gui.style.spacing_2)
 	uifw.gui_heading(gui, "View Controls")
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Keyboard / Wheel Sensitivity: %.1f", ui.settings.default_camera_sensitivity), "sensitivity", &ui.settings.default_camera_sensitivity, 0.1, 0.1, 5.0) {
+	if uifw.gui_numeric_f32(gui, fmt.tprintf("Keyboard / Wheel Sensitivity: %.1f", ui.settings.default_camera_sensitivity), "sensitivity", &ui.settings.default_camera_sensitivity, 0.1, 0.1, 5.0) {
 		app_ui_mark_settings_changed(ui, worker)
 	}
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Controller Sensitivity: %.1f", ui.settings.controller_camera_sensitivity), "controller_sensitivity", &ui.settings.controller_camera_sensitivity, 0.1, 0.1, 5.0) {
+	if uifw.gui_numeric_f32(gui, fmt.tprintf("Controller Sensitivity: %.1f", ui.settings.controller_camera_sensitivity), "controller_sensitivity", &ui.settings.controller_camera_sensitivity, 0.1, 0.1, 5.0) {
 		app_ui_mark_settings_changed(ui, worker)
 	}
 	if uifw.gui_toggle(gui, "Invert Controller Y", "controller_invert_y", &ui.settings.controller_camera_invert_y) {
@@ -575,19 +657,19 @@ app_ui_draw_options_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, wor
 	binding_notice := fixed_string(ui.keyboard_binding_notice[:])
 	if len(binding_notice) == 0 {binding_notice = "Duplicate keys swap automatically. Space is reserved for Pause + Control Deck."}
 	uifw.gui_label(gui, binding_notice)
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Stick Deadzone: %.2f", ui.settings.controller_deadzone), "controller_deadzone", &ui.settings.controller_deadzone, 0.01, 0.05, 0.60) {
+	if uifw.gui_numeric_f32(gui, fmt.tprintf("Stick Deadzone: %.2f", ui.settings.controller_deadzone), "controller_deadzone", &ui.settings.controller_deadzone, 0.01, 0.05, 0.60) {
 		app_ui_mark_settings_changed(ui, worker)
 	}
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Virtual Cursor Speed: %.2f", ui.settings.controller_cursor_speed), "controller_cursor_speed", &ui.settings.controller_cursor_speed, 0.05, 0.20, 2.0) {
+	if uifw.gui_numeric_f32(gui, fmt.tprintf("Virtual Cursor Speed: %.2f", ui.settings.controller_cursor_speed), "controller_cursor_speed", &ui.settings.controller_cursor_speed, 0.05, 0.20, 2.0) {
 		app_ui_mark_settings_changed(ui, worker)
 	}
-	repeat_delay := f32(ui.settings.navigation_repeat_delay_ms)
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Repeat Delay: %d ms", ui.settings.navigation_repeat_delay_ms), "navigation_repeat_delay", &repeat_delay, 25, 150, 1000) {
+	repeat_delay := u32(max(ui.settings.navigation_repeat_delay_ms, 150))
+	if uifw.gui_numeric_u32(gui, "Repeat Delay", "navigation_repeat_delay", &repeat_delay, 150, 1000, 25, unit = "ms", grouped = false) {
 		ui.settings.navigation_repeat_delay_ms = i32(repeat_delay)
 		app_ui_mark_settings_changed(ui, worker)
 	}
-	repeat_interval := f32(ui.settings.navigation_repeat_interval_ms)
-	if uifw.gui_number_drag_f32(gui, fmt.tprintf("Repeat Interval: %d ms", ui.settings.navigation_repeat_interval_ms), "navigation_repeat_interval", &repeat_interval, 10, 30, 300) {
+	repeat_interval := u32(max(ui.settings.navigation_repeat_interval_ms, 30))
+	if uifw.gui_numeric_u32(gui, "Repeat Interval", "navigation_repeat_interval", &repeat_interval, 30, 300, 10, unit = "ms", grouped = false) {
 		ui.settings.navigation_repeat_interval_ms = i32(repeat_interval)
 		app_ui_mark_settings_changed(ui, worker)
 	}

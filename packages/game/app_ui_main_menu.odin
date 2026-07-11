@@ -349,7 +349,7 @@ app_ui_menu_theme :: proc(gui: ^uifw.Gui_Context, width, height: f32) -> Menu_Th
 		small_gap = max(gui.style.spacing_2 * scale, 6),
 		footer_height = max(gui.style.row_height * 2.20 * scale, 88),
 		footer_gap = gui.style.spacing_2 * scale,
-		row_height = min(max(height * 0.205, gui.style.row_height * 3.6 * scale), height * 0.245),
+		row_height = min(max(height * 0.165, gui.style.row_height * 3.0 * scale), height * 0.20),
 		thumbnail_width = 0,
 		thumbnail_height = 0,
 		chip_height = 0,

@@ -25,7 +25,11 @@ struct SimParams {
     float brownian_motion;
     float particle_size;
     float aspect_ratio;
+    uint force_refresh_stride;
+    uint force_sample_limit;
     uint _pad1;
+    uint _pad2;
+    uint _pad3;
 };
 
 struct GridParams {

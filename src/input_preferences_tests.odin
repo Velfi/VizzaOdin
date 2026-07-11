@@ -5,6 +5,26 @@ import host "../packages/app"
 import uifw "../packages/ui"
 
 import "core:testing"
+
+input_preferences_has_label :: proc(ctx: ^uifw.Gui_Context, expected: string) -> bool {
+	separator := -1
+	for ch, index in transmute([]u8)expected {
+		if ch == ':' {separator = index; break}
+	}
+	label_found := false
+	value_found := separator < 0
+	for command in ctx.commands {
+		if command.kind != .Text do continue
+		if command.text == expected do return true
+		if separator > 0 && command.text == expected[:separator] do label_found = true
+		if separator > 0 {
+			value := expected[separator + 1:]
+			for len(value) > 0 && value[0] == ' ' do value = value[1:]
+			if command.text == value do value_found = true
+		}
+	}
+	return label_found && value_found
+}
 import sdl "vendor:sdl3"
 
 @(test)
@@ -89,14 +109,7 @@ test_options_input_section_exposes_all_input_preferences :: proc(t: ^testing.T) 
 		"Shoulders: Right Next",
 	}
 	for label in expected {
-		found := false
-		for command in ctx.commands {
-			if command.kind == .Text && command.text == label {
-				found = true
-				break
-			}
-		}
-		testing.expect(t, found)
+		testing.expect(t, input_preferences_has_label(&ctx, label))
 	}
 }
 
@@ -114,10 +127,6 @@ test_options_camera_section_exposes_device_specific_tuning :: proc(t: ^testing.T
 	uifw.gui_layout_end(&ctx)
 	expected := [?]string{"View Controls", "Keyboard / Wheel Sensitivity: 1.0", "Controller Sensitivity: 1.0", "Invert Controller Y"}
 	for label in expected {
-		found := false
-		for command in ctx.commands {
-			if command.kind == .Text && command.text == label {found = true; break}
-		}
-		testing.expect(t, found)
+		testing.expect(t, input_preferences_has_label(&ctx, label))
 	}
 }

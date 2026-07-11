@@ -407,27 +407,27 @@ gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Con
 			changed = true
 		}
 		shared_control_explanation(ctx, "kill", "Kill removes chemical V. Small changes can switch the kind of pattern you see.")
-		if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Diffusion U: %.3f", sim.settings.diffusion_a), "diffusion_u", &sim.settings.diffusion_a, 0.01, 0.0, 0.5) {
+		if uifw.gui_numeric_f32(ctx, fmt.tprintf("Diffusion U: %.3f", sim.settings.diffusion_a), "diffusion_u", &sim.settings.diffusion_a, 0.01, 0.0, 0.5) {
 			changed = true
 		}
 		shared_control_explanation(ctx, "diffusion_u", "Diffusion U is how quickly chemical U spreads into nearby pixels.")
-		if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Diffusion V: %.3f", sim.settings.diffusion_b), "diffusion_v", &sim.settings.diffusion_b, 0.01, 0.0, 0.25) {
+		if uifw.gui_numeric_f32(ctx, fmt.tprintf("Diffusion V: %.3f", sim.settings.diffusion_b), "diffusion_v", &sim.settings.diffusion_b, 0.01, 0.0, 0.25) {
 			changed = true
 		}
 		shared_control_explanation(ctx, "diffusion_v", "Diffusion V is how quickly chemical V spreads into nearby pixels.")
 	}
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Timestep: %.2f", sim.settings.timestep), "timestep", &sim.settings.timestep, 0.05, 0.0, 4.0) {
+	if uifw.gui_numeric_f32(ctx, fmt.tprintf("Timestep: %.2f", sim.settings.timestep), "timestep", &sim.settings.timestep, 0.05, 0.0, 4.0) {
 		changed = true
 	}
 	shared_control_explanation(ctx, "timestep", "Timestep is the size of each simulation step. Higher moves faster, but can become unstable.")
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Simulation Speed: %.2fx", sim.settings.simulation_speed), "simulation_speed", &sim.settings.simulation_speed, 0.25, 0.0, 32.0) {
+	if uifw.gui_numeric_f32(ctx, fmt.tprintf("Simulation Speed: %.2fx", sim.settings.simulation_speed), "simulation_speed", &sim.settings.simulation_speed, 0.25, 0.0, 32.0) {
 		changed = true
 	}
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Max Timestep: %.2f", sim.settings.max_timestep), "max_timestep", &sim.settings.max_timestep, 0.05, 0.1, 8.0) {
+	if uifw.gui_numeric_f32(ctx, fmt.tprintf("Max Timestep: %.2f", sim.settings.max_timestep), "max_timestep", &sim.settings.max_timestep, 0.05, 0.1, 8.0) {
 		changed = true
 	}
 	shared_control_explanation(ctx, "max_timestep", "Max Timestep caps each stable integration step. Larger requested advances are subdivided automatically.")
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Stability: %.2f", sim.settings.stability_factor), "stability", &sim.settings.stability_factor, 0.05, 0.1, 1.0) {
+	if uifw.gui_numeric_f32(ctx, fmt.tprintf("Stability: %.2f", sim.settings.stability_factor), "stability", &sim.settings.stability_factor, 0.05, 0.1, 1.0) {
 		changed = true
 	}
 	shared_control_explanation(ctx, "stability", "Stability controls the safety margin for automatic step subdivision. Lower is safer; higher is faster.")
@@ -528,15 +528,15 @@ gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Con
 		gray_scott_reset_camera(sim)
 		changed = true
 	}
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Zoom: %.2f", sim.runtime.camera_zoom), "camera_zoom", &sim.runtime.camera_zoom, 0.05, 0.05, 64.0) {
+	if uifw.gui_numeric_f32(ctx, fmt.tprintf("Zoom: %.2f", sim.runtime.camera_zoom), "camera_zoom", &sim.runtime.camera_zoom, 0.05, 0.05, 64.0, mapping = .Logarithmic) {
 		sim.runtime.camera_target_zoom = sim.runtime.camera_zoom
 		changed = true
 	}
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Pan X: %.2f", sim.runtime.camera_x), "camera_x", &sim.runtime.camera_x, 0.05, -128.0, 128.0) {
+	if uifw.gui_numeric_f32(ctx, fmt.tprintf("Pan X: %.2f", sim.runtime.camera_x), "camera_x", &sim.runtime.camera_x, 0.05, -128.0, 128.0, mapping = .Symmetric_Log) {
 		sim.runtime.camera_target_x = sim.runtime.camera_x
 		changed = true
 	}
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Pan Y: %.2f", sim.runtime.camera_y), "camera_y", &sim.runtime.camera_y, 0.05, -128.0, 128.0) {
+	if uifw.gui_numeric_f32(ctx, fmt.tprintf("Pan Y: %.2f", sim.runtime.camera_y), "camera_y", &sim.runtime.camera_y, 0.05, -128.0, 128.0, mapping = .Symmetric_Log) {
 		sim.runtime.camera_target_y = sim.runtime.camera_y
 		changed = true
 	}

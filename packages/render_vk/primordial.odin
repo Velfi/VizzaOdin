@@ -31,6 +31,12 @@ primordial_gpu_ensure :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Con
 		primordial_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
+	if !engine.vk_load_shader_module_with_fallback(vk_ctx, PRIMORDIAL_GRID_CLEAR_SHADER_SOURCE, PRIMORDIAL_GRID_CLEAR_FALLBACK_SPV, .Compute, PRIMORDIAL_SOURCE_ENTRY, &gpu.grid_clear_shader) ||
+	   !engine.vk_load_shader_module_with_fallback(vk_ctx, PRIMORDIAL_GRID_POPULATE_SHADER_SOURCE, PRIMORDIAL_GRID_POPULATE_FALLBACK_SPV, .Compute, PRIMORDIAL_SOURCE_ENTRY, &gpu.grid_populate_shader) {
+		engine.log_error("primordial_gpu_ensure: grid shader load failed")
+		primordial_gpu_destroy(gpu, vk_ctx)
+		return false
+	}
 	if !engine.vk_load_shader_module_with_fallback(vk_ctx, PRIMORDIAL_BACKGROUND_SHADER_SOURCE, PRIMORDIAL_BACKGROUND_VERTEX_FALLBACK_SPV, .Vertex, PRIMORDIAL_VERTEX_SOURCE_ENTRY, &gpu.background_vertex_shader) {
 		engine.log_error("primordial_gpu_ensure: background vertex shader load failed source=", PRIMORDIAL_BACKGROUND_SHADER_SOURCE)
 		primordial_gpu_destroy(gpu, vk_ctx)
@@ -67,6 +73,11 @@ primordial_gpu_ensure :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Con
 			primordial_gpu_destroy(gpu, vk_ctx)
 			return false
 		}
+	}
+	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * int(PRIMORDIAL_GRID_CELL_COUNT)), {.STORAGE_BUFFER}, &gpu.grid_heads_buffer) ||
+	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * int(gpu.particle_count)), {.STORAGE_BUFFER}, &gpu.grid_next_buffer) {
+		primordial_gpu_destroy(gpu, vk_ctx)
+		return false
 	}
 	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
 		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Primordial_Sim_Params)), {.UNIFORM_BUFFER}, &gpu.sim_params_buffers[frame_slot]) ||
@@ -111,6 +122,11 @@ primordial_gpu_ensure :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Con
 		primordial_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
+	if !primordial_create_compute_pipeline(vk_ctx, gpu.grid_clear_shader.handle, gpu.grid_clear_set_layout, &gpu.grid_clear_pipeline) ||
+	   !primordial_create_compute_pipeline(vk_ctx, gpu.grid_populate_shader.handle, gpu.grid_populate_set_layout, &gpu.grid_populate_pipeline) {
+		primordial_gpu_destroy(gpu, vk_ctx)
+		return false
+	}
 	if !primordial_create_background_pipeline(gpu, vk_ctx) {
 		engine.log_error("primordial_gpu_ensure: background pipeline creation failed")
 		primordial_gpu_destroy(gpu, vk_ctx)
@@ -141,7 +157,10 @@ primordial_gpu_ensure :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Con
 }
 
 primordial_initialize_particles :: proc(gpu: ^Primordial_Gpu_State, settings: ^Primordial_Settings) {
-	seed := settings.random_seed
+	// Xorshift32's all-zero state is absorbing. Keep zero valid as a user-facing
+	// seed, but map it to a deterministic non-zero state so particles do not all
+	// initialize in the same grid cell and trigger pathological neighbor scans.
+	seed := primordial_rng_seed(settings.random_seed)
 	for buffer_index in 0 ..< 2 {
 		if gpu.particle_buffers[buffer_index].mapped == nil {
 			continue
@@ -162,6 +181,10 @@ primordial_initialize_particles :: proc(gpu: ^Primordial_Gpu_State, settings: ^P
 		}
 	}
 	gpu.state_index = 0
+}
+
+primordial_rng_seed :: proc(seed: u32) -> u32 {
+	return seed != 0 ? seed : 0x6d2b79f5
 }
 
 primordial_generate_position :: proc(index, generator: u32, rng: ^u32) -> [2]f32 {
@@ -324,6 +347,8 @@ primordial_write_step_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int
 			cursor_size = sim.cursor_size,
 			cursor_strength = sim.cursor_strength,
 			aspect_ratio = width / max(height, 1),
+			grid_axis = PRIMORDIAL_GRID_AXIS,
+			grid_cell_size = 2.0 / f32(PRIMORDIAL_GRID_AXIS),
 		}
 	}
 	if gpu.density_params_buffers[frame_slot].mapped != nil {
@@ -332,28 +357,45 @@ primordial_write_step_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int
 			particle_count = gpu.particle_count,
 			density_radius = settings.density_radius,
 			coloring_mode = u32(settings.foreground_color_mode),
+			grid_axis = PRIMORDIAL_GRID_AXIS,
+			grid_cell_size = 2.0 / f32(PRIMORDIAL_GRID_AXIS),
 		}
 	}
 }
 
 primordial_create_descriptors :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
-	update_bindings := [3]vk.DescriptorSetLayoutBinding {
+	update_bindings := [5]vk.DescriptorSetLayoutBinding {
 		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
 	update_layout_info := vk.DescriptorSetLayoutCreateInfo{sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO, bindingCount = u32(len(update_bindings)), pBindings = raw_data(update_bindings[:])}
 	if vk.CreateDescriptorSetLayout(vk_ctx.device, &update_layout_info, nil, &gpu.update_set_layout) != .SUCCESS {
 		return false
 	}
-	density_bindings := [2]vk.DescriptorSetLayoutBinding {
+	density_bindings := [4]vk.DescriptorSetLayoutBinding {
 		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
 	density_layout_info := vk.DescriptorSetLayoutCreateInfo{sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO, bindingCount = u32(len(density_bindings)), pBindings = raw_data(density_bindings[:])}
 	if vk.CreateDescriptorSetLayout(vk_ctx.device, &density_layout_info, nil, &gpu.density_set_layout) != .SUCCESS {
 		return false
 	}
+	grid_clear_bindings := [1]vk.DescriptorSetLayoutBinding{{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}}}
+	grid_clear_layout_info := vk.DescriptorSetLayoutCreateInfo{sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO, bindingCount = 1, pBindings = raw_data(grid_clear_bindings[:])}
+	if vk.CreateDescriptorSetLayout(vk_ctx.device, &grid_clear_layout_info, nil, &gpu.grid_clear_set_layout) != .SUCCESS {return false}
+	grid_populate_bindings := [4]vk.DescriptorSetLayoutBinding {
+		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+	}
+	grid_populate_layout_info := vk.DescriptorSetLayoutCreateInfo{sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO, bindingCount = 4, pBindings = raw_data(grid_populate_bindings[:])}
+	if vk.CreateDescriptorSetLayout(vk_ctx.device, &grid_populate_layout_info, nil, &gpu.grid_populate_set_layout) != .SUCCESS {return false}
 	background_bindings := [2]vk.DescriptorSetLayoutBinding {
 		{binding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.VERTEX}},
 		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
@@ -381,18 +423,18 @@ primordial_create_descriptors :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 		return false
 	}
 	pool_sizes := [4]vk.DescriptorPoolSize {
-		{type = .STORAGE_BUFFER, descriptorCount = 10 * engine.MAX_FRAMES_IN_FLIGHT},
-		{type = .UNIFORM_BUFFER, descriptorCount = 14 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .STORAGE_BUFFER, descriptorCount = 30 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .UNIFORM_BUFFER, descriptorCount = 16 * engine.MAX_FRAMES_IN_FLIGHT},
 		{type = .SAMPLED_IMAGE, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
 		{type = .SAMPLER, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
 	}
-	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 11 * engine.MAX_FRAMES_IN_FLIGHT}
+	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 14 * engine.MAX_FRAMES_IN_FLIGHT}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {
 		return false
 	}
 	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
-		layouts := [11]vk.DescriptorSetLayout{gpu.update_set_layout, gpu.update_set_layout, gpu.density_set_layout, gpu.density_set_layout, gpu.background_set_layout, gpu.render_set_layout, gpu.render_set_layout, gpu.fade_set_layout, gpu.fade_set_layout, gpu.fade_set_layout, gpu.fade_set_layout}
-		sets: [11]vk.DescriptorSet
+		layouts := [14]vk.DescriptorSetLayout{gpu.update_set_layout, gpu.update_set_layout, gpu.density_set_layout, gpu.density_set_layout, gpu.background_set_layout, gpu.render_set_layout, gpu.render_set_layout, gpu.fade_set_layout, gpu.fade_set_layout, gpu.fade_set_layout, gpu.fade_set_layout, gpu.grid_clear_set_layout, gpu.grid_populate_set_layout, gpu.grid_populate_set_layout}
+		sets: [14]vk.DescriptorSet
 		alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = u32(len(layouts)), pSetLayouts = raw_data(layouts[:])}
 		if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {
 			return false
@@ -408,6 +450,9 @@ primordial_create_descriptors :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 		gpu.fade_sets[frame_slot][1] = sets[8]
 		gpu.blit_sets[frame_slot][0] = sets[9]
 		gpu.blit_sets[frame_slot][1] = sets[10]
+		gpu.grid_clear_sets[frame_slot] = sets[11]
+		gpu.grid_populate_sets[frame_slot][0] = sets[12]
+		gpu.grid_populate_sets[frame_slot][1] = sets[13]
 	}
 	primordial_update_descriptors(gpu, vk_ctx)
 	return true
@@ -427,6 +472,11 @@ primordial_update_descriptors_for_slot :: proc(gpu: ^Primordial_Gpu_State, vk_ct
 	background_params_info := vk.DescriptorBufferInfo{buffer = gpu.background_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Background_Params))}
 	camera_info := vk.DescriptorBufferInfo{buffer = gpu.camera_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Primordial_Camera))}
 	lut_info := vk.DescriptorBufferInfo{buffer = gpu.lut_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT)}
+	grid_heads_info := vk.DescriptorBufferInfo{buffer = gpu.grid_heads_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * int(PRIMORDIAL_GRID_CELL_COUNT))}
+	grid_next_info := vk.DescriptorBufferInfo{buffer = gpu.grid_next_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * int(gpu.particle_count))}
+	grid_clear_set := gpu.grid_clear_sets[frame_slot]
+	grid_clear_write := vk.WriteDescriptorSet{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_clear_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_heads_info}
+	vk.UpdateDescriptorSets(vk_ctx.device, 1, &grid_clear_write, 0, nil)
 	background_set := gpu.background_sets[frame_slot]
 	background_writes := [2]vk.WriteDescriptorSet {
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &camera_info},
@@ -440,15 +490,27 @@ primordial_update_descriptors_for_slot :: proc(gpu: ^Primordial_Gpu_State, vk_ct
 		update_set := gpu.update_sets[frame_slot][write_index]
 		density_set := gpu.density_sets[frame_slot][write_index]
 		render_set := gpu.render_sets[frame_slot][write_index]
-		update_writes := [3]vk.WriteDescriptorSet {
+		update_writes := [5]vk.WriteDescriptorSet {
 			{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &read_info},
 			{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &write_info},
 			{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_heads_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = update_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_next_info},
 		}
 		vk.UpdateDescriptorSets(vk_ctx.device, u32(len(update_writes)), raw_data(update_writes[:]), 0, nil)
-		density_writes := [2]vk.WriteDescriptorSet {
+		grid_populate_set := gpu.grid_populate_sets[frame_slot][write_index]
+		grid_populate_writes := [4]vk.WriteDescriptorSet {
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_populate_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &read_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_populate_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_heads_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_populate_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_next_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_populate_set, dstBinding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &sim_info},
+		}
+		vk.UpdateDescriptorSets(vk_ctx.device, 4, raw_data(grid_populate_writes[:]), 0, nil)
+		density_writes := [4]vk.WriteDescriptorSet {
 			{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &write_info},
 			{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &density_params_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_heads_info},
+			{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_next_info},
 		}
 		vk.UpdateDescriptorSets(vk_ctx.device, u32(len(density_writes)), raw_data(density_writes[:]), 0, nil)
 		render_writes := [3]vk.WriteDescriptorSet {
@@ -804,26 +866,75 @@ primordial_gpu_step :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Conte
 	write_index := 1 - read_index
 	primordial_write_step_params(gpu, frame_slot, sim, dt, f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
 	primordial_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
+	grid_clear_set := gpu.grid_clear_sets[frame_slot]
+	grid_clear_barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
+	groups := (gpu.particle_count + PRIMORDIAL_WORKGROUP_SIZE - 1) / PRIMORDIAL_WORKGROUP_SIZE
+	grid_populate_barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ}}
+	if !gpu.grid_state_valid || gpu.grid_state_index != u32(read_index) {
+		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_clear_pipeline.pipeline)
+		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.grid_clear_pipeline.layout, 0, 1, &grid_clear_set, 0, nil)
+		vk.CmdDispatch(cmd, PRIMORDIAL_GRID_CELL_COUNT / PRIMORDIAL_WORKGROUP_SIZE, 1, 1)
+		engine.vk_cmd_count_pipeline_bind(vk_ctx)
+		engine.vk_cmd_count_descriptor_bind(vk_ctx)
+		engine.vk_cmd_count_compute_dispatch(vk_ctx)
+		vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &grid_clear_barrier, 0, nil, 0, nil)
+		engine.vk_cmd_count_pipeline_barrier(vk_ctx)
+		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_populate_pipeline.pipeline)
+		grid_populate_set := gpu.grid_populate_sets[frame_slot][write_index]
+		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.grid_populate_pipeline.layout, 0, 1, &grid_populate_set, 0, nil)
+		vk.CmdDispatch(cmd, max(groups, 1), 1, 1)
+		engine.vk_cmd_count_pipeline_bind(vk_ctx)
+		engine.vk_cmd_count_descriptor_bind(vk_ctx)
+		engine.vk_cmd_count_compute_dispatch(vk_ctx)
+		vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &grid_populate_barrier, 0, nil, 0, nil)
+		engine.vk_cmd_count_pipeline_barrier(vk_ctx)
+		gpu.grid_state_index = u32(read_index)
+		gpu.grid_state_valid = true
+	}
 	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.update_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
 	update_set := gpu.update_sets[frame_slot][write_index]
 	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.update_pipeline.layout, 0, 1, &update_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
-	groups := (gpu.particle_count + PRIMORDIAL_WORKGROUP_SIZE - 1) / PRIMORDIAL_WORKGROUP_SIZE
 	vk.CmdDispatch(cmd, max(groups, 1), 1, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
-	barrier_update := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
-	vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &barrier_update, 0, nil, 0, nil)
-	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
-	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.density_pipeline.pipeline)
-	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	density_set := gpu.density_sets[frame_slot][write_index]
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.density_pipeline.layout, 0, 1, &density_set, 0, nil)
-	engine.vk_cmd_count_descriptor_bind(vk_ctx)
-	vk.CmdDispatch(cmd, max(groups, 1), 1, 1)
-	engine.vk_cmd_count_compute_dispatch(vk_ctx)
-	barrier_density := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .VERTEX_ATTRIBUTE_READ}}
-	vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.VERTEX_SHADER, .VERTEX_INPUT}, {}, 1, &barrier_density, 0, nil, 0, nil)
+	if sim.primordial.foreground_color_mode == .Density {
+		barrier_update := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
+		vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &barrier_update, 0, nil, 0, nil)
+		engine.vk_cmd_count_pipeline_barrier(vk_ctx)
+		// Density consumes the newly written positions, so rebuild the shared
+		// grid for the output buffer before traversing its local cells.
+		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_clear_pipeline.pipeline)
+		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.grid_clear_pipeline.layout, 0, 1, &grid_clear_set, 0, nil)
+		vk.CmdDispatch(cmd, PRIMORDIAL_GRID_CELL_COUNT / PRIMORDIAL_WORKGROUP_SIZE, 1, 1)
+		engine.vk_cmd_count_pipeline_bind(vk_ctx)
+		engine.vk_cmd_count_descriptor_bind(vk_ctx)
+		engine.vk_cmd_count_compute_dispatch(vk_ctx)
+		vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &grid_clear_barrier, 0, nil, 0, nil)
+		engine.vk_cmd_count_pipeline_barrier(vk_ctx)
+		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_populate_pipeline.pipeline)
+		output_grid_set := gpu.grid_populate_sets[frame_slot][read_index]
+		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.grid_populate_pipeline.layout, 0, 1, &output_grid_set, 0, nil)
+		vk.CmdDispatch(cmd, max(groups, 1), 1, 1)
+		engine.vk_cmd_count_pipeline_bind(vk_ctx)
+		engine.vk_cmd_count_descriptor_bind(vk_ctx)
+		engine.vk_cmd_count_compute_dispatch(vk_ctx)
+		vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &grid_populate_barrier, 0, nil, 0, nil)
+		engine.vk_cmd_count_pipeline_barrier(vk_ctx)
+		gpu.grid_state_index = u32(write_index)
+		gpu.grid_state_valid = true
+		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.density_pipeline.pipeline)
+		engine.vk_cmd_count_pipeline_bind(vk_ctx)
+		density_set := gpu.density_sets[frame_slot][write_index]
+		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.density_pipeline.layout, 0, 1, &density_set, 0, nil)
+		engine.vk_cmd_count_descriptor_bind(vk_ctx)
+		vk.CmdDispatch(cmd, max(groups, 1), 1, 1)
+		engine.vk_cmd_count_compute_dispatch(vk_ctx)
+	} else {
+		gpu.grid_state_valid = false
+	}
+	barrier_density := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ}}
+	vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.VERTEX_SHADER}, {}, 1, &barrier_density, 0, nil, 0, nil)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 	gpu.state_index = u32(write_index)
 }
@@ -1008,6 +1119,10 @@ primordial_gpu_destroy :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Co
 	if gpu.density_pipeline.layout != vk.PipelineLayout(0) {
 		vk.DestroyPipelineLayout(vk_ctx.device, gpu.density_pipeline.layout, nil)
 	}
+	if gpu.grid_clear_pipeline.pipeline != vk.Pipeline(0) {vk.DestroyPipeline(vk_ctx.device, gpu.grid_clear_pipeline.pipeline, nil)}
+	if gpu.grid_clear_pipeline.layout != vk.PipelineLayout(0) {vk.DestroyPipelineLayout(vk_ctx.device, gpu.grid_clear_pipeline.layout, nil)}
+	if gpu.grid_populate_pipeline.pipeline != vk.Pipeline(0) {vk.DestroyPipeline(vk_ctx.device, gpu.grid_populate_pipeline.pipeline, nil)}
+	if gpu.grid_populate_pipeline.layout != vk.PipelineLayout(0) {vk.DestroyPipelineLayout(vk_ctx.device, gpu.grid_populate_pipeline.layout, nil)}
 	engine.vk_destroy_graphics_pipeline(vk_ctx, &gpu.background_pipeline)
 	engine.vk_destroy_graphics_pipeline(vk_ctx, &gpu.render_pipeline)
 	engine.vk_destroy_graphics_pipeline(vk_ctx, &gpu.trace_particle_pipeline)
@@ -1034,6 +1149,8 @@ primordial_gpu_destroy :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Co
 	if gpu.density_set_layout != vk.DescriptorSetLayout(0) {
 		vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.density_set_layout, nil)
 	}
+	if gpu.grid_clear_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.grid_clear_set_layout, nil)}
+	if gpu.grid_populate_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.grid_populate_set_layout, nil)}
 	if gpu.background_set_layout != vk.DescriptorSetLayout(0) {
 		vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.background_set_layout, nil)
 	}
@@ -1046,6 +1163,8 @@ primordial_gpu_destroy :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Co
 	for i in 0 ..< 2 {
 		engine.vk_destroy_buffer(vk_ctx, &gpu.particle_buffers[i])
 	}
+	engine.vk_destroy_buffer(vk_ctx, &gpu.grid_heads_buffer)
+	engine.vk_destroy_buffer(vk_ctx, &gpu.grid_next_buffer)
 	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
 		engine.vk_destroy_buffer(vk_ctx, &gpu.sim_params_buffers[frame_slot])
 		engine.vk_destroy_buffer(vk_ctx, &gpu.density_params_buffers[frame_slot])
@@ -1058,6 +1177,8 @@ primordial_gpu_destroy :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Co
 	engine.vk_destroy_buffer(vk_ctx, &gpu.lut_buffer)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.update_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.density_shader)
+	engine.vk_destroy_shader_module(vk_ctx, &gpu.grid_clear_shader)
+	engine.vk_destroy_shader_module(vk_ctx, &gpu.grid_populate_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.background_vertex_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.background_fragment_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.render_vertex_shader)

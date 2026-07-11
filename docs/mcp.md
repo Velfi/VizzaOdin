@@ -17,6 +17,10 @@ valid MCP traffic.
 - `screenshot`: return the latest engine-rendered frame as a base64 QOI data
   URL from Vulkan swapchain readback. Optional arguments `scale`, `max_width`,
   and `max_height` reduce the returned image dimensions and payload size.
+- `list_ui_components`: list fixtures and deterministic visual states exposed
+  by the isolated component renderer.
+- `render_ui_component`: select a single component, state, and optional value;
+  the next frames render it in `Theme_Preview` through the production UI path.
 - `configure_particle_life`: apply a Particle Life capture/configuration blob.
   This starts from Particle Life defaults, then applies any supplied fields:
   `particle_count`, `species_count`, `position_generator`, `type_generator`,

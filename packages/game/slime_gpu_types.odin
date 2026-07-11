@@ -37,6 +37,8 @@ SLIME_ENTRY_DISPLAY :: cstring("main")
 SLIME_PRESENT_VERTEX_ENTRY :: cstring("main")
 SLIME_PRESENT_FRAGMENT_ENTRY :: cstring("main")
 SLIME_AGENT_COUNT :: u32(10_000_000)
+SLIME_MIN_AGENT_COUNT :: u32(1)
+SLIME_MAX_AGENT_COUNT :: u32(100_000_000)
 SLIME_PREVIEW_AGENT_COUNT :: u32(80_000)
 SLIME_IMAGE_FORMAT :: vk.Format(.R8G8B8A8_UNORM)
 
@@ -62,11 +64,12 @@ Slime_Sim_Uniform :: struct #align(16) {
 	random_seed: u32,
 	position_generator: u32,
 	delta_time: f32,
-	_pad_time: f32,
+	agent_count: u32,
 	webcam_live: u32,
 	webcam_fit_mode: u32,
 	webcam_width: u32,
 	webcam_height: u32,
+	isotropic_jitter: u32,
 }
 
 Slime_Cursor_Params :: struct #align(16) {

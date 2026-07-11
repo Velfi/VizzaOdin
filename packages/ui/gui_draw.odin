@@ -378,7 +378,11 @@ gui_tooltip_place :: proc(ctx: ^Gui_Context, bounds: Rect, text: string, from_ho
 	}
 	padding := f32(8)
 	viewport_w := ctx.input.window_width > 0 ? f32(ctx.input.window_width) : f32(1280)
-	max_w := min(max(viewport_w * 0.34, f32(240)), f32(420))
+	// Keep tooltips wide enough for a useful number of characters when text is
+	// enlarged. A fixed pixel cap made accessibility-sized help text grow taller
+	// than short windows and get cut off.
+	readable_w := ctx.style.body_char_width * 34 + padding * 2
+	max_w := min(max(viewport_w * 0.5, f32(240)), max(f32(420), readable_w))
 	w := min(gui_text_width(ctx, text) + padding * 2, max_w)
 	w = max(w, min(f32(220), max_w))
 	wrap_w := max(w - padding * 2, ctx.style.body_char_width)
@@ -466,9 +470,9 @@ gui_draw_notice_overlay :: proc(ctx: ^Gui_Context) {
 	gui_round_rect(ctx, rect, ctx.style.radius_control, {0.025, 0.032, 0.045, 0.96 * alpha})
 	gui_round_stroke(ctx, rect, ctx.style.radius_control, gui_apply_opacity(ctx.style.accent, 0.72 * alpha), max(ctx.style.border_width, f32(1)))
 	content := gui_inset(rect, padding)
-	gui_scissor_begin(ctx, content)
+	// Wrapped notice text already stays inside the content width. Avoid clipping it
+	// to the metric line box because font descenders can extend a pixel below it.
 	gui_text_wrapped_at(ctx, {content.x, content.y}, text, content.w, gui_apply_opacity(ctx.style.text, alpha))
-	gui_scissor_end(ctx)
 }
 
 gui_contains :: proc(rect: Rect, p: Vec2) -> bool {

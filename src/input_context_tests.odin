@@ -244,12 +244,12 @@ test_control_deck_hint_tracks_device_and_engagement_phase :: proc(t: ^testing.T)
 	testing.expect_value(
 		t,
 		game.slime_controller_ui_context_hint(&state, .Mouse_Keyboard),
-		"Arrows: adjust  |  Shift: fine  |  Enter: commit  |  Esc: cancel",
+		"Arrows: adjust  |  Shift: fine  |  Ctrl: broad  |  Enter: commit  |  Esc: cancel",
 	)
 	testing.expect_value(
 		t,
 		game.simulation_controller_ui_context_hint(&simulation_state, .Controller),
-		"D-pad: adjust  |  Light stick: fine  |  Accept: commit  |  Back: cancel",
+		"D-pad: adjust  |  Light stick: fine  |  Secondary: step  |  Accept: commit  |  Back: cancel",
 	)
 }
 

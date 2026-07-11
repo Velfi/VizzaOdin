@@ -253,6 +253,11 @@ simulation_controller_ui_update_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_
 			}
 		} else if state.focus.phase == .Child_Region && gui.input.accept && gui.focused != uifw.GUI_ID_NONE {
 			uifw.gui_controller_focus_activate(&state.focus, gui.focused)
+			// Let the Accept press flow through so the widget can enter edit mode
+			// and set focus_edit_id, preventing an immediate deactivation revert.
+			// Do not clear accept here: gui_accept_pressed already edge-detects the
+			// press (accept && !previous.accept), so a held button cannot commit on
+			// the next frame. Clearing it only breaks the begin-edit path.
 		}
 	}
 	return consumed
@@ -322,7 +327,7 @@ simulation_controller_ui_context_hint :: proc(state: ^Simulation_Controller_Ui_S
 	case .Child_Region:
 		return controller ? "D-pad: navigate  |  Accept: edit  |  Back: sections" : "Arrows / Tab: navigate  |  Enter: edit  |  Esc: sections"
 	case .Active_Control:
-		return controller ? "D-pad: adjust  |  Light stick: fine  |  Accept: commit  |  Back: cancel" : "Arrows: adjust  |  Shift: fine  |  Enter: commit  |  Esc: cancel"
+		return controller ? "D-pad: adjust  |  Light stick: fine  |  Secondary: step  |  Accept: commit  |  Back: cancel" : "Arrows: adjust  |  Shift: fine  |  Ctrl: broad  |  Enter: commit  |  Esc: cancel"
 	case .Unfocused:
 		return controller ? "Shoulders: focus controls" : "Tab: focus controls  |  Click: open section"
 	}

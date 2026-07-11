@@ -49,12 +49,20 @@ preset_fieldset_draw :: proc(
 	defer delete(saved_presets)
 	presets := preset_combined_names(builtin_names, saved_presets[:])
 	defer delete(presets)
+	// Saving is handled through the render command queue. Keep the just-saved
+	// name visible while the filesystem view catches up with that command.
+	if state.select_saved_when_available {
+		pending := string(state.select_saved_name[:state.select_saved_name_len])
+		if len(pending) > 0 && !preset_name_in_list(presets[:], pending) {
+			append(&presets, pending)
+		}
+	}
 
 	if !state.initialized {
 		state.selected_index = max(min(builtin_selected_index, len(presets) - 1), 0)
 		state.initialized = true
 	}
-	preset_fieldset_select_pending_saved(state, presets[:])
+	preset_fieldset_select_pending_saved(state, presets[:], saved_presets[:])
 
 	if len(presets) > 0 {
 		state.selected_index = max(min(state.selected_index, len(presets) - 1), 0)
@@ -133,7 +141,7 @@ preset_name_in_list :: proc(names: []string, name: string) -> bool {
 	return false
 }
 
-preset_fieldset_select_pending_saved :: proc(state: ^Preset_Fieldset_State, names: []string) {
+preset_fieldset_select_pending_saved :: proc(state: ^Preset_Fieldset_State, names, saved_names: []string) {
 	if !state.select_saved_when_available {
 		return
 	}
@@ -141,8 +149,10 @@ preset_fieldset_select_pending_saved :: proc(state: ^Preset_Fieldset_State, name
 	for name, i in names {
 		if name == pending {
 			state.selected_index = i
-			state.select_saved_when_available = false
-			state.select_saved_name_len = 0
+			if preset_name_in_list(saved_names, pending) {
+				state.select_saved_when_available = false
+				state.select_saved_name_len = 0
+			}
 			return
 		}
 	}
@@ -196,8 +206,19 @@ preset_save_dialog_draw :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fieldset_
 		window_h = ctx.style.row_height * 9
 	}
 	overlay := uifw.Rect{0, 0, window_w, window_h}
-	dialog_w := min(max(window_w - ctx.style.spacing_2 * 2, 300), 440)
-	dialog_h := ctx.style.row_height * 5 + ctx.style.spacing * 6 + ctx.style.panel_padding * 2
+	viewport_dialog_w := max(window_w - ctx.style.spacing_2 * 2, 1)
+	// Keep the modal proportional to the scaled type. A fixed maximum width clips
+	// the heading and controls at larger UI scales.
+	content_w := max(
+		ctx.style.heading_char_width * f32(len("Save Preset")) + ctx.style.spacing_1 * 2,
+		ctx.style.body_char_width * f32(len("Enter preset name...")) + ctx.style.control_padding * 3,
+	)
+	dialog_w := min(max(content_w + ctx.style.panel_padding * 2, 300), viewport_dialog_w)
+	// Heading, label, text input, and button row, with one layout gap between
+	// each pair. Measuring those rows directly avoids the empty fifth-row tail.
+	dialog_h := ctx.style.heading_line_height + ctx.style.body_line_height + ctx.style.row_height * 2 +
+		ctx.style.spacing * 3 + ctx.style.panel_padding * 2
+	dialog_h = min(dialog_h, max(window_h - ctx.style.spacing_2 * 2, 1))
 	dialog := uifw.Rect{
 		x = max((window_w - dialog_w) * 0.5, ctx.style.spacing_2),
 		y = max((window_h - dialog_h) * 0.5, ctx.style.spacing_2),
@@ -295,8 +316,9 @@ preset_save_dialog_commit :: proc(state: ^Preset_Fieldset_State, worker: ^Produc
 	name := strings.trim_space(string(state.save_name[:state.save_name_len]))
 	preset_fieldset_enqueue(worker, .Save_Preset, simulation_directory, name)
 	state.select_saved_when_available = true
-	state.select_saved_name_len = min(len(name), len(state.select_saved_name))
-	name_bytes := transmute([]u8)name
+	display_name := strings.trim_suffix(preset_filename_from_name(name), ".toml")
+	state.select_saved_name_len = min(len(display_name), len(state.select_saved_name))
+	name_bytes := transmute([]u8)display_name
 	for i in 0 ..< state.select_saved_name_len {
 		state.select_saved_name[i] = name_bytes[i]
 	}

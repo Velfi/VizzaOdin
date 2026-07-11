@@ -188,7 +188,11 @@ Particle_Life_Params :: struct #align(16) {
 	brownian_motion: f32,
 	particle_size: f32,
 	aspect_ratio: f32,
+	force_refresh_stride: u32,
+	force_sample_limit: u32,
 	_pad1: u32,
+	_pad2: u32,
+	_pad3: u32,
 }
 
 Particle_Life_Init_Params :: struct #align(16) {
@@ -409,6 +413,8 @@ Particle_Life_Settings :: struct {
 	collision_iterations: u32,
 	collision_relaxation: f32,
 	collision_damping: f32,
+	force_temporal_coherence: bool,
+	force_dense_sampling: bool,
 	custom_force_matrix: bool,
 	force_matrix: [PARTICLE_LIFE_MAX_SPECIES * PARTICLE_LIFE_MAX_SPECIES]f32,
 	wrap_edges: bool,
@@ -609,6 +615,7 @@ Particle_Life_Gpu_State :: struct {
 	fade_sets: [engine.MAX_FRAMES_IN_FLIGHT][2]vk.DescriptorSet,
 	particle_buffer: engine.Vk_Buffer,
 	particle_scratch_buffer: engine.Vk_Buffer,
+	force_cache_buffer: engine.Vk_Buffer,
 	params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	init_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
 	fade_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
@@ -793,6 +800,29 @@ particle_life_target_analysis_grid_axis :: proc(settings: Particle_Life_Settings
 	return max(min(settings.analysis_grid_size, 1024), 64)
 }
 
+// Far-field forces change smoothly enough to reuse briefly. Nearby forces are
+// still evaluated every step; this stride only rotates the expensive far-field
+// refresh between complete GPU workgroups.
+particle_life_force_refresh_stride :: proc(settings: Particle_Life_Settings) -> u32 {
+	if !settings.force_temporal_coherence || settings.particle_count < 100_000 || settings.max_distance <= 0.05 {
+		return 1
+	}
+	if settings.max_distance >= 0.18 {
+		return 8
+	}
+	if settings.max_distance >= 0.12 {
+		return 4
+	}
+	return 2
+}
+
+particle_life_force_sample_limit :: proc(settings: Particle_Life_Settings) -> u32 {
+	if !settings.force_dense_sampling || settings.particle_count < 100_000 {
+		return 0
+	}
+	return 64
+}
+
 particle_life_analysis_tile_count_for_axis :: proc(axis: u32) -> u32 {
 	return (max(axis, 1) + PARTICLE_LIFE_ANALYSIS_TILE_SIZE - 1) / PARTICLE_LIFE_ANALYSIS_TILE_SIZE
 }
@@ -839,6 +869,8 @@ particle_life_default_settings :: proc() -> Particle_Life_Settings {
 		collision_iterations = 3,
 		collision_relaxation = 0.75,
 		collision_damping = 0.9,
+		force_temporal_coherence = true,
+		force_dense_sampling = true,
 		wrap_edges = true,
 		paused = false,
 		custom_force_matrix = true,

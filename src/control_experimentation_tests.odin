@@ -84,6 +84,113 @@ test_slider_shift_and_light_stick_use_fine_steps :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_numeric_precision_mode_cycles_without_requiring_a_button_chord :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	ctx.controller_explicit_activation = true
+	value := f32(50)
+	id := uifw.gui_make_id(&ctx, "precision_number")
+	ctx.focused = id
+	ctx.focus_edit_id = id
+
+	// The secondary action selects the next, broader step and is released
+	// before adjustment, keeping the control operable with single presses.
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, secondary_pressed = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 280, 60}, .Column, 0, 44)
+	_ = uifw.gui_numeric_f32(&ctx, "Value: 50", "precision_number", &value, 1, 0, 100)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, ctx.numeric_precision_index, 3)
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, nav_pressed_x = 1})
+	uifw.gui_layout_begin(&ctx, {0, 0, 280, 60}, .Column, 0, 44)
+	_ = uifw.gui_numeric_f32(&ctx, "Value: 50", "precision_number", &value, 1, 0, 100)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, value, f32(60))
+}
+
+@(test)
+test_numeric_tracks_support_order_of_magnitude_and_signed_detail_mappings :: proc(t: ^testing.T) {
+	linear_mid := uifw.gui_numeric_normalized(500, 0, 1000, .Linear)
+	log_mid := uifw.gui_numeric_normalized(1, 0.001, 1000, .Logarithmic)
+	negative := uifw.gui_numeric_normalized(-1, -1000, 1000, .Symmetric_Log)
+	zero := uifw.gui_numeric_normalized(0, -1000, 1000, .Symmetric_Log)
+	positive := uifw.gui_numeric_normalized(1, -1000, 1000, .Symmetric_Log)
+	testing.expect_value(t, linear_mid, f32(0.5))
+	testing.expect(t, abs(log_mid - 0.5) < 0.0001)
+	testing.expect(t, negative < zero && zero == 0.5 && positive > zero)
+	testing.expect(t, abs((negative + positive) - 1) < 0.0001)
+}
+
+@(test)
+test_numeric_touch_edge_targets_step_without_turning_a_drag_into_a_tap :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	value := f32(5)
+
+	uifw.gui_begin_frame(&ctx, {pointer_enabled = true, mouse_pos = {270, 22}, mouse_down = true, mouse_pressed = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 280, 60}, .Column, 0, 44)
+	_ = uifw.gui_numeric_f32(&ctx, "Value: 5", "touch_number", &value, 1, 0, 10)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+
+	uifw.gui_begin_frame(&ctx, {pointer_enabled = true, mouse_pos = {270, 22}, mouse_released = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 280, 60}, .Column, 0, 44)
+	_ = uifw.gui_numeric_f32(&ctx, "Value: 5", "touch_number", &value, 1, 0, 10)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, value, f32(6))
+}
+
+@(test)
+test_numeric_center_tap_enters_exact_text_editing :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	value := f32(12.5)
+	id := uifw.gui_make_id(&ctx, "tap_exact")
+	uifw.gui_begin_frame(&ctx, {pointer_enabled = true, mouse_pos = {140, 22}, mouse_pressed = true, mouse_down = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 280, 60}, .Column, 0, 44)
+	_ = uifw.gui_numeric_f32(&ctx, "Value: 12.5", "tap_exact", &value, 0.1, 0, 100)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	uifw.gui_begin_frame(&ctx, {pointer_enabled = true, mouse_pos = {140, 22}, mouse_released = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 280, 60}, .Column, 0, 44)
+	_ = uifw.gui_numeric_f32(&ctx, "Value: 12.5", "tap_exact", &value, 0.1, 0, 100)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, ctx.focused, id)
+	testing.expect_value(t, ctx.text_edit_id, id)
+}
+
+@(test)
+test_numeric_u32_preserves_values_above_f32_exact_integer_range :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	ctx.controller_explicit_activation = true
+	value := u32(4_294_967_294)
+	id := uifw.gui_make_id(&ctx, "exact_u32")
+	ctx.focused = id
+	ctx.focus_edit_id = id
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, nav_pressed_x = 1})
+	uifw.gui_layout_begin(&ctx, {0, 0, 320, 60}, .Column, 0, 44)
+	testing.expect(t, uifw.gui_numeric_u32(&ctx, "Seed", "exact_u32", &value, 0, ~u32(0)))
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, value, ~u32(0))
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, nav_pressed_x = 1})
+	uifw.gui_layout_begin(&ctx, {0, 0, 320, 60}, .Column, 0, 44)
+	testing.expect(t, !uifw.gui_numeric_u32(&ctx, "Seed", "exact_u32", &value, 0, ~u32(0)))
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+}
+
+@(test)
 test_randomize_operations_can_restore_previous_settings :: proc(t: ^testing.T) {
 	gray: game.Gray_Scott_Simulation
 	game.gray_scott_init(&gray, 320, 240)
@@ -134,6 +241,21 @@ test_action_notice_expires_after_feedback_window :: proc(t: ^testing.T) {
 	testing.expect_value(t, ctx.notice_seconds, f32(2))
 
 	uifw.gui_begin_frame(&ctx, {delta_time = 2})
+	testing.expect_value(t, ctx.notice_text_len, 0)
+	testing.expect_value(t, ctx.notice_seconds, f32(0))
+}
+
+@(test)
+test_action_notice_cannot_stick_during_zero_delta_redraws :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	uifw.gui_notice(&ctx, "Deflect selected", 0.05)
+
+	for _ in 0 ..< 3 {
+		uifw.gui_begin_frame(&ctx, {})
+	}
+
 	testing.expect_value(t, ctx.notice_text_len, 0)
 	testing.expect_value(t, ctx.notice_seconds, f32(0))
 }

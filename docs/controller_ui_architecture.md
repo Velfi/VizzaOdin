@@ -41,12 +41,12 @@ Normal couch UI only shows controls that are fully wired, not Developer or Debug
 
 `packages/game/slime_capabilities.odin` declares Slime Mold's controls. The couch deck composes them into six user-facing views:
 
-- Presets: built-ins, saved settings, respawn, and randomize
-- Look: palette, reverse, background, blur
-- Agents: speed range, steering, and an interactive awareness cone
-- Trails: Ink plus the paired Fade/Spread response
-- Brush: a two-axis radius/strength instrument
-- World: initial placement and mask source/target/response/image transforms
+- Presets: a Library section followed by start-over actions
+- Look: Appearance (palette/background) followed by Effects
+- Agents: Population, Movement, and Sensing, including the interactive awareness cone
+- Trails: Ink followed by trail Memory (paired Fade/Spread) and clearing
+- Brush: Interaction tool selection followed by the two-axis Shape instrument
+- World: Spawn configuration followed by mask source/target/response/image transforms
 
 Pause and Record remain universal utility-rail actions in the Control Deck. Clear Trails stays next to the trail controls where its consequence is visible.
 

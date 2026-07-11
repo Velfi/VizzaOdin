@@ -596,8 +596,13 @@ Gui_Context :: struct {
 	text_edit_blink: f32,
 	text_edit_selecting: bool,
 	wants_text_input: bool,
-	number_edit_snapshot_id: Gui_Id,
-	number_edit_snapshot_value: f32,
+	numeric_edit_snapshot_id: Gui_Id,
+	numeric_edit_snapshot_value: f32,
+	numeric_edit_snapshot_u32: u32,
+	numeric_precision_id: Gui_Id,
+	numeric_precision_index: int,
+	numeric_pointer_id: Gui_Id,
+	numeric_pointer_distance: f32,
 	clipboard_set_pending: bool,
 	clipboard_set_text: [256]u8,
 	clipboard_set_len: int,
@@ -939,7 +944,10 @@ gui_begin_frame :: proc(ctx: ^Gui_Context, input: Input_State) {
 	ctx.tooltip_visible = false
 	ctx.tooltip_from_hover = false
 	if ctx.notice_seconds > 0 {
-		ctx.notice_seconds = max(ctx.notice_seconds - max(frame_input.delta_time, 0), 0)
+		// Notices must remain transient even when a host redraw supplies a zero
+		// delta (for example, an event-driven redraw or a resumed window).
+		notice_delta := frame_input.delta_time > 0 ? frame_input.delta_time : f32(1.0 / 60.0)
+		ctx.notice_seconds = max(ctx.notice_seconds - notice_delta, 0)
 		if ctx.notice_seconds <= 0 {
 			ctx.notice_text_len = 0
 		}
@@ -1408,14 +1416,21 @@ gui_apply_wheel_scroll :: proc(ctx: ^Gui_Context, viewport: Rect, scroll: ^f32, 
 }
 
 gui_scroll_begin :: proc(ctx: ^Gui_Context, viewport: Rect, content_height: f32, scroll: ^f32) {
-	gui_scroll_begin_internal(ctx, viewport, content_height, scroll, false)
+	gui_scroll_begin_internal(ctx, viewport, content_height, scroll, false, true)
 }
 
 gui_scroll_begin_draggable :: proc(ctx: ^Gui_Context, viewport: Rect, content_height: f32, scroll: ^f32) {
-	gui_scroll_begin_internal(ctx, viewport, content_height, scroll, true)
+	gui_scroll_begin_internal(ctx, viewport, content_height, scroll, true, true)
 }
 
-gui_scroll_begin_internal :: proc(ctx: ^Gui_Context, viewport: Rect, content_height: f32, scroll: ^f32, draggable: bool) {
+// Native wheel scrolling follows SDL's high-resolution deltas directly. This is
+// appropriate for reading surfaces where macOS already supplies smooth trackpad
+// motion and a second easing layer would make the content trail the gesture.
+gui_scroll_begin_native :: proc(ctx: ^Gui_Context, viewport: Rect, content_height: f32, scroll: ^f32) {
+	gui_scroll_begin_internal(ctx, viewport, content_height, scroll, false, false)
+}
+
+gui_scroll_begin_internal :: proc(ctx: ^Gui_Context, viewport: Rect, content_height: f32, scroll: ^f32, draggable, animate: bool) {
 	max_scroll := max(content_height - viewport.h, 0)
 	previous_scroll, consumed_wheel := gui_apply_wheel_scroll(ctx, viewport, scroll, max_scroll, 32, ctx.scroll_depth)
 	scroll^ = min(max(scroll^, 0), max_scroll)
@@ -1446,7 +1461,7 @@ gui_scroll_begin_internal :: proc(ctx: ^Gui_Context, viewport: Rect, content_hei
 		}
 	}
 	visible_scroll := scroll^
-	if ctx.input.delta_time > 0 {
+	if animate && ctx.input.delta_time > 0 {
 		slot := gui_animation_slot(ctx, scroll_id)
 		if slot != nil {
 			if direct_scroll {
@@ -2347,25 +2362,25 @@ gui_match_contains :: proc(matches: []int, value: int) -> bool {
 	return false
 }
 
-gui_number_edit_f32 :: proc(ctx: ^Gui_Context, id: Gui_Id, value: ^f32, min_value, max_value: f32) -> bool {
+gui_numeric_edit_f32 :: proc(ctx: ^Gui_Context, id: Gui_Id, value: ^f32, min_value, max_value: f32) -> bool {
 	if ctx.input.back {
-		if ctx.number_edit_snapshot_id == id {
-			value^ = ctx.number_edit_snapshot_value
+		if ctx.numeric_edit_snapshot_id == id {
+			value^ = ctx.numeric_edit_snapshot_value
 		}
-		ctx.number_edit_snapshot_id = GUI_ID_NONE
+		ctx.numeric_edit_snapshot_id = GUI_ID_NONE
 		ctx.text_edit_id = GUI_ID_NONE
 		ctx.text_edit_len = 0
 		return false
 	}
 	if ctx.input.accept {
-		ctx.number_edit_snapshot_id = GUI_ID_NONE
+		ctx.numeric_edit_snapshot_id = GUI_ID_NONE
 		ctx.text_edit_id = GUI_ID_NONE
 		ctx.text_edit_len = 0
 		return false
 	}
 
 	if ctx.text_edit_id != id {
-		gui_number_edit_begin(ctx, id, value^)
+		gui_numeric_edit_begin(ctx, id, value^)
 	}
 	edited := gui_text_edit_process(ctx, id, ctx.text_edit_buffer[:], &ctx.text_edit_len, true)
 
@@ -2384,13 +2399,13 @@ gui_number_edit_f32 :: proc(ctx: ^Gui_Context, id: Gui_Id, value: ^f32, min_valu
 	return true
 }
 
-gui_number_edit_begin :: proc(ctx: ^Gui_Context, id: Gui_Id, value: f32) {
-	if ctx.number_edit_snapshot_id != id {
-		ctx.number_edit_snapshot_id = id
-		ctx.number_edit_snapshot_value = value
+gui_numeric_edit_begin :: proc(ctx: ^Gui_Context, id: Gui_Id, value: f32) {
+	if ctx.numeric_edit_snapshot_id != id {
+		ctx.numeric_edit_snapshot_id = id
+		ctx.numeric_edit_snapshot_value = value
 	}
 	ctx.text_edit_id = id
-	gui_number_edit_set_value(ctx, value)
+	gui_numeric_edit_set_value(ctx, value)
 	ctx.text_edit_caret = ctx.text_edit_len
 	ctx.text_edit_anchor = 0
 	ctx.text_edit_scroll_x = 0
@@ -2398,7 +2413,7 @@ gui_number_edit_begin :: proc(ctx: ^Gui_Context, id: Gui_Id, value: f32) {
 	ctx.text_edit_selecting = false
 }
 
-gui_number_edit_wants_text :: proc(ctx: ^Gui_Context) -> bool {
+gui_numeric_edit_wants_text :: proc(ctx: ^Gui_Context) -> bool {
 	modifier := ctx.input.key_ctrl || ctx.input.key_super
 	if ctx.input.text_input_len > 0 {
 		return true
@@ -2412,7 +2427,7 @@ gui_number_edit_wants_text :: proc(ctx: ^Gui_Context) -> bool {
 	return false
 }
 
-gui_number_edit_set_value :: proc(ctx: ^Gui_Context, value: f32) {
+gui_numeric_edit_set_value :: proc(ctx: ^Gui_Context, value: f32) {
 	buf: [64]u8
 	text := fmt.bprintf(buf[:], "%.3f", value)
 	ctx.text_edit_len = min(len(text), len(ctx.text_edit_buffer))
@@ -2425,7 +2440,7 @@ gui_number_edit_set_value :: proc(ctx: ^Gui_Context, value: f32) {
 	}
 }
 
-gui_number_edit_accepts_char :: proc(ch: u8) -> bool {
+gui_numeric_edit_accepts_char :: proc(ch: u8) -> bool {
 	switch ch {
 	case '0'..='9', '-', '+', '.', 'e', 'E':
 		return true

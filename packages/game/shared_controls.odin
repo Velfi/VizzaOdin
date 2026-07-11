@@ -458,10 +458,10 @@ shared_post_processing_menu :: proc(ctx: ^uifw.Gui_Context, enabled: ^bool, radi
 		changed = true
 	}
 	if enabled^ {
-		if uifw.gui_number_drag_f32(ctx, fmt.tprintf("%s: %.2f", options.radius_label, radius^), options.radius_key, radius, options.radius_step, options.radius_min, options.radius_max) {
+		if uifw.gui_numeric_f32(ctx, fmt.tprintf("%s: %.2f", options.radius_label, radius^), options.radius_key, radius, options.radius_step, options.radius_min, options.radius_max) {
 			changed = true
 		}
-		if uifw.gui_number_drag_f32(ctx, fmt.tprintf("%s: %.2f", options.sigma_label, sigma^), options.sigma_key, sigma, options.sigma_step, options.sigma_min, options.sigma_max) {
+		if uifw.gui_numeric_f32(ctx, fmt.tprintf("%s: %.2f", options.sigma_label, sigma^), options.sigma_key, sigma, options.sigma_step, options.sigma_min, options.sigma_max) {
 			changed = true
 		}
 	}

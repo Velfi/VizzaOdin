@@ -25,6 +25,15 @@ controls_help_has_text :: proc(ctx: ^uifw.Gui_Context, text: string) -> bool {
 	return false
 }
 
+controls_help_has_text_prefix :: proc(ctx: ^uifw.Gui_Context, text: string) -> bool {
+	for command in ctx.commands {
+		if command.kind == .Text && len(command.text) >= len(text) && command.text[:len(text)] == text {
+			return true
+		}
+	}
+	return false
+}
+
 @(test)
 test_controls_help_teaches_current_input_model_and_supports_back :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
@@ -38,6 +47,16 @@ test_controls_help_teaches_current_input_model_and_supports_back :: proc(t: ^tes
 	game.app_ui_draw_how_to_play(&ui, &ctx)
 	uifw.gui_end_frame(&ctx)
 	testing.expect(t, controls_help_has_text(&ctx, "Controls"))
+	// The intro is normally wrapped into line commands; assert its opening is
+	// present instead of depending on a particular font metric or UI scale.
+	testing.expect(t, controls_help_has_text_prefix(&ctx, "You do not need to understand every setting"))
+	testing.expect(t, controls_help_has_text(&ctx, "Try the controls"))
+	_, demo_button_found := controls_help_find_item(&ctx, uifw.gui_make_id(&ctx, "how_to_play_demo_button"))
+	_, demo_toggle_found := controls_help_find_item(&ctx, uifw.gui_make_id(&ctx, "how_to_play_demo_toggle"))
+	_, demo_number_found := controls_help_find_item(&ctx, uifw.gui_make_id(&ctx, "how_to_play_demo_number"))
+	_, demo_slider_found := controls_help_find_item(&ctx, uifw.gui_make_id(&ctx, "how_to_play_demo_slider"))
+	_, demo_selector_found := controls_help_find_item(&ctx, uifw.gui_make_id(&ctx, "how_to_play_demo_selector"))
+	testing.expect(t, demo_button_found && demo_toggle_found && demo_number_found && demo_slider_found && demo_selector_found)
 	for section in game.HOW_TO_PLAY_SECTIONS {
 		testing.expect(t, controls_help_has_text(&ctx, section.title))
 	}
@@ -50,6 +69,28 @@ test_controls_help_teaches_current_input_model_and_supports_back :: proc(t: ^tes
 	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, back = true})
 	game.app_ui_draw_how_to_play(&ui, &ctx)
 	testing.expect_value(t, ui.mode, game.App_Mode.Main_Menu)
+}
+
+@(test)
+test_ui_component_fixture_renders_only_the_requested_target_state :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default(), true)
+	ui.component_fixture = .Number
+	ui.component_fixture_state = .Editing
+	ui.component_fixture_value = 12.5
+
+	uifw.gui_begin_frame(&ctx, {window_width = 800, window_height = 480, active_device = .Controller})
+	game.app_ui_draw_component_fixture(&ui, &ctx)
+	uifw.gui_end_frame(&ctx)
+	target := uifw.gui_make_id(&ctx, "component_fixture_target")
+	_, found := controls_help_find_item(&ctx, target)
+	testing.expect(t, found)
+	testing.expect_value(t, ctx.focused, target)
+	testing.expect_value(t, ctx.focus_edit_id, target)
+	testing.expect(t, ctx.spatial_item_count == 1)
 }
 
 @(test)

@@ -23,13 +23,17 @@ struct DensityParams {
     uint particle_count;
     float density_radius;
     uint coloring_mode; // 0 = random, 1 = density, 2 = heading, 3 = velocity
-    uint _padding;
+    uint grid_axis;
+    float grid_cell_size;
+    uint3 _padding;
 };
 
 [[vk::binding(0, 0)]]
 RWStructuredBuffer<Particle> particles;
 [[vk::binding(1, 0)]]
 ConstantBuffer<DensityParams> params;
+[[vk::binding(2, 0)]] StructuredBuffer<uint> grid_heads;
+[[vk::binding(3, 0)]] StructuredBuffer<uint> grid_next;
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
@@ -52,12 +56,25 @@ float compute_density(Particle particle, uint particle_index) {
     var density = 0.0;
     let density_radius_sq = params.density_radius * params.density_radius;
     
-    for (var i = 0; i < params.particle_count; i++) {
-        if (i == particle_index) {
+    let axis = int(params.grid_axis);
+    let center = int2(clamp(int((particle.position.x + 1.0) / params.grid_cell_size), 0, axis - 1),
+                      clamp(int((particle.position.y + 1.0) / params.grid_cell_size), 0, axis - 1));
+    let cell_radius = min(int(ceil(params.density_radius / params.grid_cell_size)), axis / 2);
+    for (var oy = -cell_radius; oy <= cell_radius; oy++) {
+      for (var ox = -cell_radius; ox <= cell_radius; ox++) {
+        let minimum_cell_dx = float(max(abs(ox) - 1, 0)) * params.grid_cell_size;
+        let minimum_cell_dy = float(max(abs(oy) - 1, 0)) * params.grid_cell_size;
+        if (minimum_cell_dx * minimum_cell_dx + minimum_cell_dy * minimum_cell_dy > density_radius_sq) {
             continue;
         }
-        
-        let other = particles[i];
+        var cx = (center.x + ox) % axis;
+        var cy = (center.y + oy) % axis;
+        if (cx < 0) cx += axis;
+        if (cy < 0) cy += axis;
+        var i = grid_heads[uint(cy * axis + cx)];
+        while (i != 0xffffffffu) {
+          if (i != particle_index) {
+            let other = particles[i];
         var delta = particle.position - other.position;
         
         // Toroidal wrapping for PPS world space [-1,1]
@@ -73,6 +90,10 @@ float compute_density(Particle particle, uint particle_index) {
         if (distance_sq < density_radius_sq) {
             density += 1.0 / (1.0 + distance_sq);
         }
+          }
+          i = grid_next[i];
+        }
+      }
     }
     
     return density;

@@ -54,11 +54,11 @@ jobs:
           path: |
             ${{ env.VIZZA_VCPKG_ROOT }}\installed
             ${{ env.VCPKG_BINARY_CACHE }}
-          # v4 intentionally invalidates SDL3 binaries configured before Vulkan
-          # headers were an explicit Windows build dependency.
-          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v4-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          # v5 intentionally invalidates SDL3 binaries configured before the
+          # workflow forced a local rebuild with Vulkan headers available.
+          key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-v5-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-vcpkg-v4-
+            ${{ runner.os }}-${{ runner.arch }}-vcpkg-v5-
 
       - name: Install Windows build dependencies
         shell: pwsh
@@ -97,6 +97,23 @@ jobs:
             }
           } finally {
             Pop-Location
+          }
+
+          # SDL's vcpkg ABI does not account for optional Vulkan headers, so a
+          # binary-cache hit may have been configured with SDL_VULKAN=OFF even
+          # though the headers are installed now. Do not accept a cached SDL
+          # archive: configure and build it on this runner after the headers.
+          & "$vcpkgRoot\vcpkg.exe" remove "sdl3:$env:VCPKG_DEFAULT_TRIPLET" `
+            --x-install-root "$installRoot"
+          if ($LASTEXITCODE -ne 0) {
+            throw "vcpkg failed while removing the cached SDL3 package"
+          }
+
+          & "$vcpkgRoot\vcpkg.exe" install "sdl3:$env:VCPKG_DEFAULT_TRIPLET" `
+            --x-install-root "$installRoot" `
+            --no-binarycaching
+          if ($LASTEXITCODE -ne 0) {
+            throw "vcpkg failed to rebuild SDL3 with Vulkan headers"
           }
 
           & "$vcpkgRoot\vcpkg.exe" install `

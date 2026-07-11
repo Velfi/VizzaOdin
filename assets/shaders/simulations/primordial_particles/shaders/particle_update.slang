@@ -54,8 +54,8 @@ struct SimParams {
     float cursor_size;
     float cursor_strength;
     float aspect_ratio;
-    float _pad1;
-    float _pad0;
+    uint grid_axis;
+    float grid_cell_size;
 };
 
 [[vk::binding(0, 0)]]
@@ -66,6 +66,8 @@ RWStructuredBuffer<Particle> particles_out;
 
 [[vk::binding(2, 0)]]
 ConstantBuffer<SimParams> sim_params;
+[[vk::binding(3, 0)]] StructuredBuffer<uint> grid_heads;
+[[vk::binding(4, 0)]] StructuredBuffer<uint> grid_next;
 
 // Calculate distance between two points with optional wrapping
 float distance_with_wrapping(float2 p1, float2 p2) {
@@ -93,19 +95,35 @@ float distance_with_wrapping(float2 p1, float2 p2) {
 // Count particles in left and right semicircles
 uint2 count_neighbors(uint particle_index) {
     let current_particle = particles_in[particle_index];
+    let heading_direction = float2(cos(current_particle.heading), sin(current_particle.heading));
+    let radius_sq = sim_params.radius * sim_params.radius;
     uint left_count = 0;
     uint right_count = 0;
     
-    for (var i = 0; i < sim_params.particle_count; i++) {
-        if (i == particle_index) {
+    let axis = int(sim_params.grid_axis);
+    let cell_size = sim_params.grid_cell_size;
+    let center = int2(clamp(int((current_particle.position.x + 1.0) / cell_size), 0, axis - 1),
+                      clamp(int((current_particle.position.y + 1.0) / cell_size), 0, axis - 1));
+    let cell_radius = min(int(ceil(sim_params.radius / cell_size)), axis / 2);
+    for (var oy = -cell_radius; oy <= cell_radius; oy++) {
+      for (var ox = -cell_radius; ox <= cell_radius; ox++) {
+        let minimum_cell_dx = float(max(abs(ox) - 1, 0)) * cell_size;
+        let minimum_cell_dy = float(max(abs(oy) - 1, 0)) * cell_size;
+        if (minimum_cell_dx * minimum_cell_dx + minimum_cell_dy * minimum_cell_dy > radius_sq) {
             continue;
         }
-        
-        let other_particle = particles_in[i];
-        let dist = distance_with_wrapping(current_particle.position, other_particle.position);
-        
-        if (dist <= sim_params.radius) {
-            // Calculate relative position vector
+        var cx = center.x + ox;
+        var cy = center.y + oy;
+        if (sim_params.wrap_edges == 1) {
+            cx = (cx % axis + axis) % axis;
+            cy = (cy % axis + axis) % axis;
+        } else if (cx < 0 || cy < 0 || cx >= axis || cy >= axis) {
+            continue;
+        }
+        var i = grid_heads[uint(cy * axis + cx)];
+        while (i != 0xffffffffu) {
+          if (i != particle_index) {
+            let other_particle = particles_in[i];
             var dx = other_particle.position.x - current_particle.position.x;
             var dy = other_particle.position.y - current_particle.position.y;
             
@@ -124,17 +142,20 @@ uint2 count_neighbors(uint particle_index) {
                 }
             }
             
-            // Determine if particle is on left or right side
-            // Use cross product to determine side relative to current heading
-            let relative_angle = atan2(dy, dx) - current_particle.heading;
-            let normalized_angle = wrap_angle_pi(relative_angle);
-            
-            if (normalized_angle > 0.0) {
+            if (dx * dx + dy * dy <= radius_sq) {
+              // The sign of this 2D cross product is the sign of the old
+              // normalized atan2 angle, without a square root or atan2 per neighbor.
+              let side = heading_direction.x * dy - heading_direction.y * dx;
+              if (side > 0.0) {
                 right_count++;
-            } else {
+              } else {
                 left_count++;
+              }
             }
+          }
+          i = grid_next[i];
         }
+      }
     }
     
     return uint2(left_count, right_count);

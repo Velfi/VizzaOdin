@@ -147,6 +147,8 @@ particle_life_clear_preserved_particles :: game.particle_life_clear_preserved_pa
 particle_life_collision_distance :: game.particle_life_collision_distance
 particle_life_current_grid_satisfies_settings :: game.particle_life_current_grid_satisfies_settings
 particle_life_force_matrix_upload_existing :: game.particle_life_force_matrix_upload_existing
+particle_life_force_refresh_stride :: game.particle_life_force_refresh_stride
+particle_life_force_sample_limit :: game.particle_life_force_sample_limit
 particle_life_generate_force_matrix :: game.particle_life_generate_force_matrix
 particle_life_note_trail_camera :: game.particle_life_note_trail_camera
 particle_life_request_resource_rebuild :: game.particle_life_request_resource_rebuild
@@ -191,6 +193,9 @@ VECTORS_FRAGMENT_FALLBACK_SPV :: game.VECTORS_FRAGMENT_FALLBACK_SPV
 VECTORS_FRAGMENT_SHADER_SOURCE :: game.VECTORS_FRAGMENT_SHADER_SOURCE
 VECTORS_IMAGE_RESOLUTION :: game.VECTORS_IMAGE_RESOLUTION
 VECTORS_MIN_DENSITY :: game.VECTORS_MIN_DENSITY
+VECTORS_MAX_SEGMENTS :: game.VECTORS_MAX_SEGMENTS
+VECTORS_FIELD_SHADER_SOURCE :: game.VECTORS_FIELD_SHADER_SOURCE
+VECTORS_FIELD_FALLBACK_SPV :: game.VECTORS_FIELD_FALLBACK_SPV
 VECTORS_MAX_INDICES :: game.VECTORS_MAX_INDICES
 VECTORS_MAX_VERTICES :: game.VECTORS_MAX_VERTICES
 VECTORS_SOURCE_ENTRY :: game.VECTORS_SOURCE_ENTRY
@@ -198,8 +203,11 @@ VECTORS_VERTEX_FALLBACK_SPV :: game.VECTORS_VERTEX_FALLBACK_SPV
 VECTORS_VERTEX_SHADER_SOURCE :: game.VECTORS_VERTEX_SHADER_SOURCE
 Vectors_Camera_Uniform :: game.Vectors_Camera_Uniform
 Vectors_Vertex :: game.Vectors_Vertex
+Vectors_Instance :: game.Vectors_Instance
+Vectors_Field_Stamp :: game.Vectors_Field_Stamp
 color_scheme_effective :: game.color_scheme_effective
 noise_sample01_2d :: game.noise_sample01_2d
+noise_sample01_transformed_2d :: game.noise_sample01_transformed_2d
 vectors_image_source_coord :: game.vectors_image_source_coord
 vectors_sample_image_source :: game.vectors_sample_image_source
 write_fixed_string :: game.write_fixed_string
@@ -280,6 +288,8 @@ flow_mouse_button_down_from_cursor :: game.flow_mouse_button_down_from_cursor
 noise_sync_indices :: game.noise_sync_indices
 Camera_Control_State :: game.Camera_Control_State
 SLIME_AGENT_COUNT :: game.SLIME_AGENT_COUNT
+SLIME_MIN_AGENT_COUNT :: game.SLIME_MIN_AGENT_COUNT
+SLIME_MAX_AGENT_COUNT :: game.SLIME_MAX_AGENT_COUNT
 SLIME_COMPUTE_SHADER_SOURCE :: game.SLIME_COMPUTE_SHADER_SOURCE
 SLIME_DECAY_FALLBACK_SPV :: game.SLIME_DECAY_FALLBACK_SPV
 SLIME_DIFFUSE_FALLBACK_SPV :: game.SLIME_DIFFUSE_FALLBACK_SPV
@@ -367,6 +377,12 @@ PRIMORDIAL_BACKGROUND_SHADER_SOURCE :: game.PRIMORDIAL_BACKGROUND_SHADER_SOURCE
 PRIMORDIAL_BACKGROUND_VERTEX_FALLBACK_SPV :: game.PRIMORDIAL_BACKGROUND_VERTEX_FALLBACK_SPV
 PRIMORDIAL_DENSITY_FALLBACK_SPV :: game.PRIMORDIAL_DENSITY_FALLBACK_SPV
 PRIMORDIAL_DENSITY_SHADER_SOURCE :: game.PRIMORDIAL_DENSITY_SHADER_SOURCE
+PRIMORDIAL_GRID_CLEAR_SHADER_SOURCE :: game.PRIMORDIAL_GRID_CLEAR_SHADER_SOURCE
+PRIMORDIAL_GRID_CLEAR_FALLBACK_SPV :: game.PRIMORDIAL_GRID_CLEAR_FALLBACK_SPV
+PRIMORDIAL_GRID_POPULATE_SHADER_SOURCE :: game.PRIMORDIAL_GRID_POPULATE_SHADER_SOURCE
+PRIMORDIAL_GRID_POPULATE_FALLBACK_SPV :: game.PRIMORDIAL_GRID_POPULATE_FALLBACK_SPV
+PRIMORDIAL_GRID_AXIS :: game.PRIMORDIAL_GRID_AXIS
+PRIMORDIAL_GRID_CELL_COUNT :: game.PRIMORDIAL_GRID_CELL_COUNT
 PRIMORDIAL_ENTRY :: game.PRIMORDIAL_ENTRY
 PRIMORDIAL_FADE_FRAGMENT_FALLBACK_SPV :: game.PRIMORDIAL_FADE_FRAGMENT_FALLBACK_SPV
 PRIMORDIAL_FADE_FRAGMENT_SHADER_SOURCE :: game.PRIMORDIAL_FADE_FRAGMENT_SHADER_SOURCE

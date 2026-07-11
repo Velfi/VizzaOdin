@@ -32,7 +32,7 @@ particle_life_controls_content_height :: proc(sim: ^Particle_Life_Simulation, ct
 			matrix_h := f32(n + 1) * max(ctx.style.row_height * 1.35, f32(58))
 			return heading + row * 13 + uifw.gui_slider_height(ctx) + matrix_h + spacer + undo_row
 		case 5:
-			rows := 9
+			rows := 11
 			if sim.settings.collision_enabled {rows += 4}
 			curve_extra := particle_life_force_curve_plot_height(ctx) + ctx.style.row_height
 			return heading * 2 + row * f32(rows) + curve_extra + spacer
@@ -431,17 +431,13 @@ particle_life_draw_controls :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.G
 		sim.settings.type_generator = u32(type_index)
 		particle_life_reset_runtime(sim)
 	}
-	particle_count := f32(sim.settings.particle_count)
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Particle Count: %d", sim.settings.particle_count), "pl_count", &particle_count, 1000, 1000, PARTICLE_LIFE_MAX_PARTICLE_COUNT) {
+	if uifw.gui_numeric_u32(ctx, "Particle Count", "pl_count", &sim.settings.particle_count, 1000, PARTICLE_LIFE_MAX_PARTICLE_COUNT, 1000) {
 		particle_life_clear_preserved_particles(sim)
-		sim.settings.particle_count = u32(particle_count)
 		sim.runtime.needs_reset = true
 		sim.gpu.ready = false
 	}
-	species_count := f32(sim.settings.species_count)
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Species Count: %d", sim.settings.species_count), "pl_species", &species_count, 1, 2, PARTICLE_LIFE_MAX_SPECIES) {
+	if uifw.gui_numeric_u32(ctx, "Species Count", "pl_species", &sim.settings.species_count, 2, PARTICLE_LIFE_MAX_SPECIES) {
 		particle_life_clear_preserved_particles(sim)
-		sim.settings.species_count = u32(species_count)
 		sim.runtime.needs_reset = true
 		sim.gpu.ready = false
 	}
@@ -492,6 +488,8 @@ particle_life_draw_controls :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.G
 	shared_control_explanation(ctx, "pl_friction", "Friction controls how quickly motion settles. Higher values calm particles sooner.")
 	_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Brownian: %.3f", sim.settings.brownian_motion), "pl_brownian", &sim.settings.brownian_motion, 0.0, 1.0)
 	shared_control_explanation(ctx, "pl_brownian", "Brownian motion adds small random nudges, keeping particles from moving too perfectly.")
+	_ = uifw.gui_toggle(ctx, fmt.tprintf("Dense Cell Sampling: %v", sim.settings.force_dense_sampling), "pl_dense_cell_sampling", &sim.settings.force_dense_sampling)
+	shared_control_explanation(ctx, "pl_dense_cell_sampling", "Caps work in overcrowded grid cells using rotating weighted samples. Disable for fully exact force evaluation.")
 
 	uifw.gui_spacer(ctx, 8)
 	uifw.gui_heading(ctx, "Local Constraints")
@@ -502,10 +500,7 @@ particle_life_draw_controls :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.G
 	}
 	if sim.settings.collision_enabled {
 		uifw.gui_text_block(ctx, fmt.tprintf("Distance follows particle size: %.4f", particle_life_collision_distance(sim.settings)), panel.w - ctx.style.panel_padding * 2, ctx.style.text_muted)
-		collision_iterations := f32(sim.settings.collision_iterations)
-		if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Iterations: %d", sim.settings.collision_iterations), "pl_collision_iterations", &collision_iterations, 1, 1, 8) {
-			sim.settings.collision_iterations = u32(max(min(collision_iterations, 8), 1))
-		}
+		_ = uifw.gui_numeric_u32(ctx, "Iterations", "pl_collision_iterations", &sim.settings.collision_iterations, 1, 8)
 		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Relaxation: %.2f", sim.settings.collision_relaxation), "pl_collision_relaxation", &sim.settings.collision_relaxation, 0.0, 1.0)
 		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Damping: %.2f", sim.settings.collision_damping), "pl_collision_damping", &sim.settings.collision_damping, 0.0, 1.0)
 	}
@@ -520,10 +515,10 @@ particle_life_draw_controls :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.G
 	if uifw.gui_slider_f32(ctx, fmt.tprintf("Zoom: %.2f", sim.runtime.camera_zoom), "pl_camera_zoom", &sim.runtime.camera_zoom, 0.25, 24.0) {
 		sim.runtime.camera_target_zoom = sim.runtime.camera_zoom
 	}
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Pan X: %.2f", sim.runtime.camera_x), "pl_camera_x", &sim.runtime.camera_x, 0.05, -8.0, 8.0) {
+	if uifw.gui_numeric_f32(ctx, fmt.tprintf("Pan X: %.2f", sim.runtime.camera_x), "pl_camera_x", &sim.runtime.camera_x, 0.05, -8.0, 8.0, mapping = .Symmetric_Log) {
 		sim.runtime.camera_target_x = sim.runtime.camera_x
 	}
-	if uifw.gui_number_drag_f32(ctx, fmt.tprintf("Pan Y: %.2f", sim.runtime.camera_y), "pl_camera_y", &sim.runtime.camera_y, 0.05, -8.0, 8.0) {
+	if uifw.gui_numeric_f32(ctx, fmt.tprintf("Pan Y: %.2f", sim.runtime.camera_y), "pl_camera_y", &sim.runtime.camera_y, 0.05, -8.0, 8.0, mapping = .Symmetric_Log) {
 		sim.runtime.camera_target_y = sim.runtime.camera_y
 	}
 	}

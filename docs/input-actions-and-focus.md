@@ -103,8 +103,8 @@ pan gesture while middle drag remains an optional mouse shortcut. Vertical wheel
 or two-finger scroll zooms toward the visible pointer, while horizontal scroll or
 Shift+vertical scroll pans. Fractional trackpad deltas are preserved and large
 coalesced bursts are clamped per frame. Scroll input over UI belongs to that UI.
-The controller virtual cursor remains visible whenever a trigger-owned canvas
-gesture is active, including while simulation chrome is hidden.
+The controller virtual cursor follows the system cursor's simulation-chrome
+hide rules, including during trigger-owned canvas gestures.
 
 `active_device` is presentation state for cursor and prompt selection. It does
 not decide whether keyboard or controller actions are eligible. Existing raw

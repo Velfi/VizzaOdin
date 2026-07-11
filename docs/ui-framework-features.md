@@ -53,7 +53,7 @@ and media primitives expected from a general app UI toolkit.
 - Focus state and focus-ring rendering.
 - Keyboard activation for focused buttons.
 - Immediate-mode widgets: panels, headings, labels, buttons, disabled buttons,
-  card buttons, toggles, checkboxes, switches, radio groups, number drags,
+  card buttons, toggles, checkboxes, switches, radio groups, numeric inputs,
   sliders, 2D area sliders, selectors, comboboxes, HSV color pickers,
   circular progress indicators, and collapsibles.
 

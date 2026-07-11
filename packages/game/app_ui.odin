@@ -24,6 +24,26 @@ App_Mode :: enum {
 	Theme_Preview,
 }
 
+Ui_Component_Fixture :: enum {
+	None,
+	Button,
+	Toggle,
+	Slider,
+	Number,
+	Integer,
+	Selector,
+	Text_Input,
+}
+
+Ui_Component_Fixture_State :: enum {
+	Rest,
+	Hover,
+	Active,
+	Focused,
+	Editing,
+	Disabled,
+}
+
 SIMULATION_BAR_HEIGHT :: f32(44)
 SIMULATION_BAR_BASE_ROW_HEIGHT :: f32(44)
 MAIN_MENU_PREVIEW_SLOT_CAP :: 16
@@ -137,6 +157,11 @@ App_Ui_State :: struct {
 	camera_test_frames: u64,
 	camera_test_status: [128]u8,
 	how_to_play_scroll: f32,
+	how_to_play_demo_toggle: bool,
+	how_to_play_demo_slider: f32,
+	how_to_play_demo_number: f32,
+	how_to_play_demo_selector: int,
+	how_to_play_demo_button_count: int,
 	controls_help_open: bool,
 	controls_help_open_frame: u64,
 	controls_help_invoker_focus: uifw.Gui_Id,
@@ -152,6 +177,9 @@ App_Ui_State :: struct {
 	vectors: Remaining_Sim_State,
 	primordial: Remaining_Sim_State,
 	theme_preview: bool,
+	component_fixture: Ui_Component_Fixture,
+	component_fixture_state: Ui_Component_Fixture_State,
+	component_fixture_value: f32,
 	preview_hsv: uifw.Hsv_Color,
 	preview_area: uifw.Vec2,
 	preview_checkbox: bool,
@@ -233,7 +261,9 @@ How_To_Play_Section :: struct {
 	body: string,
 }
 
-HOW_TO_PLAY_INTRO :: "Inputs are routed to the most specific active context: modal, engaged editor, focused UI, simulation canvas, then global shortcuts. The same keyboard and controller can be used interchangeably."
+HOW_TO_PLAY_INTRO :: "You do not need to understand every setting before touching it. Mess with things, push them too far, and see what happens—the fun is in experimenting. If you are not sure what to try next, hit Randomize. It will give you a fresh direction, and simulations that randomize settings let you restore what you had before."
+HOW_TO_PLAY_DEMO_INTRO :: "Try these controls here. This playground does not change any simulation or saved setting. On the number control, use -/+ or drag to adjust, tap or type for an exact value, Shift or a light stick for fine control, Ctrl for broad keyboard control, and the controller Secondary action to cycle the visible step."
+HOW_TO_PLAY_DEMO_SELECTOR_OPTIONS := [?]string{"Calm", "Curious", "Chaotic"}
 CONTROLS_HELP_KEYBOARD_QUICK_REFERENCE :: "F1 closes help  •  Tab / Shift+Tab moves focus  •  Enter activates or edits  •  Escape goes back or cancels  •  Slash toggles UI  •  Space pauses"
 CONTROLS_HELP_KEYBOARD_LETTER_QUICK_REFERENCE :: "H closes help  •  Tab / Shift+Tab moves focus  •  Enter activates or edits  •  Escape goes back or cancels  •  U toggles UI  •  P pauses"
 CONTROLS_HELP_CONTROLLER_QUICK_REFERENCE :: "Guide or Back closes help  •  D-pad or left stick moves focus  •  Accept activates or edits  •  Right shoulder next / Left previous  •  Start pauses"
@@ -348,6 +378,9 @@ app_ui_init :: proc(ui: ^App_Ui_State, settings: App_Settings, theme_preview := 
 	ui.controller_shoulder_layout_index = option_index(settings.controller_shoulder_layout, CONTROLLER_SHOULDER_LAYOUT_OPTIONS[:], 0)
 	ui.keyboard_shortcut_profile_index = option_index(settings.keyboard_shortcut_profile, KEYBOARD_SHORTCUT_PROFILE_OPTIONS[:], 0)
 	ui.options_section_index = 0
+	ui.how_to_play_demo_slider = 0.5
+	ui.how_to_play_demo_number = 1
+	ui.how_to_play_demo_selector = 1
 	ui.preview_hsv = {h = 0.56, s = 0.78, v = 0.92, a = 1}
 	ui.preview_area = {0.35, 0.68}
 	ui.preview_checkbox = true
@@ -419,13 +452,18 @@ app_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Gray_Scott_
 	if ui.controls_help_open && app_ui_mode_is_simulation(ui.mode) {
 		app_ui_draw_controls_help_modal(ui, gui)
 	}
-	app_ui_draw_device_notice(ui, gui)
-	app_ui_draw_virtual_cursor(ui, gui)
+	isolated_component := ui.mode == .Theme_Preview && ui.component_fixture != .None
+	if !isolated_component {
+		app_ui_draw_device_notice(ui, gui)
+		app_ui_draw_virtual_cursor(ui, gui)
+	}
 	if transitioning {
 		gui.input = saved_input
 		ui.frame_actions = saved_actions
 	}
-	app_ui_draw_mode_transition_overlay(ui, gui)
+	if !isolated_component {
+		app_ui_draw_mode_transition_overlay(ui, gui)
+	}
 }
 
 APP_UI_MODE_FADE_OUT_SECONDS :: f32(0.28)
@@ -668,6 +706,9 @@ app_ui_draw_device_notice :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
 }
 
 app_ui_draw_virtual_cursor :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
+	if app_ui_system_cursor_hidden(ui) {
+		return
+	}
 	controller_gesture := ui != nil &&
 		((ui.frame_actions.primary.owner == .Controller && ui.frame_actions.primary.down) ||
 		 (ui.frame_actions.secondary.owner == .Controller && ui.frame_actions.secondary.down))
@@ -806,14 +847,31 @@ app_ui_draw_options :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx: ^
 app_ui_how_to_play_content_height :: proc(gui: ^uifw.Gui_Context, width: f32) -> f32 {
 	wrap_width := max(width - gui.style.spacing_1, gui.style.body_char_width)
 	height := f32(uifw.gui_wrap_line_count(gui, HOW_TO_PLAY_INTRO, wrap_width)) * gui.style.body_line_height
+	height += gui.style.heading_line_height
+	height += f32(uifw.gui_wrap_line_count(gui, HOW_TO_PLAY_DEMO_INTRO, wrap_width)) * gui.style.body_line_height
+	demo_numeric_id := uifw.gui_make_id(gui, "how_to_play_demo_number")
+	height += gui.style.row_height * 3 + uifw.gui_slider_height(gui) + uifw.gui_numeric_height(gui, demo_numeric_id)
 	for section in HOW_TO_PLAY_SECTIONS {
 		height += gui.style.heading_line_height
 		height += f32(uifw.gui_wrap_line_count(gui, section.body, wrap_width)) * gui.style.body_line_height
 		height += gui.style.spacing_2
 	}
 	// Each layout item also advances by the scroll column's normal gap.
-	height += gui.style.spacing * f32(1 + len(HOW_TO_PLAY_SECTIONS) * 3)
+	height += gui.style.spacing * f32(8 + len(HOW_TO_PLAY_SECTIONS) * 3)
 	return height
+}
+
+app_ui_draw_how_to_play_demo :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, width: f32) {
+	uifw.gui_heading(gui, "Try the controls")
+	uifw.gui_text_block(gui, HOW_TO_PLAY_DEMO_INTRO, width, gui.style.text_muted)
+	if uifw.gui_button(gui, fmt.tprintf("Button — pressed %d times", ui.how_to_play_demo_button_count), "how_to_play_demo_button") {
+		ui.how_to_play_demo_button_count += 1
+	}
+	_ = uifw.gui_toggle(gui, fmt.tprintf("Toggle — %s", ui.how_to_play_demo_toggle ? "on" : "off"), "how_to_play_demo_toggle", &ui.how_to_play_demo_toggle)
+	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Universal Number — %.3f", ui.how_to_play_demo_number), "how_to_play_demo_number", &ui.how_to_play_demo_number, 0.01, 0.001, 1000, mapping = .Logarithmic)
+	_ = uifw.gui_slider_f32(gui, fmt.tprintf("Slider — %.0f%%", ui.how_to_play_demo_slider * 100), "how_to_play_demo_slider", &ui.how_to_play_demo_slider, 0, 1)
+	_ = uifw.gui_selector(gui, fmt.tprintf("Selector — %s", HOW_TO_PLAY_DEMO_SELECTOR_OPTIONS[ui.how_to_play_demo_selector]), "how_to_play_demo_selector", &ui.how_to_play_demo_selector, HOW_TO_PLAY_DEMO_SELECTOR_OPTIONS[:])
+	uifw.gui_spacer(gui, gui.style.spacing_2)
 }
 
 app_ui_controls_help_modal_content_height :: proc(gui: ^uifw.Gui_Context, width: f32, settings: App_Settings) -> f32 {
@@ -849,9 +907,10 @@ app_ui_draw_how_to_play :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
 	viewport := uifw.gui_next_rect(gui, height = viewport_h)
 	content_width := max(viewport.w - gui.style.spacing_2, 1)
 	content_height := app_ui_how_to_play_content_height(gui, content_width)
-	uifw.gui_scroll_begin(gui, viewport, content_height, &ui.how_to_play_scroll)
+	uifw.gui_scroll_begin_native(gui, viewport, content_height, &ui.how_to_play_scroll)
 	uifw.gui_text_block(gui, HOW_TO_PLAY_INTRO, content_width, gui.style.text)
 	uifw.gui_spacer(gui, gui.style.spacing_1)
+	app_ui_draw_how_to_play_demo(ui, gui, content_width)
 	for section in HOW_TO_PLAY_SECTIONS {
 		uifw.gui_heading(gui, section.title)
 		uifw.gui_text_block(gui, section.body, content_width, gui.style.text_muted)
@@ -932,13 +991,14 @@ app_ui_draw_controls_help_modal :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Contex
 	viewport := uifw.gui_next_rect(gui, height = max(panel.h - gui.style.panel_padding * 2 - gui.style.row_height - gui.style.spacing, gui.style.row_height))
 	content_width := max(viewport.w - gui.style.spacing_2, 1)
 	content_height := app_ui_controls_help_modal_content_height(gui, content_width, ui.settings)
-	uifw.gui_scroll_begin(gui, viewport, content_height, &ui.controls_help_modal_scroll)
+	uifw.gui_scroll_begin_native(gui, viewport, content_height, &ui.controls_help_modal_scroll)
 	quick_reference := app_ui_controls_help_quick_reference_for_settings(gui.input.active_device, ui.settings)
 	uifw.gui_heading(gui, "Quick reference")
 	uifw.gui_text_block(gui, quick_reference, content_width, gui.style.accent)
 	uifw.gui_spacer(gui, gui.style.spacing_2)
 	uifw.gui_text_block(gui, HOW_TO_PLAY_INTRO, content_width, gui.style.text)
 	uifw.gui_spacer(gui, gui.style.spacing_1)
+	app_ui_draw_how_to_play_demo(ui, gui, content_width)
 	for section in HOW_TO_PLAY_SECTIONS {
 		uifw.gui_heading(gui, section.title)
 		uifw.gui_text_block(gui, section.body, content_width, gui.style.text_muted)

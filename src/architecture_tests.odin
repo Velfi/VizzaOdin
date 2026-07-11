@@ -44,6 +44,23 @@ test_particle_life_large_population_caps_catch_up_work :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_particle_life_far_force_refresh_adapts_to_range :: proc(t: ^testing.T) {
+	settings := game.particle_life_default_settings()
+	settings.particle_count = 200_000
+	settings.max_distance = 0.05
+	testing.expect_value(t, game.particle_life_force_refresh_stride(settings), u32(1))
+	settings.max_distance = 0.1
+	testing.expect_value(t, game.particle_life_force_refresh_stride(settings), u32(2))
+	settings.max_distance = 0.2
+	testing.expect_value(t, game.particle_life_force_refresh_stride(settings), u32(8))
+	settings.force_temporal_coherence = false
+	testing.expect_value(t, game.particle_life_force_refresh_stride(settings), u32(1))
+	testing.expect_value(t, game.particle_life_force_sample_limit(settings), u32(64))
+	settings.force_dense_sampling = false
+	testing.expect_value(t, game.particle_life_force_sample_limit(settings), u32(0))
+}
+
+@(test)
 test_primordial_timestep_is_independent_of_render_rate :: proc(t: ^testing.T) {
 	configured := f32(0.016)
 	at_60 := rendervk.primordial_effective_step_dt(configured, 1.0 / 60.0)
@@ -54,6 +71,25 @@ test_primordial_timestep_is_independent_of_render_rate :: proc(t: ^testing.T) {
 	steps := rendervk.simulation_substeps(1.0 / 60.0)
 	substep_total := rendervk.primordial_effective_step_dt(configured, steps.delta_time) * f32(steps.count)
 	testing.expect(t, math.abs(substep_total - at_60) < 0.00001)
+}
+
+@(test)
+test_primordial_zero_seed_uses_nonzero_rng_state :: proc(t: ^testing.T) {
+	rng := rendervk.primordial_rng_seed(0)
+	first := rendervk.primordial_next_random01(&rng)
+	second := rendervk.primordial_next_random01(&rng)
+	testing.expect(t, first != second)
+	testing.expect(t, rng != 0)
+}
+
+@(test)
+test_primordial_large_population_caps_catch_up_without_losing_elapsed_time :: proc(t: ^testing.T) {
+	steps := rendervk.primordial_simulation_substeps(0.1, 100_000)
+	testing.expect_value(t, steps.count, 1)
+	testing.expect(t, math.abs(steps.delta_time - f32(0.1)) < 0.00001)
+	medium := rendervk.primordial_simulation_substeps(0.1, 50_000)
+	testing.expect_value(t, medium.count, 2)
+	testing.expect(t, math.abs(medium.delta_time * 2 - f32(0.1)) < 0.00001)
 }
 
 test_is_scroll_top_fade :: proc(command: uifw.Draw_Command, viewport: uifw.Rect) -> bool {
@@ -421,6 +457,7 @@ test_particle_life_toml_round_trip_through_tomlc17 :: proc(t: ^testing.T) {
 	settings.coherence_threshold = 0.66
 	settings.min_blob_area_cells = 20
 	settings.blob_overlay_enabled = true
+	settings.force_dense_sampling = false
 	settings.custom_force_matrix = true
 	settings.force_matrix[2 * game.PARTICLE_LIFE_MAX_SPECIES + 3] = -0.625
 
@@ -457,6 +494,7 @@ test_particle_life_toml_round_trip_through_tomlc17 :: proc(t: ^testing.T) {
 	testing.expect_value(t, loaded.coherence_threshold, settings.coherence_threshold)
 	testing.expect_value(t, loaded.min_blob_area_cells, settings.min_blob_area_cells)
 	testing.expect_value(t, loaded.blob_overlay_enabled, settings.blob_overlay_enabled)
+	testing.expect_value(t, loaded.force_dense_sampling, false)
 	testing.expect_value(t, loaded.custom_force_matrix, true)
 	testing.expect_value(t, loaded.force_matrix[2 * game.PARTICLE_LIFE_MAX_SPECIES + 3], f32(-0.625))
 }
@@ -1781,6 +1819,7 @@ test_remaining_core_settings_round_trip_through_tomlc17 :: proc(t: ^testing.T) {
 	slime_path := "/tmp/vizzaodin_slime_remaining_roundtrip.toml"
 	slime := game.slime_settings_default()
 	slime.agent_jitter = 0.12
+	slime.isotropic_jitter = false
 	slime.agent_heading_start = 15
 	slime.agent_heading_end = 300
 	slime.agent_sensor_angle = 0.9
@@ -1820,6 +1859,7 @@ test_remaining_core_settings_round_trip_through_tomlc17 :: proc(t: ^testing.T) {
 	loaded_slime, slime_ok := game.settings_load_slime(slime_path, game.slime_settings_default())
 	testing.expect(t, slime_ok)
 	testing.expect_value(t, loaded_slime.agent_jitter, f32(0.12))
+	testing.expect_value(t, loaded_slime.isotropic_jitter, false)
 	testing.expect_value(t, loaded_slime.agent_heading_start, f32(15))
 	testing.expect_value(t, loaded_slime.agent_heading_end, f32(300))
 	testing.expect_value(t, loaded_slime.agent_sensor_angle, f32(0.9))
@@ -1908,8 +1948,10 @@ test_remaining_builtin_presets_keep_current_color_scheme :: proc(t: ^testing.T) 
 
 	game.color_scheme_name_set(&sim.slime.color_scheme, expected_name)
 	sim.slime.color_scheme_reversed = expected_reversed
+	sim.slime_reset_requested = false
 	game.remaining_sim_apply_builtin_preset(&sim, game.Remaining_Sim_Kind.Slime_Mold, 2)
 	test_expect_color_scheme(t, &sim.slime.color_scheme, sim.slime.color_scheme_reversed, expected_name, expected_reversed)
+	testing.expect(t, sim.slime_reset_requested)
 }
 
 @(test)

@@ -20,6 +20,7 @@ Mcp_Command_Kind :: enum {
 	Move,
 	Wheel,
 	Set_Mode,
+	Set_Ui_Component_Fixture,
 	Apply_Builtin_Preset,
 	Set_Color_Scheme,
 	Configure_Particle_Life,
@@ -42,6 +43,9 @@ Mcp_Command :: struct {
 	wheel_delta: f32,
 	button: u32,
 	mode: App_Mode,
+	component_fixture: Ui_Component_Fixture,
+	component_fixture_state: Ui_Component_Fixture_State,
+	component_fixture_value: f32,
 	preset_index: int,
 	color_scheme_name: Color_Scheme_Name,
 	color_scheme_reversed: bool,
@@ -395,11 +399,13 @@ MCP_TOOLS_JSON :: `[
 {"name":"move","description":"Move the app's logical mouse position.","inputSchema":{"type":"object","required":["x","y"],"properties":{"x":{"type":"number"},"y":{"type":"number"}}}},
 {"name":"wheel","description":"Inject mouse wheel delta.","inputSchema":{"type":"object","required":["delta"],"properties":{"delta":{"type":"number"}}}},
 {"name":"set_mode","description":"Navigate directly to an app mode by status name, e.g. Slime_Mold, Flow_Field, Pellets, Voronoi, Moire, Vectors, Primordial, Main_Menu.","inputSchema":{"type":"object","required":["mode"],"properties":{"mode":{"type":"string"}}}},
+{"name":"list_ui_components","description":"List UI component fixtures and supported visual states available to the isolated renderer.","inputSchema":{"type":"object","properties":{}}},
+{"name":"render_ui_component","description":"Render one UI component fixture in isolation through the production UI pipeline.","inputSchema":{"type":"object","required":["component"],"properties":{"component":{"type":"string","enum":["button","toggle","slider","number","integer","selector","text_input"]},"state":{"type":"string","enum":["rest","hover","active","focused","editing","disabled"]},"value":{"type":"number","description":"Fixture value; meaning depends on the component."}}}},
 {"name":"apply_builtin_preset","description":"Apply a built-in preset by app mode and zero-based preset index.","inputSchema":{"type":"object","required":["mode","index"],"properties":{"mode":{"type":"string"},"index":{"type":"number"}}}},
 {"name":"set_color_scheme","description":"Set the color scheme for a simulation mode. The scheme name should match an available LUT without the .lut suffix.","inputSchema":{"type":"object","required":["mode","color_scheme"],"properties":{"mode":{"type":"string"},"color_scheme":{"type":"string"},"name":{"type":"string","description":"Alias for color_scheme."},"reversed":{"type":"boolean"}}}},
 {"name":"configure_simulation","description":"Apply a flat capture/configuration blob to any simulation mode except Gradient_Editor. Requires mode. Starts from that simulation's defaults, applies supplied numeric/string/boolean fields, and supports reset, hide_ui, and set_mode.","inputSchema":{"type":"object","required":["mode"],"properties":{"mode":{"type":"string"},"reset":{"type":"boolean","description":"Defaults true."},"hide_ui":{"type":"boolean","description":"Defaults false."},"set_mode":{"type":"boolean","description":"Defaults true."}}}},
 {"name":"configure_gray_scott","description":"Apply a Gray-Scott capture/configuration blob. Supports feed, kill, diffusion_a, diffusion_b, timestep, simulation_speed, mask settings, cursor settings, color_scheme, reversed, seed_noise, reset, hide_ui, and set_mode.","inputSchema":{"type":"object","properties":{}}},
-{"name":"configure_particle_life","description":"Apply a Particle Life capture/configuration blob. Supports species_count, particle_count, position_generator, type_generator, force_generator, force_random_min, force_random_max, randomize_forces, reset, hide_ui, and set_mode. Generators may be numeric indexes or names such as Center and Random.","inputSchema":{"type":"object","properties":{"species_count":{"type":"number","description":"Clamped to 1-8."},"particle_count":{"type":"number"},"position_generator":{"oneOf":[{"type":"string"},{"type":"number"}]},"type_generator":{"oneOf":[{"type":"string"},{"type":"number"}]},"force_generator":{"oneOf":[{"type":"string"},{"type":"number"}]},"force_random_min":{"type":"number"},"force_random_max":{"type":"number"},"randomize_forces":{"type":"boolean","description":"Defaults true when force fields are provided."},"reset":{"type":"boolean","description":"Defaults true."},"hide_ui":{"type":"boolean","description":"Defaults false."},"set_mode":{"type":"boolean","description":"Defaults true."}}}},
+{"name":"configure_particle_life","description":"Apply a Particle Life capture/configuration blob. Supports species_count, particle_count, max_distance, collision_enabled, force_dense_sampling, generators, force ranges, reset, hide_ui, and set_mode. Generators may be numeric indexes or names such as Center and Random.","inputSchema":{"type":"object","properties":{"species_count":{"type":"number","description":"Clamped to 1-8."},"particle_count":{"type":"number"},"max_distance":{"type":"number"},"collision_enabled":{"type":"boolean"},"force_dense_sampling":{"type":"boolean"},"position_generator":{"oneOf":[{"type":"string"},{"type":"number"}]},"type_generator":{"oneOf":[{"type":"string"},{"type":"number"}]},"force_generator":{"oneOf":[{"type":"string"},{"type":"number"}]},"force_random_min":{"type":"number"},"force_random_max":{"type":"number"},"randomize_forces":{"type":"boolean","description":"Defaults true when force fields are provided."},"reset":{"type":"boolean","description":"Defaults true."},"hide_ui":{"type":"boolean","description":"Defaults false."},"set_mode":{"type":"boolean","description":"Defaults true."}}}},
 {"name":"configure_flow_field","description":"Apply a Flow Field capture/configuration blob. Supports noise_kind, fractal_mode, warp_mode, seed, frequency, amplitude, noise_strength, vector_magnitude, particle_count, particle_lifetime, particle_speed, particle_size, autospawn_rate, show_particles, trail_decay_rate, trail_deposition_rate, trail_diffusion_rate, trail_wash_out_rate, foreground_color_mode, background_color_mode, color_scheme, reversed, reset, hide_ui, and set_mode.","inputSchema":{"type":"object","properties":{"noise_kind":{"oneOf":[{"type":"string"},{"type":"number"}]},"fractal_mode":{"oneOf":[{"type":"string"},{"type":"number"}]},"warp_mode":{"oneOf":[{"type":"string"},{"type":"number"}]},"seed":{"type":"number"},"frequency":{"type":"number"},"amplitude":{"type":"number"},"noise_strength":{"type":"number"},"warp_amplitude":{"type":"number"},"warp_frequency":{"type":"number"},"vector_magnitude":{"type":"number"},"particle_count":{"type":"number"},"particle_lifetime":{"type":"number"},"particle_speed":{"type":"number"},"particle_size":{"type":"number"},"autospawn_rate":{"type":"number"},"show_particles":{"type":"boolean"},"trail_decay_rate":{"type":"number"},"trail_deposition_rate":{"type":"number"},"trail_diffusion_rate":{"type":"number"},"trail_wash_out_rate":{"type":"number"},"foreground_color_mode":{"oneOf":[{"type":"string"},{"type":"number"}]},"background_color_mode":{"oneOf":[{"type":"string"},{"type":"number"}]},"color_scheme":{"type":"string"},"reversed":{"type":"boolean"},"reset":{"type":"boolean","description":"Defaults true."},"hide_ui":{"type":"boolean","description":"Defaults false."},"set_mode":{"type":"boolean","description":"Defaults true."}}}},
 {"name":"configure_slime_mold","description":"Apply a Slime Mold capture/configuration blob. Supports all common capture flags plus key Slime fields such as agent speeds, sensing, pheromone rates, random_seed, position_generator, mask, background, trail filtering, image paths, color_scheme, and reversed.","inputSchema":{"type":"object","properties":{}}},
 {"name":"configure_pellets","description":"Apply a Pellets capture/configuration blob.","inputSchema":{"type":"object","properties":{}}},
@@ -526,6 +532,28 @@ mcp_bridge_call_tool :: proc(bridge: ^Mcp_Bridge, id, name, line: string) -> str
 			return mcp_bridge_queue_error(id, bridge)
 		}
 		return mcp_bridge_tool_text(id, "{\"ok\":true,\"queued\":\"set_mode\"}")
+	case "list_ui_components":
+		return mcp_bridge_tool_text(id, "{\"components\":[\"button\",\"toggle\",\"slider\",\"number\",\"integer\",\"selector\",\"text_input\"],\"states\":[\"rest\",\"hover\",\"active\",\"focused\",\"editing\",\"disabled\"]}")
+	case "render_ui_component":
+		component_name := mcp_bridge_extract_string_field(line, "component")
+		fixture, fixture_ok := mcp_bridge_ui_component_fixture_from_name(component_name)
+		if !fixture_ok {
+			return mcp_bridge_error(id, -32602, "render_ui_component requires a known component")
+		}
+		state_name := mcp_bridge_extract_string_field(line, "state")
+		fixture_state, state_ok := mcp_bridge_ui_component_state_from_name(state_name)
+		if len(state_name) == 0 {
+			fixture_state, state_ok = .Rest, true
+		}
+		if !state_ok {
+			return mcp_bridge_error(id, -32602, "render_ui_component requires a known state")
+		}
+		value := f32(0.58)
+		if requested, ok := mcp_bridge_extract_number_field(line, "value"); ok do value = requested
+		if !mcp_bridge_enqueue_command(bridge, Mcp_Command{kind = .Set_Ui_Component_Fixture, component_fixture = fixture, component_fixture_state = fixture_state, component_fixture_value = value}) {
+			return mcp_bridge_queue_error(id, bridge)
+		}
+		return mcp_bridge_tool_text(id, fmt.tprintf("{\"ok\":true,\"queued\":\"render_ui_component\",\"component\":\"%s\",\"state\":\"%s\",\"value\":%.6f}", component_name, state_name, value))
 	case "apply_builtin_preset":
 		mode_name := mcp_bridge_extract_string_field(line, "mode")
 		mode: App_Mode
@@ -739,6 +767,15 @@ mcp_bridge_configure_particle_life :: proc(id: string, bridge: ^Mcp_Bridge, line
 	}
 	if value, ok := mcp_bridge_extract_number_field(line, "species_count"); ok {
 		settings.species_count = u32(max(min(value, f32(PARTICLE_LIFE_MAX_SPECIES)), 1))
+	}
+	if value, ok := mcp_bridge_extract_number_field(line, "max_distance"); ok {
+		settings.max_distance = max(value, 0.001)
+	}
+	if value, ok := mcp_bridge_extract_bool_field(line, "collision_enabled"); ok {
+		settings.collision_enabled = value
+	}
+	if value, ok := mcp_bridge_extract_bool_field(line, "force_dense_sampling"); ok {
+		settings.force_dense_sampling = value
 	}
 	if value, ok := mcp_bridge_extract_number_field(line, "position_generator"); ok {
 		settings.position_generator = u32(max(min(value, f32(len(PARTICLE_LIFE_POSITION_GENERATOR_NAMES) - 1)), 0))
@@ -1248,6 +1285,7 @@ mcp_bridge_configure_remaining_sim :: proc(id: string, bridge: ^Mcp_Bridge, kind
 		settings := slime_settings_default()
 		mcp_bridge_apply_color_scheme_fields(line, &settings.color_scheme, &settings.color_scheme_reversed)
 		if value, ok := mcp_bridge_extract_number_field(line, "agent_jitter"); ok {settings.agent_jitter = max(value, 0)}
+		if value, ok := mcp_bridge_extract_bool_field(line, "isotropic_jitter"); ok {settings.isotropic_jitter = value}
 		if value, ok := mcp_bridge_extract_number_field(line, "agent_heading_start"); ok {settings.agent_heading_start = value}
 		if value, ok := mcp_bridge_extract_number_field(line, "agent_heading_end"); ok {settings.agent_heading_end = value}
 		if value, ok := mcp_bridge_extract_number_field(line, "agent_sensor_angle"); ok {settings.agent_sensor_angle = value}
@@ -1868,6 +1906,31 @@ mcp_bridge_app_mode_from_name :: proc(name: string, out: ^App_Mode) -> bool {
 	return true
 }
 
+mcp_bridge_ui_component_fixture_from_name :: proc(name: string) -> (Ui_Component_Fixture, bool) {
+	switch name {
+	case "button": return .Button, true
+	case "toggle": return .Toggle, true
+	case "slider": return .Slider, true
+	case "number", "numeric", "number_input": return .Number, true
+	case "integer", "u32": return .Integer, true
+	case "selector": return .Selector, true
+	case "text_input", "text": return .Text_Input, true
+	}
+	return .None, false
+}
+
+mcp_bridge_ui_component_state_from_name :: proc(name: string) -> (Ui_Component_Fixture_State, bool) {
+	switch name {
+	case "rest": return .Rest, true
+	case "hover", "hot": return .Hover, true
+	case "active", "pressed": return .Active, true
+	case "focused", "focus": return .Focused, true
+	case "editing", "edit": return .Editing, true
+	case "disabled": return .Disabled, true
+	}
+	return .Rest, false
+}
+
 mcp_bridge_drain_commands :: proc(bridge: ^Mcp_Bridge, app: ^App_State) {
 	if bridge.close_requested {
 		app.running = false
@@ -1905,6 +1968,13 @@ mcp_bridge_drain_commands :: proc(bridge: ^Mcp_Bridge, app: ^App_State) {
 			render_cmd: Ui_To_Render_Command
 			render_cmd.kind = .Set_App_Mode
 			render_cmd.app_mode = cmd.mode
+			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+		case .Set_Ui_Component_Fixture:
+			render_cmd: Ui_To_Render_Command
+			render_cmd.kind = .Set_Ui_Component_Fixture
+			render_cmd.component_fixture = cmd.component_fixture
+			render_cmd.component_fixture_state = cmd.component_fixture_state
+			render_cmd.component_fixture_value = cmd.component_fixture_value
 			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
 		case .Apply_Builtin_Preset:
 			render_cmd: Ui_To_Render_Command

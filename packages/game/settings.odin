@@ -704,7 +704,7 @@ settings_write_particle_life_toml :: proc(settings: Particle_Life_Settings, out:
 	color_mode_index := int(max(min(u32(settings.color_mode), u32(len(PARTICLE_LIFE_COLOR_MODE_NAMES) - 1)), 0))
 	background_index := int(max(min(int(settings.background_color_mode), len(VECTOR_BACKGROUND_MODE_NAMES) - 1), 0))
 	color_scheme_name := settings.color_scheme
-	appendf(out, &cursor, "[particle_life]\nparticle_count = %d\nspecies_count = %d\nmax_force = %.6f\nmax_distance = %.6f\nfriction = %.6f\nbeta = %.6f\nbrownian_motion = %.6f\nparticle_size = %.6f\ncursor_size = %.6f\ncursor_strength = %.6f\nposition_generator = \"%s\"\ntype_generator = \"%s\"\nforce_generator = \"%s\"\nforce_random_min = %.6f\nforce_random_max = %.6f\ncamera_x = %.6f\ncamera_y = %.6f\ncamera_zoom = %.6f\ncolor_mode = \"%s\"\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nbackground_color_mode = \"%s\"\nbackground_r = %.6f\nbackground_g = %.6f\nbackground_b = %.6f\nbackground_a = %.6f\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\nbrightness = %.6f\ncontrast = %.6f\nsaturation = %.6f\ngamma = %.6f\ntrails_enabled = %v\ntrail_fade_amount = %.6f\ninfinite_tiles_enabled = %v\ninfinite_tile_radius = %d\nanalysis_enabled = %v\nanalysis_interval_frames = %d\nanalysis_grid_size = %d\ncoherence_threshold = %.6f\nmin_blob_area_cells = %d\nblob_overlay_enabled = %v\nwrap_edges = %v\npaused = %v\ncustom_force_matrix = %v\n\n[particle_life.force_matrix]\n",
+	appendf(out, &cursor, "[particle_life]\nparticle_count = %d\nspecies_count = %d\nmax_force = %.6f\nmax_distance = %.6f\nfriction = %.6f\nbeta = %.6f\nbrownian_motion = %.6f\nparticle_size = %.6f\ncursor_size = %.6f\ncursor_strength = %.6f\nposition_generator = \"%s\"\ntype_generator = \"%s\"\nforce_generator = \"%s\"\nforce_random_min = %.6f\nforce_random_max = %.6f\ncamera_x = %.6f\ncamera_y = %.6f\ncamera_zoom = %.6f\ncolor_mode = \"%s\"\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nbackground_color_mode = \"%s\"\nbackground_r = %.6f\nbackground_g = %.6f\nbackground_b = %.6f\nbackground_a = %.6f\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\nbrightness = %.6f\ncontrast = %.6f\nsaturation = %.6f\ngamma = %.6f\ntrails_enabled = %v\ntrail_fade_amount = %.6f\ninfinite_tiles_enabled = %v\ninfinite_tile_radius = %d\nanalysis_enabled = %v\nanalysis_interval_frames = %d\nanalysis_grid_size = %d\ncoherence_threshold = %.6f\nmin_blob_area_cells = %d\nblob_overlay_enabled = %v\nforce_dense_sampling = %v\nwrap_edges = %v\npaused = %v\ncustom_force_matrix = %v\n\n[particle_life.force_matrix]\n",
 		settings.particle_count,
 		settings.species_count,
 		settings.max_force,
@@ -748,6 +748,7 @@ settings_write_particle_life_toml :: proc(settings: Particle_Life_Settings, out:
 		settings.coherence_threshold,
 		settings.min_blob_area_cells,
 		settings.blob_overlay_enabled,
+		settings.force_dense_sampling,
 		settings.wrap_edges,
 		settings.paused,
 		settings.custom_force_matrix,
@@ -962,6 +963,9 @@ settings_load_particle_life :: proc(path: string, defaults: Particle_Life_Settin
 	if v, ok := toml_bool(result.toptab, "particle_life.blob_overlay_enabled"); ok {
 		settings.blob_overlay_enabled = v
 	}
+	if v, ok := toml_bool(result.toptab, "particle_life.force_dense_sampling"); ok {
+		settings.force_dense_sampling = v
+	}
 	if v, ok := toml_bool(result.toptab, "particle_life.wrap_edges"); ok {
 		settings.wrap_edges = v
 	}
@@ -1115,8 +1119,8 @@ settings_write_slime_toml :: proc(settings: Slime_Settings, out: []u8) -> string
 	color_scheme := settings.color_scheme
 	mask_image_path := settings.mask_image_path
 	position_image_path := settings.position_image_path
-	return fmt.bprintf(out, "[slime]\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\nagent_jitter = %.6f\nagent_heading_start = %.6f\nagent_heading_end = %.6f\nagent_sensor_angle = %.6f\nagent_sensor_distance = %.6f\nagent_speed_max = %.6f\nagent_speed_min = %.6f\nagent_turn_rate = %.6f\npheromone_decay_rate = %.6f\npheromone_deposition_rate = %.6f\npheromone_diffusion_rate = %.6f\ndiffusion_frequency = %d\ndecay_frequency = %d\nrandom_seed = %d\nposition_generator = \"%s\"\nposition_image_fit_mode = \"%s\"\nposition_image_path = \"%s\"\nmask_pattern = \"%s\"\nmask_target = \"%s\"\nmask_strength = %.6f\nmask_curve = %.6f\nmask_image_fit_mode = \"%s\"\nmask_image_path = \"%s\"\nmask_mirror_horizontal = %v\nmask_mirror_vertical = %v\nmask_invert_tone = %v\nmask_reversed = %v\ntrail_map_filtering = \"%s\"\nbackground_mode = \"%s\"\n",
-		color_scheme_name_get(&color_scheme), settings.color_scheme_reversed, settings.post_processing.blur_enabled, settings.post_processing.blur_radius, settings.post_processing.blur_sigma, settings.agent_jitter, settings.agent_heading_start, settings.agent_heading_end, settings.agent_sensor_angle, settings.agent_sensor_distance, settings.agent_speed_max, settings.agent_speed_min, settings.agent_turn_rate, settings.pheromone_decay_rate, settings.pheromone_deposition_rate, settings.pheromone_diffusion_rate, settings.diffusion_frequency, settings.decay_frequency, settings.random_seed, SLIME_POSITION_GENERATOR_NAMES[settings.position_generator_index], VECTOR_IMAGE_FIT_MODE_NAMES[settings.position_image_fit_index], fixed_string(position_image_path[:]), SLIME_MASK_PATTERN_NAMES[settings.mask_pattern_index], SLIME_MASK_TARGET_NAMES[settings.mask_target_index], settings.mask_strength, settings.mask_curve, VECTOR_IMAGE_FIT_MODE_NAMES[settings.mask_image_fit_index], fixed_string(mask_image_path[:]), settings.mask_mirror_horizontal, settings.mask_mirror_vertical, settings.mask_invert_tone, settings.mask_reversed, FLOW_TRAIL_MAP_FILTERING_NAMES[settings.trail_filtering_index], SLIME_BACKGROUND_MODE_NAMES[settings.background_index])
+	return fmt.bprintf(out, "[slime]\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\nagent_count = %d\nagent_jitter = %.6f\nisotropic_jitter = %v\nagent_heading_start = %.6f\nagent_heading_end = %.6f\nagent_sensor_angle = %.6f\nagent_sensor_distance = %.6f\nagent_speed_max = %.6f\nagent_speed_min = %.6f\nagent_turn_rate = %.6f\npheromone_decay_rate = %.6f\npheromone_deposition_rate = %.6f\npheromone_diffusion_rate = %.6f\ndiffusion_frequency = %d\ndecay_frequency = %d\nrandom_seed = %d\nposition_generator = \"%s\"\nposition_image_fit_mode = \"%s\"\nposition_image_path = \"%s\"\nmask_pattern = \"%s\"\nmask_target = \"%s\"\nmask_strength = %.6f\nmask_curve = %.6f\nmask_image_fit_mode = \"%s\"\nmask_image_path = \"%s\"\nmask_mirror_horizontal = %v\nmask_mirror_vertical = %v\nmask_invert_tone = %v\nmask_reversed = %v\ntrail_map_filtering = \"%s\"\nbackground_mode = \"%s\"\n",
+		color_scheme_name_get(&color_scheme), settings.color_scheme_reversed, settings.post_processing.blur_enabled, settings.post_processing.blur_radius, settings.post_processing.blur_sigma, settings.agent_count, settings.agent_jitter, settings.isotropic_jitter, settings.agent_heading_start, settings.agent_heading_end, settings.agent_sensor_angle, settings.agent_sensor_distance, settings.agent_speed_max, settings.agent_speed_min, settings.agent_turn_rate, settings.pheromone_decay_rate, settings.pheromone_deposition_rate, settings.pheromone_diffusion_rate, settings.diffusion_frequency, settings.decay_frequency, settings.random_seed, SLIME_POSITION_GENERATOR_NAMES[settings.position_generator_index], VECTOR_IMAGE_FIT_MODE_NAMES[settings.position_image_fit_index], fixed_string(position_image_path[:]), SLIME_MASK_PATTERN_NAMES[settings.mask_pattern_index], SLIME_MASK_TARGET_NAMES[settings.mask_target_index], settings.mask_strength, settings.mask_curve, VECTOR_IMAGE_FIT_MODE_NAMES[settings.mask_image_fit_index], fixed_string(mask_image_path[:]), settings.mask_mirror_horizontal, settings.mask_mirror_vertical, settings.mask_invert_tone, settings.mask_reversed, FLOW_TRAIL_MAP_FILTERING_NAMES[settings.trail_filtering_index], SLIME_BACKGROUND_MODE_NAMES[settings.background_index])
 }
 
 settings_save_slime :: proc(path: string, settings: Slime_Settings) -> bool {
@@ -1137,7 +1141,9 @@ settings_load_slime :: proc(path: string, defaults: Slime_Settings) -> (Slime_Se
 	if v, ok := toml_bool(result.toptab, "slime.blur_enabled"); ok {settings.post_processing.blur_enabled = v}
 	if v, ok := toml_f64(result.toptab, "slime.blur_radius"); ok {settings.post_processing.blur_radius = f32(v)}
 	if v, ok := toml_f64(result.toptab, "slime.blur_sigma"); ok {settings.post_processing.blur_sigma = f32(v)}
+	if v, ok := toml_i64(result.toptab, "slime.agent_count"); ok {settings.agent_count = u32(max(min(v, i64(SLIME_MAX_AGENT_COUNT)), i64(SLIME_MIN_AGENT_COUNT)))}
 	if v, ok := toml_f64(result.toptab, "slime.agent_jitter"); ok {settings.agent_jitter = f32(v)}
+	if v, ok := toml_bool(result.toptab, "slime.isotropic_jitter"); ok {settings.isotropic_jitter = v}
 	if v, ok := toml_f64(result.toptab, "slime.agent_heading_start"); ok {settings.agent_heading_start = f32(v)}
 	if v, ok := toml_f64(result.toptab, "slime.agent_heading_end"); ok {settings.agent_heading_end = f32(v)}
 	if v, ok := toml_f64(result.toptab, "slime.agent_sensor_angle"); ok {settings.agent_sensor_angle = f32(v)}

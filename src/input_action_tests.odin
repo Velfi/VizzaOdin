@@ -818,7 +818,7 @@ test_preset_modal_traps_focus_and_restores_invoker :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_gui_controller_number_edit_back_restores_snapshot :: proc(t: ^testing.T) {
+test_gui_controller_numeric_edit_back_restores_snapshot :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
 	defer uifw.gui_destroy(&ctx)
@@ -829,7 +829,7 @@ test_gui_controller_number_edit_back_restores_snapshot :: proc(t: ^testing.T) {
 	ctx.focused = id
 	uifw.gui_begin_frame(&ctx, {active_device = .Controller, accept = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 240, 80}, .Column, 0, 44)
-	_ = uifw.gui_number_drag_f32(&ctx, "Amount", "amount", &value, 1, 0, 10)
+	_ = uifw.gui_numeric_f32(&ctx, "Amount", "amount", &value, 1, 0, 10)
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ctx.focus_edit_id, id)
@@ -837,14 +837,14 @@ test_gui_controller_number_edit_back_restores_snapshot :: proc(t: ^testing.T) {
 
 	uifw.gui_begin_frame(&ctx, {active_device = .Controller})
 	uifw.gui_layout_begin(&ctx, {0, 0, 240, 80}, .Column, 0, 44)
-	_ = uifw.gui_number_drag_f32(&ctx, "Amount", "amount", &value, 1, 0, 10)
+	_ = uifw.gui_numeric_f32(&ctx, "Amount", "amount", &value, 1, 0, 10)
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
 	value = 8
 
 	uifw.gui_begin_frame(&ctx, {active_device = .Controller, back = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 240, 80}, .Column, 0, 44)
-	_ = uifw.gui_number_drag_f32(&ctx, "Amount", "amount", &value, 1, 0, 10)
+	_ = uifw.gui_numeric_f32(&ctx, "Amount", "amount", &value, 1, 0, 10)
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
 
@@ -854,7 +854,7 @@ test_gui_controller_number_edit_back_restores_snapshot :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_gui_controller_number_edit_adjusts_with_navigation_and_commits :: proc(t: ^testing.T) {
+test_gui_controller_numeric_edit_adjusts_with_navigation_and_commits :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
 	defer uifw.gui_destroy(&ctx)
@@ -865,7 +865,7 @@ test_gui_controller_number_edit_adjusts_with_navigation_and_commits :: proc(t: ^
 	ctx.focused = id
 	uifw.gui_begin_frame(&ctx, {active_device = .Controller, accept = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 240, 80}, .Column, 0, 44)
-	_ = uifw.gui_number_drag_f32(&ctx, "Amount", "amount", &value, 1, 0, 10)
+	_ = uifw.gui_numeric_f32(&ctx, "Amount", "amount", &value, 1, 0, 10)
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ctx.focus_edit_id, id)
@@ -873,18 +873,101 @@ test_gui_controller_number_edit_adjusts_with_navigation_and_commits :: proc(t: ^
 
 	uifw.gui_begin_frame(&ctx, {active_device = .Controller, nav_pressed_x = 1})
 	uifw.gui_layout_begin(&ctx, {0, 0, 240, 80}, .Column, 0, 44)
-	testing.expect(t, uifw.gui_number_drag_f32(&ctx, "Amount", "amount", &value, 1, 0, 10))
+	testing.expect(t, uifw.gui_numeric_f32(&ctx, "Amount", "amount", &value, 1, 0, 10))
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, value, f32(6))
 
 	uifw.gui_begin_frame(&ctx, {active_device = .Controller, accept = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 240, 80}, .Column, 0, 44)
-	_ = uifw.gui_number_drag_f32(&ctx, "Amount", "amount", &value, 1, 0, 10)
+	_ = uifw.gui_numeric_f32(&ctx, "Amount", "amount", &value, 1, 0, 10)
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, value, f32(6))
 	testing.expect_value(t, ctx.focus_edit_id, uifw.GUI_ID_NONE)
+}
+
+@(test)
+test_gui_numeric_u32_uses_shared_precision_adjustment_and_cancels :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	ctx.controller_explicit_activation = true
+
+	value := u32(100)
+	id := uifw.gui_make_id(&ctx, "agents")
+	ctx.focused = id
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, accept = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 300, 80}, .Column, 0, 44)
+	_ = uifw.gui_numeric_u32(&ctx, "Agent Count", "agents", &value, 1, 100_000_000)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+
+	// Precision is selected with a separate press, then used by either axis.
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, secondary_pressed = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 300, 80}, .Column, 0, 44)
+	_ = uifw.gui_numeric_u32(&ctx, "Agent Count", "agents", &value, 1, 100_000_000)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, ctx.numeric_precision_index, 3)
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, nav_pressed_x = 1})
+	uifw.gui_layout_begin(&ctx, {0, 0, 300, 80}, .Column, 0, 44)
+	testing.expect(t, uifw.gui_numeric_u32(&ctx, "Agent Count", "agents", &value, 1, 100_000_000))
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, value, u32(110))
+
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, back = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 300, 80}, .Column, 0, 44)
+	_ = uifw.gui_numeric_u32(&ctx, "Agent Count", "agents", &value, 1, 100_000_000)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, value, u32(100))
+}
+
+@(test)
+test_gui_numeric_u32_keyboard_types_suffix_commits_and_cancels :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	value := u32(1_000)
+	id := uifw.gui_make_id(&ctx, "agents_keyboard")
+	ctx.focused = id
+	text_input: [32]u8
+	copy(text_input[:], "25M")
+	uifw.gui_begin_frame(&ctx, {active_device = .Mouse_Keyboard, text_input = text_input, text_input_len = 3})
+	uifw.gui_layout_begin(&ctx, {0, 0, 300, 80}, .Column, 0, 44)
+	testing.expect(t, uifw.gui_numeric_u32(&ctx, "Agent Count", "agents_keyboard", &value, 1, 100_000_000))
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, value, u32(25_000_000))
+	testing.expect_value(t, ctx.text_edit_id, id)
+
+	// Enter commits the exact suffixed value.
+	uifw.gui_begin_frame(&ctx, {active_device = .Mouse_Keyboard, accept = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 300, 80}, .Column, 0, 44)
+	_ = uifw.gui_numeric_u32(&ctx, "Agent Count", "agents_keyboard", &value, 1, 100_000_000)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, value, u32(25_000_000))
+	testing.expect_value(t, ctx.text_edit_id, uifw.GUI_ID_NONE)
+
+	// A later edit can be cancelled with Escape/Back.
+	copy(text_input[:], "3M")
+	uifw.gui_begin_frame(&ctx, {active_device = .Mouse_Keyboard, text_input = text_input, text_input_len = 2})
+	uifw.gui_layout_begin(&ctx, {0, 0, 300, 80}, .Column, 0, 44)
+	_ = uifw.gui_numeric_u32(&ctx, "Agent Count", "agents_keyboard", &value, 1, 100_000_000)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, value, u32(3_000_000))
+	uifw.gui_begin_frame(&ctx, {active_device = .Mouse_Keyboard, key_escape = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 300, 80}, .Column, 0, 44)
+	_ = uifw.gui_numeric_u32(&ctx, "Agent Count", "agents_keyboard", &value, 1, 100_000_000)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, value, u32(25_000_000))
 }
 
 @(test)
@@ -985,6 +1068,16 @@ test_simulation_tab_component_supports_keyboard_entry_and_controller_browse :: p
 	testing.expect(t, state.panel_open)
 	testing.expect(t, state.pending_panel_focus)
 	testing.expect_value(t, state.focus.phase, uifw.Controller_Focus_Phase.Child_Region)
+
+	control := uifw.gui_make_id(&ctx, "simulation_test_control")
+	ctx.focused = control
+	uifw.gui_begin_frame(&ctx, {active_device = .Controller, accept = true, accept_pressed = true})
+	_ = game.simulation_controller_ui_update_input(&ui, &ctx)
+	testing.expect_value(t, state.focus.phase, uifw.Controller_Focus_Phase.Active_Control)
+	testing.expect_value(t, state.focus.active_control, control)
+	// Accept is no longer consumed so widgets can see it and enter edit mode.
+	testing.expect(t, ctx.input.accept)
+	testing.expect(t, ctx.input.accept_pressed)
 }
 
 @(test)
@@ -1275,14 +1368,14 @@ test_keyboard_number_escape_restores_pre_edit_value :: proc(t: ^testing.T) {
 
 	uifw.gui_begin_frame(&ctx, {key_enter = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 70}, .Column, 0, 44)
-	_ = uifw.gui_number_drag_f32(&ctx, "Number", "number", &value, 1, 0, 10)
+	_ = uifw.gui_numeric_f32(&ctx, "Number", "number", &value, 1, 0, 10)
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
 	value = 9
 
 	uifw.gui_begin_frame(&ctx, {key_escape = true})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 70}, .Column, 0, 44)
-	_ = uifw.gui_number_drag_f32(&ctx, "Number", "number", &value, 1, 0, 10)
+	_ = uifw.gui_numeric_f32(&ctx, "Number", "number", &value, 1, 0, 10)
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
 
@@ -1303,7 +1396,7 @@ test_gui_text_input_request_covers_numeric_editor_activation :: proc(t: ^testing
 	ctx.focused = id
 	uifw.gui_begin_frame(&ctx, {active_device = .Mouse_Keyboard})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 70}, .Column, 0, 44)
-	_ = uifw.gui_number_drag_f32(&ctx, "Number", "number", &value, 1, 0, 10)
+	_ = uifw.gui_numeric_f32(&ctx, "Number", "number", &value, 1, 0, 10)
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
 	testing.expect(t, ctx.wants_text_input)
@@ -1312,7 +1405,7 @@ test_gui_text_input_request_covers_numeric_editor_activation :: proc(t: ^testing
 	// Controller browse focus alone must not invoke the platform text service.
 	uifw.gui_begin_frame(&ctx, {active_device = .Controller})
 	uifw.gui_layout_begin(&ctx, {0, 0, 220, 70}, .Column, 0, 44)
-	_ = uifw.gui_number_drag_f32(&ctx, "Number", "number", &value, 1, 0, 10)
+	_ = uifw.gui_numeric_f32(&ctx, "Number", "number", &value, 1, 0, 10)
 	uifw.gui_layout_end(&ctx)
 	uifw.gui_end_frame(&ctx)
 	testing.expect(t, !ctx.wants_text_input)

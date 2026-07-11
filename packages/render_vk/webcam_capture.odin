@@ -66,13 +66,17 @@ webcam_frame_rgba :: proc(frame: ^sdl.Surface, width, height: int, fit: Vector_I
 	return pixels
 }
 
-webcam_update_vectors :: proc(gpu: ^Vectors_Gpu_State, frame: ^sdl.Surface, settings: ^Vectors_Settings) -> bool {
-	if len(gpu.image_data) != VECTORS_IMAGE_RESOLUTION * VECTORS_IMAGE_RESOLUTION {
-		delete(gpu.image_data); gpu.image_data = make([]u8, VECTORS_IMAGE_RESOLUTION * VECTORS_IMAGE_RESOLUTION)
-	}
-	for y in 0..<VECTORS_IMAGE_RESOLUTION {for x in 0..<VECTORS_IMAGE_RESOLUTION {
-		gpu.image_data[y * VECTORS_IMAGE_RESOLUTION + x] = webcam_frame_gray(frame, VECTORS_IMAGE_RESOLUTION, VECTORS_IMAGE_RESOLUTION, x, y, settings.image_fit_mode, settings.image_mirror_horizontal, settings.image_mirror_vertical, settings.image_invert_tone)
-	}}
+webcam_update_vectors :: proc(gpu: ^Vectors_Gpu_State, ctx: ^engine.Vk_Context, frame: ^sdl.Surface, settings: ^Vectors_Settings) -> bool {
+	_ = settings
+	if !gpu.ready {return false}
+	frame_slot := int(ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
+	w, h := u32(max(frame.w, 1)), u32(max(frame.h, 1))
+	if !vectors_ensure_webcam_slot(gpu, ctx, frame_slot, w, h) {return false}
+	dst := (cast([^]u8)gpu.webcam_staging_buffers[frame_slot].mapped)[:int(w * h * 4)]
+	if !sdl.ConvertPixels(frame.w, frame.h, frame.format, frame.pixels, frame.pitch, .RGBA32, raw_data(dst), c.int(w * 4)) {return false}
+	gpu.webcam_upload_pending[frame_slot] = true
+	gpu.webcam_live = true
+	gpu.webcam_width, gpu.webcam_height = w, h
 	gpu.image_loaded = true
 	return true
 }
@@ -121,14 +125,20 @@ webcam_update_remaining :: proc(state: ^Remaining_Sim_State, mode: App_Mode, ctx
 	if state == nil || state.webcam_capture == nil {
 		if mode == .Flow_Field && flow != nil {flow.webcam_live = false}
 		if mode == .Slime_Mold && slime != nil {slime.webcam_live = false}
+		if mode == .Vectors && vectors != nil {vectors.webcam_live = false}
 		return
 	}
-	if mode == .Flow_Field || mode == .Slime_Mold {
+	if mode == .Flow_Field || mode == .Slime_Mold || mode == .Vectors {
 		timestamp: sdl.Uint64
 		frame := sdl.AcquireCameraFrame(state.webcam_capture, &timestamp)
 		if frame == nil {return}
 		defer sdl.ReleaseCameraFrame(state.webcam_capture, frame)
-		ok := mode == .Flow_Field ? webcam_update_flow(flow, ctx, frame, &state.flow) : webcam_update_slime(slime, ctx, frame, &state.slime, state.webcam_capture_command == .Load_Slime_Position_Image)
+		ok := false
+		#partial switch mode {
+		case .Flow_Field: ok = webcam_update_flow(flow, ctx, frame, &state.flow)
+		case .Slime_Mold: ok = webcam_update_slime(slime, ctx, frame, &state.slime, state.webcam_capture_command == .Load_Slime_Position_Image)
+		case .Vectors: ok = webcam_update_vectors(vectors, ctx, frame, &state.vectors)
+		}
 		if ok {
 			state.webcam_capture_frames += 1
 			write_fixed_string(state.webcam_capture_status[:], "Webcam live")
@@ -140,7 +150,7 @@ webcam_update_remaining :: proc(state: ^Remaining_Sim_State, mode: App_Mode, ctx
 	defer sdl.DestroySurface(frame)
 	ok := false
 	#partial switch mode {
-	case .Vectors: ok = webcam_update_vectors(vectors, frame, &state.vectors)
+	case .Vectors: ok = webcam_update_vectors(vectors, ctx, frame, &state.vectors)
 	case .Moire: ok = webcam_update_moire(moire, ctx, frame, &state.moire)
 	case .Flow_Field: ok = webcam_update_flow(flow, ctx, frame, &state.flow)
 	case:

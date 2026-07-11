@@ -360,6 +360,7 @@ test_slime_controller_deck_tab_focus_moves_between_tabs :: proc(t: ^testing.T) {
 	ui.slime_controller.focused_index = 0
 	ui.slime_controller.active_index = 0
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1280, 720, ui.settings.ui_scale)
+	game.slime_controller_ui_focus_deck(&ui.slime_controller, &ctx)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, key_tab = true})
 	_ = game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1280, 720)
@@ -396,8 +397,8 @@ test_slime_controller_deck_arrow_focus_moves_once :: proc(t: ^testing.T) {
 	ui.slime_controller.panel_open = false
 	ui.slime_controller.focused_index = 0
 	ui.slime_controller.active_index = 0
-	ctx.focused = uifw.gui_make_id(&ctx, "slime_deck_0")
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1280, 720, ui.settings.ui_scale)
+	game.slime_controller_ui_focus_deck(&ui.slime_controller, &ctx)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, key_right = true})
 	_ = game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1280, 720)
@@ -472,6 +473,13 @@ test_slime_controller_unfocused_filter_preserves_camera_controls :: proc(t: ^tes
 	testing.expect(t, ui.simulation_shell.controls_visible)
 	testing.expect(t, ui.slime_controller.deck_visible)
 	testing.expect(t, !ui.slime_controller.panel_open)
+	testing.expect_value(t, ctx.focused, uifw.GUI_ID_NONE)
+
+	// A visible deck stays unfocused on the next frame after Back releases it.
+	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720})
+	_ = game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1280, 720)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, ui.slime_controller.focus.phase, uifw.Controller_Focus_Phase.Unfocused)
 	testing.expect_value(t, ctx.focused, uifw.GUI_ID_NONE)
 
 	filtered := game.app_ui_simulation_filter_input(&ui, &ctx, {
@@ -750,7 +758,8 @@ test_app_options_section_rail_switches_active_group :: proc(t: ^testing.T) {
 	uifw.gui_end_frame(&ctx)
 
 	testing.expect_value(t, ui.options_section_index, 2)
-	testing.expect(t, test_first_text_command_index(ctx.commands[:], "UI Hide Delay: 3000 ms") >= 0)
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "UI Hide Delay") >= 0)
+	testing.expect(t, test_first_text_command_index(ctx.commands[:], "3000 ms") >= 0)
 	testing.expect(t, test_first_text_command_index(ctx.commands[:], "FPS Limiter") < 0)
 }
 
@@ -788,7 +797,7 @@ test_app_options_screen_mutes_disabled_fps_field_but_keeps_focus_hide_delay_avai
 
 	saw_enabled_hide_delay := false
 	for command in ctx.commands {
-		if command.kind == uifw.Draw_Command_Kind.Text && command.text == "UI Hide Delay: 3000 ms" && command.color.a != ctx.style.text_muted.a {
+		if command.kind == uifw.Draw_Command_Kind.Text && command.text == "3000 ms" && command.color.a != ctx.style.text_muted.a {
 			saw_enabled_hide_delay = true
 		}
 	}
@@ -1117,7 +1126,7 @@ test_app_ui_system_cursor_hides_with_hidden_simulation_controls :: proc(t: ^test
 }
 
 @(test)
-test_app_ui_virtual_controller_cursor_remains_visible_for_hidden_canvas :: proc(t: ^testing.T) {
+test_app_ui_virtual_controller_cursor_follows_system_cursor_hide_rules :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
 	ui.mode = .Gray_Scott
@@ -1133,7 +1142,7 @@ test_app_ui_virtual_controller_cursor_remains_visible_for_hidden_canvas :: proc(
 	})
 
 	game.app_ui_draw_virtual_cursor(&ui, &ctx)
-	testing.expect(t, len(ctx.commands) > 0)
+	testing.expect_value(t, len(ctx.commands), 0)
 
 	command_count := len(ctx.commands)
 	ui.simulation_shell.controls_visible = true
