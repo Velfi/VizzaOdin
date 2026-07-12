@@ -32,8 +32,8 @@ ui_renderer_prepare_backdrop_blur :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Conte
 		layerCount = 1,
 	}
 	swapchain_image := ctx.swapchain_images[frame.image_index]
-	to_src := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_src := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = {.COLOR_ATTACHMENT_WRITE},
 		dstAccessMask = {.TRANSFER_READ},
 		oldLayout = .PRESENT_SRC_KHR,
@@ -43,9 +43,9 @@ ui_renderer_prepare_backdrop_blur :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Conte
 		image = swapchain_image,
 		subresourceRange = range,
 	}
-	to_dst := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
-		srcAccessMask = renderer.backdrop_layouts[UI_BACKDROP_SOURCE_TEXTURE_ID] == .SHADER_READ_ONLY_OPTIMAL ? vk.AccessFlags{.SHADER_READ} : vk.AccessFlags{},
+	to_dst := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
+		srcAccessMask = renderer.backdrop_layouts[UI_BACKDROP_SOURCE_TEXTURE_ID] == .SHADER_READ_ONLY_OPTIMAL ? vk.AccessFlags2{.SHADER_READ} : vk.AccessFlags2{},
 		dstAccessMask = {.TRANSFER_WRITE},
 		oldLayout = renderer.backdrop_layouts[UI_BACKDROP_SOURCE_TEXTURE_ID],
 		newLayout = .TRANSFER_DST_OPTIMAL,
@@ -54,8 +54,8 @@ ui_renderer_prepare_backdrop_blur :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Conte
 		image = source.image,
 		subresourceRange = range,
 	}
-	barriers := [?]vk.ImageMemoryBarrier{to_src, to_dst}
-	vk.CmdPipelineBarrier(frame.command_buffer, {.COLOR_ATTACHMENT_OUTPUT, .FRAGMENT_SHADER}, {.TRANSFER}, {}, 0, nil, 0, nil, u32(len(barriers)), raw_data(barriers[:]))
+	barriers := [?]vk.ImageMemoryBarrier2{to_src, to_dst}
+	engine.vk_cmd_pipeline_barrier2(frame.command_buffer, {.COLOR_ATTACHMENT_OUTPUT, .FRAGMENT_SHADER}, {.TRANSFER}, {}, 0, nil, 0, nil, u32(len(barriers)), raw_data(barriers[:]))
 	vk_cmd_count_pipeline_barrier(ctx, u32(len(barriers)))
 
 	src := vk.Offset3D{i32(0), i32(0), i32(0)}
@@ -81,8 +81,8 @@ ui_renderer_prepare_backdrop_blur :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Conte
 	vk.CmdBlitImage(frame.command_buffer, swapchain_image, .TRANSFER_SRC_OPTIMAL, source.image, .TRANSFER_DST_OPTIMAL, 1, &blit, .LINEAR)
 	vk_cmd_count_transfer_copy(ctx)
 
-	to_color := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_color := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = {.TRANSFER_READ},
 		dstAccessMask = {.COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE},
 		oldLayout = .TRANSFER_SRC_OPTIMAL,
@@ -92,8 +92,8 @@ ui_renderer_prepare_backdrop_blur :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Conte
 		image = swapchain_image,
 		subresourceRange = range,
 	}
-	to_shader := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_shader := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = {.TRANSFER_WRITE},
 		dstAccessMask = {.SHADER_READ},
 		oldLayout = .TRANSFER_DST_OPTIMAL,
@@ -103,8 +103,8 @@ ui_renderer_prepare_backdrop_blur :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Conte
 		image = source.image,
 		subresourceRange = range,
 	}
-	post_barriers := [?]vk.ImageMemoryBarrier{to_color, to_shader}
-	vk.CmdPipelineBarrier(frame.command_buffer, {.TRANSFER}, {.COLOR_ATTACHMENT_OUTPUT, .FRAGMENT_SHADER}, {}, 0, nil, 0, nil, u32(len(post_barriers)), raw_data(post_barriers[:]))
+	post_barriers := [?]vk.ImageMemoryBarrier2{to_color, to_shader}
+	engine.vk_cmd_pipeline_barrier2(frame.command_buffer, {.TRANSFER}, {.COLOR_ATTACHMENT_OUTPUT, .FRAGMENT_SHADER}, {}, 0, nil, 0, nil, u32(len(post_barriers)), raw_data(post_barriers[:]))
 	vk_cmd_count_pipeline_barrier(ctx, u32(len(post_barriers)))
 	renderer.backdrop_layouts[UI_BACKDROP_SOURCE_TEXTURE_ID] = .SHADER_READ_ONLY_OPTIMAL
 
@@ -141,7 +141,7 @@ ui_renderer_prepare_backdrop_blur :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Conte
 ui_renderer_run_backdrop_blur_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, cmd: vk.CommandBuffer, frame_slot: u32, source_index, dest_index: int, texel_step: uifw.Vec2, vertex_offset: u32) -> bool {
 	source := &renderer.textures[source_index]
 	dest := &renderer.textures[dest_index]
-	if !source.ready || !dest.ready || dest.framebuffer == vk.Framebuffer(0) {
+	if !source.ready || !dest.ready || dest.view == vk.ImageView(0) {
 		return false
 	}
 
@@ -152,9 +152,9 @@ ui_renderer_run_backdrop_blur_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Cont
 		baseArrayLayer = 0,
 		layerCount = 1,
 	}
-	to_color := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
-		srcAccessMask = renderer.backdrop_layouts[dest_index] == .SHADER_READ_ONLY_OPTIMAL ? vk.AccessFlags{.SHADER_READ} : vk.AccessFlags{},
+	to_color := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
+		srcAccessMask = renderer.backdrop_layouts[dest_index] == .SHADER_READ_ONLY_OPTIMAL ? vk.AccessFlags2{.SHADER_READ} : vk.AccessFlags2{},
 		dstAccessMask = {.COLOR_ATTACHMENT_WRITE},
 		oldLayout = renderer.backdrop_layouts[dest_index],
 		newLayout = .COLOR_ATTACHMENT_OPTIMAL,
@@ -163,25 +163,12 @@ ui_renderer_run_backdrop_blur_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Cont
 		image = dest.image,
 		subresourceRange = range,
 	}
-	vk.CmdPipelineBarrier(cmd, {.FRAGMENT_SHADER, .TOP_OF_PIPE}, {.COLOR_ATTACHMENT_OUTPUT}, {}, 0, nil, 0, nil, 1, &to_color)
+	engine.vk_cmd_pipeline_barrier2(cmd, {.FRAGMENT_SHADER, .TOP_OF_PIPE}, {.COLOR_ATTACHMENT_OUTPUT}, {}, 0, nil, 0, nil, 1, &to_color)
 	vk_cmd_count_pipeline_barrier(ctx)
 	renderer.backdrop_layouts[dest_index] = .COLOR_ATTACHMENT_OPTIMAL
 
 	clear := vk.ClearValue{color = {float32 = {0, 0, 0, 0}}}
-	render_area := vk.Rect2D {
-		offset = {0, 0},
-		extent = {dest.width, dest.height},
-	}
-	begin := vk.RenderPassBeginInfo {
-		sType = .RENDER_PASS_BEGIN_INFO,
-		renderPass = renderer.backdrop_render_pass,
-		framebuffer = dest.framebuffer,
-		renderArea = render_area,
-		clearValueCount = 1,
-		pClearValues = &clear,
-	}
-	vk.CmdBeginRenderPass(cmd, &begin, .INLINE)
-	ctx.command_shape.render_pass_count += 1
+	engine.vk_cmd_begin_rendering(ctx, cmd, dest.view, {dest.width, dest.height}, .COLOR_ATTACHMENT_OPTIMAL, .CLEAR, .STORE, clear)
 	vk_cmd_count_backdrop_blur_pass(ctx)
 
 	viewport := vk.Viewport{x = 0, y = 0, width = f32(dest.width), height = f32(dest.height), minDepth = 0, maxDepth = 1}
@@ -190,7 +177,7 @@ ui_renderer_run_backdrop_blur_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Cont
 	vk.CmdSetScissor(cmd, 0, 1, &scissor)
 
 	if !ui_renderer_write_blur_quad(renderer, frame_slot, vertex_offset, texel_step) {
-		vk.CmdEndRenderPass(cmd)
+		engine.vk_cmd_end_rendering(cmd)
 		return false
 	}
 	buffer := renderer.backdrop_vertex_buffers[min(frame_slot, u32(MAX_FRAMES_IN_FLIGHT - 1))].handle
@@ -202,10 +189,10 @@ ui_renderer_run_backdrop_blur_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Cont
 	vk_cmd_count_descriptor_bind(ctx)
 	vk.CmdDraw(cmd, 6, 1, 0, 0)
 	vk_cmd_count_draw(ctx)
-	vk.CmdEndRenderPass(cmd)
+	engine.vk_cmd_end_rendering(cmd)
 
-	to_shader := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_shader := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = {.COLOR_ATTACHMENT_WRITE},
 		dstAccessMask = {.SHADER_READ},
 		oldLayout = .COLOR_ATTACHMENT_OPTIMAL,
@@ -215,7 +202,7 @@ ui_renderer_run_backdrop_blur_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Cont
 		image = dest.image,
 		subresourceRange = range,
 	}
-	vk.CmdPipelineBarrier(cmd, {.COLOR_ATTACHMENT_OUTPUT}, {.FRAGMENT_SHADER}, {}, 0, nil, 0, nil, 1, &to_shader)
+	engine.vk_cmd_pipeline_barrier2(cmd, {.COLOR_ATTACHMENT_OUTPUT}, {.FRAGMENT_SHADER}, {}, 0, nil, 0, nil, 1, &to_shader)
 	vk_cmd_count_pipeline_barrier(ctx)
 	renderer.backdrop_layouts[dest_index] = .SHADER_READ_ONLY_OPTIMAL
 	return true
@@ -388,8 +375,10 @@ ui_renderer_create_pipeline :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, bl
 		dynamicStateCount = u32(len(dynamic_states)),
 		pDynamicStates = raw_data(dynamic_states[:]),
 	}
+	rendering := engine.vk_pipeline_rendering_info(&ctx.swapchain_format)
 	info := vk.GraphicsPipelineCreateInfo {
 		sType = .GRAPHICS_PIPELINE_CREATE_INFO,
+		pNext = &rendering,
 		stageCount = u32(len(stages)),
 		pStages = raw_data(stages[:]),
 		pVertexInputState = &vertex_input,
@@ -400,8 +389,6 @@ ui_renderer_create_pipeline :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, bl
 		pColorBlendState = &blend,
 		pDynamicState = &dynamic_state_info,
 		layout = pipeline.layout,
-		renderPass = ctx.render_pass,
-		subpass = 0,
 	}
 	if vk.CreateGraphicsPipelines(ctx.device, vk.PipelineCache(0), 1, &info, nil, &pipeline.pipeline) != .SUCCESS {
 		return false
@@ -459,8 +446,10 @@ ui_renderer_create_blur_pipeline :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Contex
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [?]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state_info := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = u32(len(dynamic_states)), pDynamicStates = raw_data(dynamic_states[:])}
+	rendering := engine.vk_pipeline_rendering_info(&ctx.swapchain_format)
 	info := vk.GraphicsPipelineCreateInfo {
 		sType = .GRAPHICS_PIPELINE_CREATE_INFO,
+		pNext = &rendering,
 		stageCount = u32(len(stages)),
 		pStages = raw_data(stages[:]),
 		pVertexInputState = &vertex_input,
@@ -471,8 +460,6 @@ ui_renderer_create_blur_pipeline :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Contex
 		pColorBlendState = &blend,
 		pDynamicState = &dynamic_state_info,
 		layout = pipeline.layout,
-		renderPass = renderer.backdrop_render_pass,
-		subpass = 0,
 	}
 	return vk.CreateGraphicsPipelines(ctx.device, vk.PipelineCache(0), 1, &info, nil, &pipeline.pipeline) == .SUCCESS
 }
@@ -527,8 +514,10 @@ ui_renderer_create_glass_pipeline :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Conte
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [?]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state_info := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = u32(len(dynamic_states)), pDynamicStates = raw_data(dynamic_states[:])}
+	rendering := engine.vk_pipeline_rendering_info(&ctx.swapchain_format)
 	info := vk.GraphicsPipelineCreateInfo {
 		sType = .GRAPHICS_PIPELINE_CREATE_INFO,
+		pNext = &rendering,
 		stageCount = u32(len(stages)),
 		pStages = raw_data(stages[:]),
 		pVertexInputState = &vertex_input,
@@ -539,8 +528,6 @@ ui_renderer_create_glass_pipeline :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Conte
 		pColorBlendState = &blend,
 		pDynamicState = &dynamic_state_info,
 		layout = pipeline.layout,
-		renderPass = ctx.render_pass,
-		subpass = 0,
 	}
 	return vk.CreateGraphicsPipelines(ctx.device, vk.PipelineCache(0), 1, &info, nil, &pipeline.pipeline) == .SUCCESS
 }

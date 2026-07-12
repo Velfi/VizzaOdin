@@ -1,3 +1,5 @@
+#include "common/noise.slang"
+
 struct GrayScottParams {
 	float feed;
 	float kill;
@@ -26,6 +28,38 @@ struct GrayScottParams {
 	uint _pad0;
 	uint _pad1;
 	uint _pad2;
+	uint noise_kind;
+	uint noise_fractal_mode;
+	uint noise_seed;
+	uint noise_warp_mode;
+	float noise_offset_x;
+	float noise_offset_y;
+	float noise_rotation;
+	float noise_anchor_x;
+	float noise_anchor_y;
+	float noise_strength;
+	float noise_amplitude;
+	float noise_frequency;
+	uint noise_octaves;
+	float noise_lacunarity;
+	float noise_gain;
+	uint noise_warp_octaves;
+	float noise_warp_amplitude;
+	float noise_warp_frequency;
+	uint noise_gabor_iterations;
+	float noise_gabor_velocity;
+	float noise_gabor_band_width;
+	float noise_gabor_band_softness;
+	uint noise_phasor_iterations;
+	float noise_phasor_velocity;
+	float noise_phasor_band_width;
+	uint noise_voronoi_output;
+	uint noise_voronoi_distance_mode;
+	float noise_wave_velocity;
+	float noise_wave_band_width;
+	float noise_wave_band_softness;
+	float seed_density;
+	float seed_amplitude;
 };
 
 [[vk::binding(0, 0)]]
@@ -179,11 +213,35 @@ float4 initial_seed(uint2 tid) {
 }
 
 float4 noise_seed(uint2 tid) {
-	float n = fbm_noise(tid, params.seed);
+	NoiseParams noise;
+	noise.kind = params.noise_kind;
+	noise.fractal_mode = params.noise_fractal_mode;
+	noise.seed = params.noise_seed;
+	noise.offset_x = params.noise_offset_x;
+	noise.offset_y = params.noise_offset_y;
+	noise.rotation = params.noise_rotation;
+	noise.anchor_x = params.noise_anchor_x;
+	noise.anchor_y = params.noise_anchor_y;
+	noise.strength = params.noise_strength;
+	noise.amplitude = params.noise_amplitude;
+	noise.frequency = params.noise_frequency;
+	noise.octaves = params.noise_octaves;
+	noise.lacunarity = params.noise_lacunarity;
+	noise.gain = params.noise_gain;
+	noise.warp_mode = params.noise_warp_mode;
+	noise.warp_octaves = params.noise_warp_octaves;
+	noise.warp_amplitude = params.noise_warp_amplitude;
+	noise.warp_frequency = params.noise_warp_frequency;
+	noise.gabor_iterations = params.noise_gabor_iterations; noise.gabor_velocity = params.noise_gabor_velocity; noise.gabor_band_width = params.noise_gabor_band_width; noise.gabor_band_softness = params.noise_gabor_band_softness;
+	noise.phasor_iterations = params.noise_phasor_iterations; noise.phasor_velocity = params.noise_phasor_velocity; noise.phasor_band_width = params.noise_phasor_band_width;
+	noise.voronoi_output = params.noise_voronoi_output; noise.voronoi_distance_mode = params.noise_voronoi_distance_mode;
+	noise.wave_velocity = params.noise_wave_velocity; noise.wave_band_width = params.noise_wave_band_width; noise.wave_band_softness = params.noise_wave_band_softness;
+	float2 uv = (float2(tid) + 0.5) / float2(params.width, params.height);
+	float n = noise_sample_2d(noise, uv, 0.0) * 0.5 + 0.5;
 	// Perturb the homogeneous equilibrium instead of replacing rare pixels with
 	// near-saturated V. The centered envelope still gives noise enough contrast
 	// to nucleate patterns without starting outside the usual Gray-Scott regime.
-	float v = saturate((n - 0.35) * 0.35);
+	float v = saturate((n - (1.0 - params.seed_density)) * params.seed_amplitude);
 	return float4(1.0 - v * 0.5, v, 0.0, 0.0);
 }
 

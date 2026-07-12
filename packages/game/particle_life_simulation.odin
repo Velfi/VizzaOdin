@@ -18,7 +18,7 @@ particle_life_world_size_for_viewport :: proc(width, height: f32) -> [2]f32 {
 }
 
 particle_life_world_size :: proc(sim: ^Particle_Life_Simulation) -> [2]f32 {
-	return particle_life_world_size_for_viewport(f32(max(sim.gpu.width, 1)), f32(max(sim.gpu.height, 1)))
+	return particle_life_world_size_for_viewport(f32(max(sim.runtime.render_width, 1)), f32(max(sim.runtime.render_height, 1)))
 }
 
 particle_life_collision_distance :: proc(settings: Particle_Life_Settings) -> f32 {
@@ -101,27 +101,27 @@ particle_life_grid_scatter_indices :: proc(cell_indices, offsets: []u32, cursors
 
 particle_life_current_grid_satisfies_settings :: proc(sim: ^Particle_Life_Simulation) -> bool {
 	world_size := particle_life_world_size(sim)
-	target_grid_width, target_grid_height := particle_life_target_grid_dimensions(sim.settings, world_size)
-	target_collision_width, target_collision_height := particle_life_target_collision_grid_dimensions(sim.settings, world_size)
+	target_grid_width, target_grid_height := particle_life_target_grid_dimensions(sim.settings^, world_size)
+	target_collision_width, target_collision_height := particle_life_target_collision_grid_dimensions(sim.settings^, world_size)
 	// A finer existing grid is reusable only if its stored search radius covers
 	// the current distance at that finer cell size. Comparing against the target
 	// grid's radius can incorrectly accept a stale grid after max_distance moves.
 	current_neighbor_radius := particle_life_target_neighbor_radius_cells(
-		sim.settings,
-		sim.gpu.grid_width,
-		sim.gpu.grid_height,
+		sim.settings^,
+		sim.runtime.grid_width,
+		sim.runtime.grid_height,
 		world_size,
 	)
 	return particle_life_grid_satisfies_target(
-		sim.gpu.grid_width,
-		sim.gpu.grid_height,
-		sim.gpu.neighbor_radius_cells,
+		sim.runtime.grid_width,
+		sim.runtime.grid_height,
+		sim.runtime.neighbor_radius_cells,
 		target_grid_width,
 		target_grid_height,
 		current_neighbor_radius,
 	) && (!sim.settings.collision_enabled ||
-		sim.gpu.collision_grid_width >= target_collision_width &&
-		sim.gpu.collision_grid_height >= target_collision_height)
+		sim.runtime.collision_grid_width >= target_collision_width &&
+		sim.runtime.collision_grid_height >= target_collision_height)
 }
 
 particle_life_target_analysis_grid_axis :: proc(settings: Particle_Life_Settings) -> u32 {
@@ -229,24 +229,24 @@ particle_life_apply_builtin_preset :: proc(sim: ^Particle_Life_Simulation, index
 	}
 	sim.runtime.current_preset_index = index
 	settings := particle_life_default_settings()
-	particle_life_settings_preserve_color_scheme(&settings, sim.settings)
+	particle_life_settings_preserve_color_scheme(&settings, sim.settings^)
 	particle_life_load_settings(sim, settings)
 }
 
 particle_life_init :: proc(sim: ^Particle_Life_Simulation, width, height: i32) {
-	sim.settings = particle_life_default_settings()
-	sim.runtime = {seed = 0x3c6ef372, needs_reset = true, force_curve_narrow_range = true, camera_zoom = 1, camera_target_zoom = 1, camera_smoothing_factor = CAMERA_DEFAULT_SMOOTHING}
-	sim.gpu = {width = width, height = height}
+	if sim == nil || sim.settings == nil || sim.runtime == nil do return
+	sim.settings^ = particle_life_default_settings()
+	sim.runtime^ = {render_width = width, render_height = height, seed = 0x3c6ef372, needs_reset = true, force_curve_narrow_range = true, camera_zoom = 1, camera_target_zoom = 1, camera_smoothing_factor = CAMERA_DEFAULT_SMOOTHING}
 	sim.blob_tracker = {next_id = 1}
 }
 
 particle_life_resize :: proc(sim: ^Particle_Life_Simulation, width, height: i32) {
-	if sim.gpu.width == width && sim.gpu.height == height {
+	if sim.runtime.render_width == width && sim.runtime.render_height == height {
 		return
 	}
-	sim.gpu.width = width
-	sim.gpu.height = height
-	sim.gpu.ready = false
+	sim.runtime.render_width = width
+	sim.runtime.render_height = height
+	sim.runtime.render_ready = false
 }
 
 particle_life_step :: proc(sim: ^Particle_Life_Simulation, dt: f32) {
@@ -272,7 +272,7 @@ particle_life_apply_frame_input :: proc(sim: ^Particle_Life_Simulation, input: U
 	sim.runtime.cursor_x = world[0]
 	sim.runtime.cursor_y = world[1]
 	tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
-	sim.runtime.cursor_active = canvas_tool_interaction_mode(tool, input.mouse_button == 3 || input.secondary_down)
+	sim.runtime.cursor_active = canvas_tool_interaction_mode(tool, input.mouse_button == 3 || input.actions.secondary.down)
 }
 
 particle_life_view_bounds :: proc(sim: ^Particle_Life_Simulation, width, height: f32) -> [4]f32 {
@@ -341,7 +341,7 @@ particle_life_blob_overlay_radius_px :: proc(sim: ^Particle_Life_Simulation, blo
 	if blob_w > 0 || blob_h > 0 {
 		return max(max(blob_w * width / world_w, blob_h * height / world_h) * 0.5, 8.0)
 	}
-	axis := f32(max(particle_life_target_analysis_grid_axis(sim.settings), 1))
+	axis := f32(max(particle_life_target_analysis_grid_axis(sim.settings^), 1))
 	radius_world := math.sqrt(f32(max(blob.area, 1)) / PARTICLE_LIFE_PI) * (2.0 / axis)
 	screen_scale := min(width / world_w, height / world_h)
 	return max(radius_world * screen_scale, 8.0)

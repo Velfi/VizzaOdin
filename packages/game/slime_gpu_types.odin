@@ -1,9 +1,6 @@
 package game
 
-import engine "../engine"
-
 import "core:math"
-import vk "vendor:vulkan"
 
 SLIME_COMPUTE_SHADER_SOURCE :: "assets/shaders/simulations/slime_mold/shaders/compute.slang"
 SLIME_GRADIENT_SHADER_SOURCE :: "assets/shaders/simulations/slime_mold/shaders/gradient.slang"
@@ -40,7 +37,6 @@ SLIME_AGENT_COUNT :: u32(10_000_000)
 SLIME_MIN_AGENT_COUNT :: u32(1)
 SLIME_MAX_AGENT_COUNT :: u32(100_000_000)
 SLIME_PREVIEW_AGENT_COUNT :: u32(80_000)
-SLIME_IMAGE_FORMAT :: vk.Format(.R8G8B8A8_UNORM)
 
 Slime_Sim_Uniform :: struct #align(16) {
 	width: u32,
@@ -86,69 +82,6 @@ Slime_Cursor_Params :: struct #align(16) {
 Slime_Render_Params :: Moire_Render_Params
 Slime_Camera :: Vectors_Camera_Uniform
 
-Slime_Image :: struct {
-	handle: vk.Image,
-	memory: vk.DeviceMemory,
-	view: vk.ImageView,
-	layout: vk.ImageLayout,
-	width: u32,
-	height: u32,
-}
-
-Slime_Gpu_State :: struct {
-	width: u32,
-	height: u32,
-	agent_count: u32,
-	update_shader: engine.Vk_Shader_Module,
-	decay_shader: engine.Vk_Shader_Module,
-	diffuse_shader: engine.Vk_Shader_Module,
-	update_speeds_shader: engine.Vk_Shader_Module,
-	reset_shader: engine.Vk_Shader_Module,
-	gradient_shader: engine.Vk_Shader_Module,
-	display_shader: engine.Vk_Shader_Module,
-	present_vertex_shader: engine.Vk_Shader_Module,
-	present_fragment_shader: engine.Vk_Shader_Module,
-	update_pipeline: engine.Vk_Compute_Pipeline,
-	decay_pipeline: engine.Vk_Compute_Pipeline,
-	diffuse_pipeline: engine.Vk_Compute_Pipeline,
-	update_speeds_pipeline: engine.Vk_Compute_Pipeline,
-	reset_pipeline: engine.Vk_Compute_Pipeline,
-	gradient_pipeline: engine.Vk_Compute_Pipeline,
-	display_pipeline: engine.Vk_Compute_Pipeline,
-	present_pipeline: engine.Vk_Graphics_Pipeline,
-	sim_set_layout: vk.DescriptorSetLayout,
-	display_set_layout: vk.DescriptorSetLayout,
-	texture_set_layout: vk.DescriptorSetLayout,
-	camera_set_layout: vk.DescriptorSetLayout,
-	descriptor_pool: vk.DescriptorPool,
-	sim_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	display_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	texture_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	camera_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	present_camera_zoom: f32,
-	agent_buffer: engine.Vk_Buffer,
-	trail_buffer: engine.Vk_Buffer,
-	mask_buffer: engine.Vk_Buffer,
-	gradient_buffer: engine.Vk_Buffer,
-	sim_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	cursor_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	lut_buffer: engine.Vk_Buffer,
-	render_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	camera_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	display_image: Slime_Image,
-	webcam_images: [engine.MAX_FRAMES_IN_FLIGHT]Slime_Image,
-	webcam_staging_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	webcam_upload_pending: [engine.MAX_FRAMES_IN_FLIGHT]bool,
-	webcam_image_ready: [engine.MAX_FRAMES_IN_FLIGHT]bool,
-	webcam_live: bool,
-	webcam_fit_mode: Vector_Image_Fit_Mode,
-	sampler: vk.Sampler,
-	agent_speed_min_uploaded: f32,
-	agent_speed_max_uploaded: f32,
-	needs_reset: bool,
-	ready: bool,
-}
-
 slime_camera_uniform_for_state :: proc(width, height: u32, control: ^Camera_Control_State = nil) -> Slime_Camera {
 	data := camera_uniform_data(control, f32(width), f32(height))
 	return {
@@ -157,9 +90,4 @@ slime_camera_uniform_for_state :: proc(width, height: u32, control: ^Camera_Cont
 		zoom = data.zoom,
 		aspect_ratio = data.aspect_ratio,
 	}
-}
-
-slime_speed_range_changed :: proc(gpu: ^Slime_Gpu_State, settings: ^Slime_Settings) -> bool {
-	return gpu.agent_speed_min_uploaded != settings.agent_speed_min ||
-	       gpu.agent_speed_max_uploaded != settings.agent_speed_max
 }

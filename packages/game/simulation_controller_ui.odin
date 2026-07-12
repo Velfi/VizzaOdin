@@ -198,6 +198,7 @@ simulation_controller_ui_focus_deck :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Co
 	region := simulation_controller_ui_region_id(gui, "deck")
 	fallback := uifw.gui_make_id(gui, fmt.tprintf("simulation_deck_%d", state.focused_index))
 	gui.focused = uifw.gui_controller_focus_enter_region(&state.focus, region, uifw.GUI_ID_NONE, fallback)
+	uifw.gui_focus_owner_claim(gui, .Control_Deck, region)
 }
 
 simulation_controller_ui_update_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) -> bool {
@@ -211,24 +212,26 @@ simulation_controller_ui_update_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_
 		simulation_controller_ui_focus_deck(ui, gui)
 		gui.input.focus_next = false; gui.input.focus_prev = false
 	}
-	if app_ui_control_deck_pressed(ui.frame_actions.control_deck, gui.input.key_space || gui.input.key_space_pressed) ||
-		ui.frame_actions.toggle_ui.pressed || gui.input.toggle_ui {
+	if app_ui_control_deck_pressed(ui.frame_actions.control_deck) ||
+		(ui.frame_actions.toggle_ui.pressed && ui.frame_actions.toggle_ui.owner == .Controller) {
 		simulation_controller_ui_focus_deck(ui, gui)
-		gui.input.toggle_ui = false
 		consumed = true
 	}
 	if state.focus.phase != .Unfocused {
 		if gui.input.back && gui.focus_edit_id == uifw.GUI_ID_NONE && gui.text_edit_id == uifw.GUI_ID_NONE && gui.open_panel == uifw.GUI_ID_NONE {
 			if state.focus.phase == .Active_Control {
 				uifw.gui_controller_focus_deactivate(&state.focus)
+				uifw.gui_focus_owner_release(gui, .Active_Control)
 			} else if state.focus.phase == .Child_Region {
 				state.panel_open = false
 				uifw.gui_controller_focus_leave_region(&state.focus)
 				gui.focused = uifw.gui_make_id(gui, fmt.tprintf("simulation_deck_%d", state.focused_index))
+				uifw.gui_focus_owner_release(gui, .Panel)
 			} else {
 				state.panel_open = false
 				uifw.gui_controller_focus_leave_region(&state.focus)
 				gui.focused = uifw.GUI_ID_NONE
+				uifw.gui_focus_owner_release(gui, .Control_Deck)
 			}
 			gui.input.back = false
 		}
@@ -249,10 +252,12 @@ simulation_controller_ui_update_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_
 				section := simulation_controller_ui_section(ui.mode, state.active_index)
 				panel_region := simulation_controller_ui_panel_region_id(gui, section)
 				_ = uifw.gui_controller_focus_enter_region(&state.focus, panel_region, simulation_controller_ui_region_id(gui, "deck"), uifw.GUI_ID_NONE)
+				uifw.gui_focus_owner_claim(gui, .Panel, panel_region)
 				state.pending_panel_focus = true
 			}
 		} else if state.focus.phase == .Child_Region && gui.input.accept && gui.focused != uifw.GUI_ID_NONE {
 			uifw.gui_controller_focus_activate(&state.focus, gui.focused)
+			uifw.gui_focus_owner_claim(gui, .Active_Control, gui.focused)
 			// Let the Accept press flow through so the widget can enter edit mode
 			// and set focus_edit_id, preventing an immediate deactivation revert.
 			// Do not clear accept here: gui_accept_pressed already edge-detects the
@@ -334,7 +339,7 @@ simulation_controller_ui_context_hint :: proc(state: ^Simulation_Controller_Ui_S
 	return ""
 }
 
-simulation_controller_ui_draw_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, gray: ^Gray_Scott_Simulation, particle: ^Particle_Life_Simulation, remaining: ^Remaining_Sim_State, rect: uifw.Rect, worker: ^Product_Context) {
+simulation_controller_ui_draw_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, rect: uifw.Rect, worker: ^Product_Context) {
 	state := simulation_controller_ui_state(ui)
 	section := simulation_controller_ui_section(ui.mode, state.active_index)
 	uifw.gui_push_id(gui, fmt.tprintf("simulation_controller_section_%d", section))
@@ -346,15 +351,8 @@ simulation_controller_ui_draw_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Co
 	defer gui.controller_explicit_activation = previous
 	uifw.gui_spatial_group_begin(gui, "simulation_controller_panel")
 	defer uifw.gui_spatial_group_end(gui)
-	#partial switch ui.mode {
-	case .Gray_Scott:
-		_ = gray_scott_draw_controls(gray, gui, rect, &state.panel_scroll, worker, &ui.color_scheme_editor, section)
-	case .Particle_Life:
-		particle_life_draw_controls(particle, gui, rect, &state.panel_scroll, worker, &ui.color_scheme_editor, section)
-	case .Flow_Field, .Pellets, .Voronoi_CA, .Moire, .Vectors, .Primordial:
-		remaining_sim_draw_controls(remaining, gui, remaining_sim_kind_from_app_mode(ui.mode), rect, &ui.color_scheme_editor, worker, section, &state.panel_scroll)
-	case:
-	}
+	descriptor, ok := feature_descriptor_by_mode(ui.mode)
+	if ok && descriptor.draw_controls != nil do descriptor.draw_controls(ui, gui, rect, worker, section, &state.panel_scroll)
 	if state.pending_panel_focus {
 		fallback := uifw.GUI_ID_NONE
 		restored := uifw.GUI_ID_NONE
@@ -384,7 +382,7 @@ simulation_controller_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context,
 	tabs := simulation_controller_ui_tabs(ui.mode)
 	simulation_controller_ui_clamp(state, len(tabs))
 	deck := simulation_controller_ui_deck_rect(gui, width, height, len(tabs))
-	if ui.simulation_shell.controls_visible && state.panel_open {simulation_controller_ui_draw_panel(ui, gui, gray, particle, remaining, simulation_controller_ui_panel_rect(gui, width, height, deck), worker)}
+	if ui.simulation_shell.controls_visible && state.panel_open {simulation_controller_ui_draw_panel(ui, gui, simulation_controller_ui_panel_rect(gui, width, height, deck), worker)}
 	if ui.simulation_shell.controls_visible {simulation_controller_ui_draw_deck(ui, gui, deck, remaining)}
 	if remaining != nil {
 		kind := remaining_sim_kind_from_app_mode(ui.mode)

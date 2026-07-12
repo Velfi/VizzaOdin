@@ -424,16 +424,17 @@ slime_create_present_pipeline :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = 2, pDynamicStates = raw_data(dynamic_states[:])}
-	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = gpu.present_pipeline.layout, renderPass = vk_ctx.render_pass, subpass = 0}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
+	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, pNext = &rendering, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = gpu.present_pipeline.layout}
 	return vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &gpu.present_pipeline.pipeline) == .SUCCESS
 }
 
 slime_transition_image :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, image: ^Slime_Image, new_layout: vk.ImageLayout) {
 	if image.layout == new_layout {return}
-	src_access: vk.AccessFlags
-	dst_access: vk.AccessFlags
-	src_stage := vk.PipelineStageFlags{.TOP_OF_PIPE}
-	dst_stage := vk.PipelineStageFlags{.COMPUTE_SHADER}
+	src_access: vk.AccessFlags2
+	dst_access: vk.AccessFlags2
+	src_stage := vk.PipelineStageFlags2{.TOP_OF_PIPE}
+	dst_stage := vk.PipelineStageFlags2{.COMPUTE_SHADER}
 	if image.layout == .GENERAL {
 		src_access = {.SHADER_WRITE}
 		src_stage = {.COMPUTE_SHADER}
@@ -454,15 +455,15 @@ slime_transition_image :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer
 		dst_access = {.TRANSFER_WRITE}
 		dst_stage = {.TRANSFER}
 	}
-	barrier := vk.ImageMemoryBarrier{sType = .IMAGE_MEMORY_BARRIER, srcAccessMask = src_access, dstAccessMask = dst_access, oldLayout = image.layout, newLayout = new_layout, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, image = image.handle, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
-	vk.CmdPipelineBarrier(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
+	barrier := vk.ImageMemoryBarrier2{sType = .IMAGE_MEMORY_BARRIER_2, srcAccessMask = src_access, dstAccessMask = dst_access, oldLayout = image.layout, newLayout = new_layout, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, image = image.handle, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
+	engine.vk_cmd_pipeline_barrier2(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 	image.layout = new_layout
 }
 
-slime_compute_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, dst: vk.PipelineStageFlags) {
-	barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
-	vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, dst, {}, 1, &barrier, 0, nil, 0, nil)
+slime_compute_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, dst: vk.PipelineStageFlags2) {
+	barrier := vk.MemoryBarrier2{sType = .MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
+	engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, dst, {}, 1, &barrier, 0, nil, 0, nil)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 }
 
@@ -481,25 +482,25 @@ slime_dispatch_agent_pipeline :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_
 }
 
 slime_gpu_step :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State, dt: f32) {
-	settings := &sim_state.slime
+	settings := sim_state.slime
 	if !slime_gpu_ensure(gpu, vk_ctx, settings) {return}
 	slime_gpu_step_ready(gpu, vk_ctx, cmd, sim_state, dt)
 }
 
 slime_gpu_step_size :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State, dt: f32, width, height: u32) {
-	settings := &sim_state.slime
+	settings := sim_state.slime
 	if !slime_gpu_ensure_size(gpu, vk_ctx, settings, width, height) {return}
 	slime_gpu_step_ready(gpu, vk_ctx, cmd, sim_state, dt)
 }
 
 slime_gpu_step_preview :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State, dt: f32, width, height: u32) {
-	settings := &sim_state.slime
+	settings := sim_state.slime
 	if !slime_gpu_ensure_size_count(gpu, vk_ctx, settings, width, height, SLIME_PREVIEW_AGENT_COUNT) {return}
 	slime_gpu_step_ready(gpu, vk_ctx, cmd, sim_state, dt)
 }
 
 slime_gpu_step_ready :: proc(gpu: ^Slime_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim_state: ^Remaining_Sim_State, dt: f32) {
-	settings := &sim_state.slime
+	settings := sim_state.slime
 	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
 	slime_record_webcam_upload(gpu, vk_ctx, cmd, frame_slot)
 	slime_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)

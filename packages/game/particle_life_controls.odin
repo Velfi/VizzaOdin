@@ -58,7 +58,7 @@ particle_life_draw_force_and_physics_controls :: proc(sim: ^Particle_Life_Simula
 		}
 	}
 	if sim.settings.collision_enabled {
-		uifw.gui_text_block(ctx, fmt.tprintf("Distance follows particle size: %.4f", particle_life_collision_distance(sim.settings)), panel.w - ctx.style.panel_padding * 2, ctx.style.text_muted)
+		uifw.gui_text_block(ctx, fmt.tprintf("Distance follows particle size: %.4f", particle_life_collision_distance(sim.settings^)), panel.w - ctx.style.panel_padding * 2, ctx.style.text_muted)
 		_ = uifw.gui_numeric_u32(ctx, "Iterations", "pl_collision_iterations", &sim.settings.collision_iterations, 1, 8)
 		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Relaxation: %.2f", sim.settings.collision_relaxation), "pl_collision_relaxation", &sim.settings.collision_relaxation, 0.0, 1.0)
 		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Damping: %.2f", sim.settings.collision_damping), "pl_collision_damping", &sim.settings.collision_damping, 0.0, 1.0)
@@ -114,16 +114,6 @@ particle_life_controls_content_height :: proc(sim: ^Particle_Life_Simulation, ct
 	slider_extra := max(uifw.gui_slider_height(ctx) - ctx.style.row_height, 0)
 	slider_count := 22
 	return f32(rows) * ctx.style.row_height + f32(max(rows - 1, 0) + sections + 18) * ctx.style.spacing + f32(sections) * 12 + extra + slider_extra * f32(slider_count)
-}
-
-particle_life_enqueue_preset_command :: proc(worker: ^Product_Context, kind: Ui_To_Render_Command_Kind, name: string) {
-	if worker == nil || worker.ui_to_render == nil {
-		return
-	}
-	cmd: Ui_To_Render_Command
-	cmd.kind = kind
-	write_fixed_string(cmd.preset_name[:], name)
-	_ = engine.queue_try_push(worker.ui_to_render, cmd)
 }
 
 particle_life_small_button :: proc(ctx: ^uifw.Gui_Context, rect: uifw.Rect, label, key: string) -> bool {
@@ -309,24 +299,26 @@ particle_life_draw_force_matrix_editor :: proc(sim: ^Particle_Life_Simulation, c
 	n := int(max(min(sim.settings.species_count, PARTICLE_LIFE_MAX_SPECIES), 1))
 	scheme := color_scheme_effective(&sim.settings.color_scheme, sim.settings.color_scheme_reversed)
 	available := max(ctx.content_width, 220)
-	cell := min(max(ctx.style.row_height * 1.35, f32(58)), available / f32(n + 1))
-	grid_w := cell * f32(n + 1)
+	label_gutter_ratio := f32(0.62)
+	cell := min(max(ctx.style.row_height * 1.35, f32(58)), available / (f32(n) + label_gutter_ratio))
+	label_gutter := cell * label_gutter_ratio
+	grid_w := cell * f32(n) + label_gutter
 	grid_bounds := uifw.gui_next_rect(ctx, height = cell * f32(n + 1))
 	left := grid_bounds.x + max((available - grid_w) * 0.5, 0)
 	header_y := grid_bounds.y
 	text_scale := cell < 58 ? f32(0.56) : f32(0.66)
 	for j in 0 ..< n {
-		r := uifw.Rect{left + cell * f32(j + 1), header_y, cell, cell}
+		r := uifw.Rect{left + label_gutter + cell * f32(j), header_y, cell, cell}
 		uifw.gui_text_aligned_scaled(ctx, r, fmt.tprintf("S%d", j + 1), particle_life_species_label_color(sim, scheme, j, n), .Center, 0.72)
 	}
 	for i in 0 ..< n {
 		row_y := grid_bounds.y + cell * f32(i + 1)
-		uifw.gui_text_aligned_scaled(ctx, {left, row_y, cell, cell}, fmt.tprintf("S%d", i + 1), particle_life_species_label_color(sim, scheme, i, n), .Center, 0.72)
+		uifw.gui_text_aligned_scaled(ctx, {left, row_y, label_gutter, cell}, fmt.tprintf("S%d", i + 1), particle_life_species_label_color(sim, scheme, i, n), .Center, 0.72)
 		for j in 0 ..< n {
 			index := i * PARTICLE_LIFE_MAX_SPECIES + j
 			value := sim.runtime.force_matrix[index]
 			previous_value := value
-			rect := uifw.Rect{left + cell * f32(j + 1), row_y, cell, cell}
+			rect := uifw.Rect{left + label_gutter + cell * f32(j), row_y, cell, cell}
 			id := uifw.gui_make_id(ctx, fmt.tprintf("pl_matrix_%d_%d", i, j))
 			control := uifw.gui_control(ctx, id, rect, true)
 			_ = uifw.gui_update_focus_edit(ctx, id, control.focused)
@@ -435,12 +427,12 @@ particle_life_draw_controls :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.G
 		sim.settings.background_color_mode = Vector_Background_Mode(sim.settings.background_index)
 	}
 	if uifw.gui_toggle(ctx, fmt.tprintf("Enable Particle Traces: %v", sim.settings.trails_enabled), "pl_trails", &sim.settings.trails_enabled) {
-		sim.gpu.trail_initialized = false
+		sim.runtime.trail_reset_requested = true
 	}
 	if sim.settings.trails_enabled {
 		_ = uifw.gui_slider_f32(ctx, fmt.tprintf("Trace Fade: %.2f", sim.settings.trail_fade_amount), "pl_trail_fade", &sim.settings.trail_fade_amount, 0.0, 1.0)
 		if uifw.gui_button(ctx, "Clear Trails", "pl_clear_trails") {
-			sim.gpu.trail_initialized = false
+			sim.runtime.trail_reset_requested = true
 			sim.runtime.trail_camera_valid = false
 		}
 	}
@@ -495,12 +487,14 @@ particle_life_draw_controls :: proc(sim: ^Particle_Life_Simulation, ctx: ^uifw.G
 	if uifw.gui_numeric_u32(ctx, "Particle Count", "pl_count", &sim.settings.particle_count, 1000, PARTICLE_LIFE_MAX_PARTICLE_COUNT, 1000) {
 		particle_life_clear_preserved_particles(sim)
 		sim.runtime.needs_reset = true
-		sim.gpu.ready = false
+		sim.runtime.render_rebuild_requested = true
+		sim.runtime.render_ready = false
 	}
 	if uifw.gui_numeric_u32(ctx, "Species Count", "pl_species", &sim.settings.species_count, 2, PARTICLE_LIFE_MAX_SPECIES) {
 		particle_life_clear_preserved_particles(sim)
 		sim.runtime.needs_reset = true
-		sim.gpu.ready = false
+		sim.runtime.render_rebuild_requested = true
+		sim.runtime.render_ready = false
 	}
 	_ = uifw.gui_toggle(ctx, fmt.tprintf("Wrap Edges: %v", sim.settings.wrap_edges), "pl_wrap", &sim.settings.wrap_edges)
 	if section != PARTICLE_LIFE_SECTION_POPULATION {

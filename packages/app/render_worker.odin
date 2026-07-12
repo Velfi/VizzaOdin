@@ -21,6 +21,7 @@ Render_Worker_State :: struct {
 	theme_preview: bool,
 	text_input_requested: bool,
 	running: bool,
+	shutdown_started: bool,
 }
 
 Render_Worker_Runtime :: struct {
@@ -28,33 +29,82 @@ Render_Worker_Runtime :: struct {
 	vk_ok: bool,
 	render_backend: Render_Backend,
 	video_recorder: Video_Recorder_State,
-	sim: Gray_Scott_Simulation,
-	preview_gray_scott: Gray_Scott_Simulation,
-	particle_life: Particle_Life_Simulation,
-	preview_particle_life: Particle_Life_Simulation,
-	vectors_gpu: Vectors_Gpu_State,
-	preview_vectors_gpu: Vectors_Gpu_State,
-	moire_gpu: Moire_Gpu_State,
-	preview_moire_gpu: Moire_Gpu_State,
-	primordial_gpu: Primordial_Gpu_State,
-	preview_primordial_gpu: Primordial_Gpu_State,
-	pellets_gpu: Pellets_Gpu_State,
-	preview_pellets_gpu: Pellets_Gpu_State,
-	flow_gpu: Flow_Gpu_State,
-	preview_flow_gpu: Flow_Gpu_State,
-	slime_gpu: Slime_Gpu_State,
-	voronoi_gpu: Voronoi_Gpu_State,
-	preview_slime_gpu: Slime_Gpu_State,
-	preview_voronoi_gpu: Voronoi_Gpu_State,
+	feature_instances: Render_Feature_Instance_Set,
 	gui: uifw.Gui_Context,
+	ui_documents: uifw.Ui_Document_Assets,
 	app_ui: App_Ui_State,
 	last_tick: time.Tick,
 	profiler: Frame_Profiler,
 	debug_frame_log_count: u32,
+	device_recovery_pending: bool,
+	last_device_recovery_frame: u64,
 	initialized: bool,
 }
 
+DEVICE_RECOVERY_RETRY_FRAMES :: u64(60)
+
+render_worker_rebind_gpu_runtimes :: proc(runtime: ^Render_Worker_Runtime) {
+	runtime.app_ui.gray_scott.render_runtime = render_worker_gray_scott_gpu(runtime)
+	runtime.app_ui.preview_gray_scott.render_runtime = render_worker_gray_scott_gpu(runtime, true)
+	runtime.app_ui.particle_life.render_runtime = render_worker_particle_life_gpu(runtime)
+	runtime.app_ui.preview_particle_life.render_runtime = render_worker_particle_life_gpu(runtime, true)
+}
+
+render_worker_try_recover_device :: proc(state: ^Render_Worker_State, runtime: ^Render_Worker_Runtime, width, height: i32, frame_index: u64) {
+	if !runtime.device_recovery_pending || runtime.vk_ok do return
+	if runtime.last_device_recovery_frame != 0 && frame_index - runtime.last_device_recovery_frame < DEVICE_RECOVERY_RETRY_FRAMES do return
+	runtime.last_device_recovery_frame = frame_index
+	engine.log_warn("render_worker: attempting Vulkan device recovery")
+	video_recorder_stop(&runtime.video_recorder)
+	render_backend_destroy(&runtime.render_backend, &runtime.vk_ctx)
+	render_feature_instance_set_destroy(&runtime.feature_instances, &runtime.vk_ctx)
+	engine.vk_context_destroy(&runtime.vk_ctx)
+	if !engine.vk_context_init(&runtime.vk_ctx, state.vulkan_window, width, height, state.settings.gpu_memory_ceiling_fraction, state.screenshot != nil) do return
+	if !render_feature_instance_set_init(&runtime.feature_instances, &runtime.vk_ctx) {
+		engine.vk_context_destroy(&runtime.vk_ctx)
+		return
+	}
+	render_worker_rebind_gpu_runtimes(runtime)
+	if !render_backend_init(&runtime.render_backend, &runtime.vk_ctx) {
+		render_feature_instance_set_destroy(&runtime.feature_instances, &runtime.vk_ctx)
+		engine.vk_context_destroy(&runtime.vk_ctx)
+		return
+	}
+	runtime.vk_ok = true
+	runtime.device_recovery_pending = false
+	runtime.last_device_recovery_frame = 0
+	engine.log_info("render_worker: Vulkan device recovery complete adapter=", fixed_string(runtime.vk_ctx.caps.adapter_name[:]))
+	render_worker_publish_preset_result(state, true, "Vulkan adapter recovered")
+}
+
 PROFILE_REPORT_INTERVAL :: u64(120)
+
+render_worker_moire_gpu :: proc(runtime: ^Render_Worker_Runtime, preview := false) -> ^Moire_Gpu_State {
+	if runtime == nil do return nil
+	instance := render_feature_instance_set_get(&runtime.feature_instances, .Moire, preview)
+	result, ok := render_feature_instance_runtime(instance, Moire_Gpu_State)
+	return ok ? result : nil
+}
+
+render_worker_voronoi_gpu :: proc(runtime: ^Render_Worker_Runtime, preview := false) -> ^Voronoi_Gpu_State {
+	if runtime == nil do return nil
+	instance := render_feature_instance_set_get(&runtime.feature_instances, .Voronoi_CA, preview)
+	result, ok := render_feature_instance_runtime(instance, Voronoi_Gpu_State)
+	return ok ? result : nil
+}
+render_worker_feature_gpu :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode, preview: bool, $T: typeid) -> ^T {if runtime == nil do return nil; instance := render_feature_instance_set_get(&runtime.feature_instances, mode, preview); result, ok := render_feature_instance_runtime(instance, T); return ok ? result : nil}
+render_worker_pellets_gpu :: proc(runtime: ^Render_Worker_Runtime, preview := false) -> ^Pellets_Gpu_State {return render_worker_feature_gpu(runtime, .Pellets, preview, Pellets_Gpu_State)}
+render_worker_primordial_gpu :: proc(runtime: ^Render_Worker_Runtime, preview := false) -> ^Primordial_Gpu_State {return render_worker_feature_gpu(runtime, .Primordial, preview, Primordial_Gpu_State)}
+render_worker_flow_gpu :: proc(runtime: ^Render_Worker_Runtime, preview := false) -> ^Flow_Gpu_State {return render_worker_feature_gpu(runtime, .Flow_Field, preview, Flow_Gpu_State)}
+render_worker_slime_gpu :: proc(runtime: ^Render_Worker_Runtime, preview := false) -> ^Slime_Gpu_State {return render_worker_feature_gpu(runtime, .Slime_Mold, preview, Slime_Gpu_State)}
+render_worker_vectors_gpu :: proc(runtime: ^Render_Worker_Runtime, preview := false) -> ^Vectors_Gpu_State {return render_worker_feature_gpu(runtime, .Vectors, preview, Vectors_Gpu_State)}
+render_worker_gray_scott_gpu :: proc(runtime: ^Render_Worker_Runtime, preview := false) -> ^Gray_Scott_Gpu_State {return render_worker_feature_gpu(runtime, .Gray_Scott, preview, Gray_Scott_Gpu_State)}
+render_worker_particle_life_gpu :: proc(runtime: ^Render_Worker_Runtime, preview := false) -> ^Particle_Life_Gpu_State {return render_worker_feature_gpu(runtime, .Particle_Life, preview, Particle_Life_Gpu_State)}
+
+render_worker_feature_instances_destroy :: proc(runtime: ^Render_Worker_Runtime) {
+	if runtime == nil do return
+	render_feature_instance_set_destroy(&runtime.feature_instances, &runtime.vk_ctx)
+}
 
 Frame_Profiler :: struct {
 	frames: u64,
@@ -130,7 +180,16 @@ render_worker_pump :: proc(state: ^Render_Worker_State, runtime: ^Render_Worker_
 }
 
 render_worker_runtime_init :: proc(state: ^Render_Worker_State, runtime: ^Render_Worker_Runtime) -> bool {
+	state.shutdown_started = false
 	runtime^ = {}
+	if !feature_registry_validate() || !render_feature_registry_validate() {
+		engine.log_error("render_worker: feature registry validation failed")
+		return false
+	}
+	if !app_ui_init(&runtime.app_ui, state.settings, state.theme_preview) {
+		engine.log_error("render_worker: failed to allocate product feature instances")
+		return false
+	}
 	width := state.initial_pixel_width
 	height := state.initial_pixel_height
 	if width <= 0 || height <= 0 {
@@ -147,13 +206,26 @@ render_worker_runtime_init :: proc(state: ^Render_Worker_State, runtime: ^Render
 			runtime.vk_ok = false
 		}
 	}
+	if !render_feature_instance_set_init(&runtime.feature_instances, &runtime.vk_ctx) {
+		engine.log_error("render_worker: failed to allocate feature runtime transaction")
+		app_ui_destroy(&runtime.app_ui)
+		return false
+	}
 
-	gray_scott_init(&runtime.sim, width, height)
-	gray_scott_init(&runtime.preview_gray_scott, 256, 144)
-	particle_life_init(&runtime.particle_life, width, height)
-	particle_life_init(&runtime.preview_particle_life, 192, 144)
+	render_worker_rebind_gpu_runtimes(runtime)
+	gray_scott_init(&runtime.app_ui.gray_scott, width, height)
+	gray_scott_init(&runtime.app_ui.preview_gray_scott, 256, 144)
+	particle_life_init(&runtime.app_ui.particle_life, width, height)
+	particle_life_init(&runtime.app_ui.preview_particle_life, 192, 144)
 	uifw.gui_init(&runtime.gui)
-	app_ui_init(&runtime.app_ui, state.settings, state.theme_preview)
+	if document_result := uifw.ui_document_assets_load(&runtime.ui_documents); document_result.error != .None {
+		engine.log_error("render_worker: UI document load failed index=", document_result.index, " error=", document_result.error, " message=", document_result.message)
+		uifw.gui_destroy(&runtime.gui)
+		render_worker_feature_instances_destroy(runtime)
+		app_ui_destroy(&runtime.app_ui)
+		return false
+	}
+	state.documents = &runtime.ui_documents
 
 	ready: Render_To_Ui_Message
 	ready.kind = .Ready
@@ -171,6 +243,7 @@ render_worker_runtime_init :: proc(state: ^Render_Worker_State, runtime: ^Render
 }
 
 render_worker_runtime_shutdown :: proc(state: ^Render_Worker_State, runtime: ^Render_Worker_Runtime) {
+	state.shutdown_started = true
 	if !runtime.initialized {
 		engine.log_info("shutdown: render worker runtime skipped uninitialized")
 		return
@@ -187,62 +260,18 @@ render_worker_runtime_shutdown :: proc(state: ^Render_Worker_State, runtime: ^Re
 	render_backend_destroy(&runtime.render_backend, &runtime.vk_ctx)
 	engine.log_info("shutdown: render backend destroy ms=", shutdown_elapsed_ms(step_start))
 	step_start = time.tick_now()
-	vectors_gpu_destroy(&runtime.vectors_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: vectors destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	vectors_gpu_destroy(&runtime.preview_vectors_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: preview vectors destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	moire_gpu_destroy(&runtime.moire_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: moire destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	moire_gpu_destroy(&runtime.preview_moire_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: preview moire destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	primordial_gpu_destroy(&runtime.primordial_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: primordial destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	primordial_gpu_destroy(&runtime.preview_primordial_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: preview primordial destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	pellets_gpu_destroy(&runtime.pellets_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: pellets destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	pellets_gpu_destroy(&runtime.preview_pellets_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: preview pellets destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	flow_gpu_destroy(&runtime.flow_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: flow destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	flow_gpu_destroy(&runtime.preview_flow_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: preview flow destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	slime_gpu_destroy(&runtime.slime_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: slime destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	voronoi_gpu_destroy(&runtime.voronoi_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: voronoi destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	slime_gpu_destroy(&runtime.preview_slime_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: preview slime destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	voronoi_gpu_destroy(&runtime.preview_voronoi_gpu, &runtime.vk_ctx)
-	engine.log_info("shutdown: preview voronoi destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	gray_scott_destroy(&runtime.sim, &runtime.vk_ctx)
-	engine.log_info("shutdown: gray scott destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	gray_scott_destroy(&runtime.preview_gray_scott, &runtime.vk_ctx)
-	engine.log_info("shutdown: preview gray scott destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	particle_life_destroy(&runtime.particle_life, &runtime.vk_ctx)
-	engine.log_info("shutdown: particle life destroy ms=", shutdown_elapsed_ms(step_start))
-	step_start = time.tick_now()
-	particle_life_destroy(&runtime.preview_particle_life, &runtime.vk_ctx)
-	engine.log_info("shutdown: preview particle life destroy ms=", shutdown_elapsed_ms(step_start))
+	gray_scott_stop_webcam(&runtime.app_ui.gray_scott)
+	gray_scott_stop_webcam(&runtime.app_ui.preview_gray_scott)
+	render_feature_instance_set_destroy(&runtime.feature_instances, &runtime.vk_ctx)
+	engine.log_info("shutdown: feature instances destroy ms=", shutdown_elapsed_ms(step_start))
+	app_ui_destroy(&runtime.app_ui)
 	step_start = time.tick_now()
 	uifw.gui_destroy(&runtime.gui)
 	engine.log_info("shutdown: gui destroy ms=", shutdown_elapsed_ms(step_start))
+	step_start = time.tick_now()
+	state.documents = nil
+	uifw.ui_document_assets_destroy(&runtime.ui_documents)
+	engine.log_info("shutdown: UI documents destroy ms=", shutdown_elapsed_ms(step_start))
 	step_start = time.tick_now()
 	engine.vk_context_destroy(&runtime.vk_ctx)
 	engine.log_info("shutdown: vk context destroy ms=", shutdown_elapsed_ms(step_start))
@@ -261,68 +290,14 @@ render_worker_apply_main_menu_palette_after_navigation :: proc(runtime: ^Render_
 		return
 	}
 	palette_name := main_menu_backdrop_current_palette_name(&runtime.render_backend.main_menu_backdrop)
-	_ = render_main_menu_apply_palette_to_mode(&runtime.app_ui, &runtime.sim.settings, &runtime.particle_life.settings, runtime.app_ui.mode, palette_name)
-}
-
-render_worker_remaining_kind_from_app_mode :: proc(mode: App_Mode, out: ^Remaining_Sim_Kind) -> bool {
-	#partial switch mode {
-	case .Slime_Mold:
-		out^ = .Slime_Mold
-	case .Flow_Field:
-		out^ = .Flow_Field
-	case .Pellets:
-		out^ = .Pellets
-	case .Voronoi_CA:
-		out^ = .Voronoi_CA
-	case .Moire:
-		out^ = .Moire
-	case .Vectors:
-		out^ = .Vectors
-	case .Primordial:
-		out^ = .Primordial
-	case:
-		return false
-	}
-	return true
-}
-
-render_worker_remaining_state_from_app_mode :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode) -> ^Remaining_Sim_State {
-	if runtime == nil {
-		return nil
-	}
-	#partial switch mode {
-	case .Slime_Mold:
-		return &runtime.app_ui.slime_mold
-	case .Flow_Field:
-		return &runtime.app_ui.flow_field
-	case .Pellets:
-		return &runtime.app_ui.pellets
-	case .Voronoi_CA:
-		return &runtime.app_ui.voronoi_ca
-	case .Moire:
-		return &runtime.app_ui.moire
-	case .Vectors:
-		return &runtime.app_ui.vectors
-	case .Primordial:
-		return &runtime.app_ui.primordial
-	case:
-		return nil
-	}
-	return nil
+	_ = render_main_menu_apply_palette_to_mode(&runtime.app_ui, runtime.app_ui.mode, palette_name)
 }
 
 render_worker_mark_mode_dirty :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode) {
-	#partial switch mode {
-	case .Primordial:
-		runtime.primordial_gpu.ready = false
-	case .Pellets:
-		runtime.pellets_gpu.ready = false
-	case .Voronoi_CA:
-		runtime.voronoi_gpu.needs_rebuild = true
-	case .Slime_Mold:
-		runtime.slime_gpu.needs_reset = true
-	case:
-	}
+	if runtime == nil do return
+	descriptor, ok := render_feature_descriptor_by_mode(mode)
+	instance := render_feature_instance_set_get(&runtime.feature_instances, mode)
+	if ok && instance != nil && descriptor.invalidate_runtime != nil do descriptor.invalidate_runtime(instance.runtime)
 }
 
 render_worker_hide_ui :: proc(runtime: ^Render_Worker_Runtime) {
@@ -335,82 +310,34 @@ render_worker_hide_ui :: proc(runtime: ^Render_Worker_Runtime) {
 }
 
 render_worker_apply_builtin_preset :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode, index: int) -> bool {
-	if runtime == nil {
-		return false
-	}
-	#partial switch mode {
-	case .Gray_Scott:
-		gray_scott_apply_builtin_preset(&runtime.sim, index)
-	case .Particle_Life:
-		particle_life_apply_builtin_preset(&runtime.particle_life, index)
-	case:
-		kind: Remaining_Sim_Kind
-		if !render_worker_remaining_kind_from_app_mode(mode, &kind) {
-			return false
-		}
-		remaining := render_worker_remaining_state_from_app_mode(runtime, mode)
-		if remaining == nil {
-			return false
-		}
-		remaining_sim_apply_builtin_preset(remaining, kind, index)
-		render_worker_mark_mode_dirty(runtime, mode)
-	}
+	if runtime == nil do return false
+	descriptor, ok := feature_descriptor_by_mode(mode)
+	instance := feature_instance_set_get(&runtime.app_ui.feature_instances, mode)
+	if !ok || instance == nil || descriptor.apply_builtin_preset == nil || !descriptor.apply_builtin_preset(instance.settings, instance.runtime, index) do return false
+	render_worker_mark_mode_dirty(runtime, mode)
 	return true
 }
 
 render_worker_get_color_scheme_reversed :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode, out: ^bool) -> bool {
-	if runtime == nil || out == nil {
-		return false
-	}
-	#partial switch mode {
-	case .Slime_Mold:
-		out^ = runtime.app_ui.slime_mold.slime.color_scheme_reversed
-	case .Gray_Scott:
-		out^ = runtime.sim.settings.color_scheme_reversed
-	case .Particle_Life:
-		out^ = runtime.particle_life.settings.color_scheme_reversed
-	case .Flow_Field:
-		out^ = runtime.app_ui.flow_field.flow.color_scheme_reversed
-	case .Pellets:
-		out^ = runtime.app_ui.pellets.pellets.color_scheme_reversed
-	case .Voronoi_CA:
-		out^ = runtime.app_ui.voronoi_ca.voronoi.color_scheme_reversed
-	case .Moire:
-		out^ = runtime.app_ui.moire.moire.color_scheme_reversed
-	case .Vectors:
-		out^ = runtime.app_ui.vectors.vectors.color_scheme_reversed
-	case .Primordial:
-		out^ = runtime.app_ui.primordial.primordial.color_scheme_reversed
-	case:
-		return false
-	}
+	_, reversed, ok := render_worker_color_scheme_access(runtime, mode)
+	if !ok || out == nil do return false
+	out^ = reversed^
 	return true
 }
 
 render_worker_set_color_scheme_reversed :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode, reversed: bool) -> bool {
-	#partial switch mode {
-	case .Slime_Mold:
-		runtime.app_ui.slime_mold.slime.color_scheme_reversed = reversed
-	case .Gray_Scott:
-		runtime.sim.settings.color_scheme_reversed = reversed
-	case .Particle_Life:
-		runtime.particle_life.settings.color_scheme_reversed = reversed
-	case .Flow_Field:
-		runtime.app_ui.flow_field.flow.color_scheme_reversed = reversed
-	case .Pellets:
-		runtime.app_ui.pellets.pellets.color_scheme_reversed = reversed
-	case .Voronoi_CA:
-		runtime.app_ui.voronoi_ca.voronoi.color_scheme_reversed = reversed
-	case .Moire:
-		runtime.app_ui.moire.moire.color_scheme_reversed = reversed
-	case .Vectors:
-		runtime.app_ui.vectors.vectors.color_scheme_reversed = reversed
-	case .Primordial:
-		runtime.app_ui.primordial.primordial.color_scheme_reversed = reversed
-	case:
-		return false
-	}
+	_, value, ok := render_worker_color_scheme_access(runtime, mode)
+	if !ok do return false
+	value^ = reversed
 	return true
+}
+
+render_worker_color_scheme_access :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode) -> (^Color_Scheme_Name, ^bool, bool) {
+	if runtime == nil do return nil, nil, false
+	descriptor, found := feature_descriptor_by_mode(mode)
+	instance := feature_instance_set_get(&runtime.app_ui.feature_instances, mode)
+	if !found || instance == nil || descriptor.color_scheme_access == nil do return nil, nil, false
+	return descriptor.color_scheme_access(instance.settings)
 }
 
 render_worker_set_color_scheme :: proc(runtime: ^Render_Worker_Runtime, mode: App_Mode, name: string, reversed: bool, reversed_set: bool) -> bool {
@@ -426,9 +353,9 @@ render_worker_set_color_scheme :: proc(runtime: ^Render_Worker_Runtime, mode: Ap
 			return false
 		}
 	}
-	if !render_main_menu_apply_palette_to_mode(&runtime.app_ui, &runtime.sim.settings, &runtime.particle_life.settings, mode, name) {
-		return false
-	}
+	color_name, _, color_ok := render_worker_color_scheme_access(runtime, mode)
+	if !color_ok do return false
+	color_scheme_name_set(color_name, name)
 	if reversed_set {
 		if !render_worker_set_color_scheme_reversed(runtime, mode, reversed) {
 			return false
@@ -526,7 +453,7 @@ render_worker_publish_stats :: proc(state: ^Render_Worker_State, frame_index: u6
 	msg.text_wrap_calls = text.wrap_calls
 	msg.text_wrap_ms = f32(render_worker_profile_ms(text.wrap_seconds))
 	if gui != nil {
-		msg.gui_command_count = u32(len(gui.commands))
+		msg.gui_command_count = u32(len(gui.paint_commands))
 	}
 	if sim != nil {
 		msg.gray_scott_camera_x = sim.runtime.camera_x
@@ -538,16 +465,16 @@ render_worker_publish_stats :: proc(state: ^Render_Worker_State, frame_index: u6
 		msg.particle_life_camera_x = particle_life.runtime.camera_x
 		msg.particle_life_camera_y = particle_life.runtime.camera_y
 		msg.particle_life_camera_zoom = particle_life.runtime.camera_zoom
-		msg.particle_life_ready = particle_life.gpu.ready
+		msg.particle_life_ready = particle_life.runtime.render_ready
 		msg.particle_life_paused = particle_life.settings.paused
 		msg.particle_life_frame_index = particle_life.runtime.frame_index
-		msg.particle_life_particle_count = particle_life.gpu.uploaded_particle_count
-		msg.particle_life_requested_particle_count = particle_life_target_particle_count(particle_life.settings)
+		msg.particle_life_particle_count = particle_life.runtime.rendered_particle_count
+		msg.particle_life_requested_particle_count = particle_life_target_particle_count(particle_life.settings^)
 		if msg.particle_life_particle_count == 0 {
 			msg.particle_life_particle_count = msg.particle_life_requested_particle_count
 		}
-		msg.particle_life_species_count = particle_life.gpu.uploaded_species_count
-		msg.particle_life_requested_species_count = particle_life_target_species_count(particle_life.settings)
+		msg.particle_life_species_count = particle_life.runtime.rendered_species_count
+		msg.particle_life_requested_species_count = particle_life_target_species_count(particle_life.settings^)
 		if msg.particle_life_species_count == 0 {
 			msg.particle_life_species_count = msg.particle_life_requested_species_count
 		}
@@ -566,6 +493,12 @@ render_worker_publish_stats :: proc(state: ^Render_Worker_State, frame_index: u6
 		msg.gpu_simulation_present_ms = f32(backend.last_gpu_simulation_present_ms)
 		msg.gpu_ui_overlay_ms = f32(backend.last_gpu_ui_overlay_ms)
 		msg.gpu_frame_total_ms = f32(backend.last_gpu_frame_total_ms)
+		msg.gpu_pellets_grid_clear_ms = f32(backend.last_gpu_pellets_grid_clear_ms)
+		msg.gpu_pellets_grid_build_ms = f32(backend.last_gpu_pellets_grid_build_ms)
+		msg.gpu_pellets_grid_scatter_ms = f32(backend.last_gpu_pellets_grid_scatter_ms)
+		msg.gpu_pellets_physics_ms = f32(backend.last_gpu_pellets_physics_ms)
+		msg.gpu_pellets_density_ms = f32(backend.last_gpu_pellets_density_ms)
+		msg.gpu_pellets_particle_draw_ms = f32(backend.last_gpu_pellets_particle_draw_ms)
 		msg.submit_ms = f32(render_worker_profile_ms(backend.last_submit_seconds))
 		msg.screenshot_ms = f32(render_worker_profile_ms(backend.last_screenshot_seconds))
 		msg.screenshot_captured = backend.last_screenshot_captured

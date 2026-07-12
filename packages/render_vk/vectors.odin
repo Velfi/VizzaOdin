@@ -265,8 +265,10 @@ vectors_create_pipeline :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_Cont
 	if vk.CreatePipelineLayout(vk_ctx.device, &layout_info, nil, &gpu.pipeline.layout) != .SUCCESS {
 		return false
 	}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
 	info := vk.GraphicsPipelineCreateInfo {
 		sType = .GRAPHICS_PIPELINE_CREATE_INFO,
+		pNext = &rendering,
 		stageCount = u32(len(stages)),
 		pStages = raw_data(stages[:]),
 		pVertexInputState = &vertex_input,
@@ -277,8 +279,6 @@ vectors_create_pipeline :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_Cont
 		pColorBlendState = &blend,
 		pDynamicState = &dynamic_state,
 		layout = gpu.pipeline.layout,
-		renderPass = vk_ctx.render_pass,
-		subpass = 0,
 	}
 	result := vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &gpu.pipeline.pipeline)
 	if result != .SUCCESS {

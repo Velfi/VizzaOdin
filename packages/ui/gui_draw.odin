@@ -433,6 +433,20 @@ gui_numeric_tooltip_for_id :: proc(ctx: ^Gui_Context, id: Gui_Id, text: string, 
 	if ctx.tooltip_visible && ctx.tooltip_text == text {
 		ctx.tooltip_numeric_controls = true
 		ctx.tooltip_numeric_text_editing = text_editing
+		item, ok := gui_find_spatial_item(ctx, id)
+		if ok && item.visible {
+			gap := ctx.style.spacing_1
+			rect := ctx.tooltip_rect
+			// Numeric help is a persistent control legend, not a small hover label.
+			// Anchor it to the field so pointer movement cannot leave it covering
+			// the field or unrelated rows. Prefer above, then below when needed.
+			rect.x = item.bounds.x
+			rect.y = item.bounds.y - rect.h - gap
+			if rect.y < gap {
+				rect.y = item.bounds.y + item.bounds.h + gap
+			}
+			ctx.tooltip_rect = gui_overlay_nudge_into_view(ctx, rect)
+		}
 	}
 }
 

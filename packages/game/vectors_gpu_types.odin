@@ -1,10 +1,8 @@
 package game
 
-import engine "../engine"
 import uifw "../ui"
 
 import "core:math"
-import vk "vendor:vulkan"
 
 VECTORS_VERTEX_SHADER_SOURCE :: "assets/shaders/simulations/vectors/shaders/line_vertex.slang"
 VECTORS_FRAGMENT_SHADER_SOURCE :: "assets/shaders/simulations/vectors/shaders/line_fragment.slang"
@@ -48,54 +46,6 @@ Vectors_Camera_Uniform :: struct #align(16) {
 	line_width: f32,
 	display_mode: u32,
 	_padding: [3]u32,
-}
-
-Vectors_Gpu_State :: struct {
-	vertex_shader: engine.Vk_Shader_Module,
-	fragment_shader: engine.Vk_Shader_Module,
-	field_shader: engine.Vk_Shader_Module,
-	pipeline: engine.Vk_Graphics_Pipeline,
-	field_pipeline: engine.Vk_Compute_Pipeline,
-	field_descriptor_set_layout: vk.DescriptorSetLayout,
-	field_descriptor_pool: vk.DescriptorPool,
-	field_descriptor_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	field_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	field_stamp_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	field_image: Flow_Image,
-	field_sampler: vk.Sampler,
-	field_image_dirty: bool,
-	webcam_images: [engine.MAX_FRAMES_IN_FLIGHT]Flow_Image,
-	webcam_staging_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	webcam_upload_pending: [engine.MAX_FRAMES_IN_FLIGHT]bool,
-	webcam_image_ready: [engine.MAX_FRAMES_IN_FLIGHT]bool,
-	webcam_descriptor_bound: [engine.MAX_FRAMES_IN_FLIGHT]bool,
-	webcam_live: bool,
-	webcam_width: u32,
-	webcam_height: u32,
-	field_compute_active: bool,
-	descriptor_set_layout: vk.DescriptorSetLayout,
-	descriptor_pool: vk.DescriptorPool,
-	descriptor_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	vertex_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	// Legacy expanded-geometry resources retained in the state layout while the
-	// instanced renderer is rolled out; no buffers are allocated for them.
-	index_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	camera_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	lut_buffer: engine.Vk_Buffer,
-	index_count: u32,
-	instance_count: u32,
-	index_cache_counts: [engine.MAX_FRAMES_IN_FLIGHT]u32,
-	index_cache_modes: [engine.MAX_FRAMES_IN_FLIGHT]Vector_Display_Mode,
-	index_cache_valid: [engine.MAX_FRAMES_IN_FLIGHT]bool,
-	active_frame_slot: u32,
-	image_data: []u8,
-	image_loaded: bool,
-	image_path: [MAX_FILE_PATH]u8,
-	image_fit_uploaded: Vector_Image_Fit_Mode,
-	image_mirror_horizontal_uploaded: bool,
-	image_mirror_vertical_uploaded: bool,
-	image_invert_tone_uploaded: bool,
-	ready: bool,
 }
 
 vectors_sample_image_source :: proc(source: [^]u8, width, height, pitch, x, y: int) -> u8 {

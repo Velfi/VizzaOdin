@@ -7,9 +7,10 @@ import "core:strings"
 settings_write_gray_scott_toml :: proc(settings: Gray_Scott_Settings, out: []u8) -> string {
 	color_scheme_name := settings.color_scheme
 	nutrient_image_path := settings.nutrient_image_path
-	return fmt.bprintf(
-		out,
-		"[gray_scott]\nfeed = %.6f\nkill = %.6f\ndiffusion_a = %.6f\ndiffusion_b = %.6f\ntimestep = %.6f\nsimulation_speed = %.6f\nmax_timestep = %.6f\nstability_factor = %.6f\nenable_adaptive_timestep = %v\nmask_pattern = \"%s\"\nmask_target = %d\nmask_strength = %.6f\nmask_mirror_horizontal = %v\nmask_mirror_vertical = %v\nmask_invert_tone = %v\nnutrient_image_fit_mode = \"%s\"\nnutrient_image_path = \"%s\"\ncursor_size = %.6f\ncursor_strength = %.6f\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nview_mode = %d\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\npaused = %v\n",
+	base_buf: [2048]u8
+	base := fmt.bprintf(
+		base_buf[:],
+		"[gray_scott]\nfeed = %.6f\nkill = %.6f\ndiffusion_a = %.6f\ndiffusion_b = %.6f\ntimestep = %.6f\nsimulation_speed = %.6f\nmax_timestep = %.6f\nstability_factor = %.6f\nenable_adaptive_timestep = %v\nmask_pattern = \"%s\"\nmask_target = %d\nmask_strength = %.6f\nmask_mirror_horizontal = %v\nmask_mirror_vertical = %v\nmask_invert_tone = %v\nnutrient_image_fit_mode = \"%s\"\nnutrient_image_path = \"%s\"\ncursor_size = %.6f\ncursor_strength = %.6f\ncolor_scheme = \"%s\"\ncolor_scheme_reversed = %v\nview_mode = %d\nblur_enabled = %v\nblur_radius = %.6f\nblur_sigma = %.6f\npaused = %v\nseed_density = %.6f\nseed_amplitude = %.6f\n",
 		settings.feed,
 		settings.kill,
 		settings.diffusion_a,
@@ -36,7 +37,12 @@ settings_write_gray_scott_toml :: proc(settings: Gray_Scott_Settings, out: []u8)
 		settings.blur_radius,
 		settings.blur_sigma,
 		settings.paused,
+		settings.seed_density,
+		settings.seed_amplitude,
 	)
+	noise_buf: [2048]u8
+	noise := settings_write_noise_toml("gray_scott.seed_noise", settings.seed_noise, noise_buf[:])
+	return fmt.bprintf(out, "%s\n%s", base, noise)
 }
 
 settings_load_gray_scott :: proc(path: string, defaults: Gray_Scott_Settings) -> (Gray_Scott_Settings, bool) {
@@ -147,12 +153,15 @@ settings_load_gray_scott :: proc(path: string, defaults: Gray_Scott_Settings) ->
 	if v, ok := toml_bool(result.toptab, "gray_scott.paused"); ok {
 		settings.paused = v
 	}
+	if v, ok := toml_f64(result.toptab, "gray_scott.seed_density"); ok {settings.seed_density = f32(v)}
+	if v, ok := toml_f64(result.toptab, "gray_scott.seed_amplitude"); ok {settings.seed_amplitude = f32(v)}
+	settings_load_noise(result, "gray_scott.seed_noise", &settings.seed_noise)
 
 	return settings, true
 }
 
 settings_save_gray_scott :: proc(path: string, settings: Gray_Scott_Settings) -> bool {
-	buf: [1024]u8
+	buf: [4096]u8
 	text := settings_write_gray_scott_toml(settings, buf[:])
 	return os.write_entire_file(path, text) == nil
 }

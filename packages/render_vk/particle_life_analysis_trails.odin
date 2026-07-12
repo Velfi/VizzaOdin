@@ -32,28 +32,28 @@ particle_life_analysis_frame_due :: proc(sim: ^Particle_Life_Simulation) -> bool
 }
 
 particle_life_analysis_gpu_ready :: proc(sim: ^Particle_Life_Simulation) -> bool {
-	return sim.gpu.analysis_sets[sim.gpu.active_frame_slot] != vk.DescriptorSet(0) &&
-		sim.gpu.analysis_clear_pipeline.pipeline != vk.Pipeline(0) &&
-		sim.gpu.analysis_blob_count_buffer.mapped != nil &&
-		sim.gpu.analysis_blob_summaries_buffer.mapped != nil
+	return particle_life_gpu(sim).analysis_sets[particle_life_gpu(sim).active_frame_slot] != vk.DescriptorSet(0) &&
+		particle_life_gpu(sim).analysis_clear_pipeline.pipeline != vk.Pipeline(0) &&
+		particle_life_gpu(sim).analysis_blob_count_buffer.mapped != nil &&
+		particle_life_gpu(sim).analysis_blob_summaries_buffer.mapped != nil
 }
 
-particle_life_analysis_barrier :: proc(sim: ^Particle_Life_Simulation, cmd: vk.CommandBuffer, dst_stage: vk.PipelineStageFlags, dst_access: vk.AccessFlags) {
-	barriers := [7]vk.BufferMemoryBarrier {
-		{sType = .BUFFER_MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = sim.gpu.analysis_cells_buffer.handle, offset = 0, size = sim.gpu.analysis_cells_buffer.size},
-		{sType = .BUFFER_MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = sim.gpu.analysis_coherence_buffer.handle, offset = 0, size = sim.gpu.analysis_coherence_buffer.size},
-		{sType = .BUFFER_MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = sim.gpu.analysis_labels_buffer.handle, offset = 0, size = sim.gpu.analysis_labels_buffer.size},
-		{sType = .BUFFER_MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = sim.gpu.analysis_tile_components_buffer.handle, offset = 0, size = sim.gpu.analysis_tile_components_buffer.size},
-		{sType = .BUFFER_MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = sim.gpu.analysis_parent_buffer.handle, offset = 0, size = sim.gpu.analysis_parent_buffer.size},
-		{sType = .BUFFER_MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = sim.gpu.analysis_blob_summaries_buffer.handle, offset = 0, size = sim.gpu.analysis_blob_summaries_buffer.size},
-		{sType = .BUFFER_MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = sim.gpu.analysis_blob_count_buffer.handle, offset = 0, size = sim.gpu.analysis_blob_count_buffer.size},
+particle_life_analysis_barrier :: proc(sim: ^Particle_Life_Simulation, cmd: vk.CommandBuffer, dst_stage: vk.PipelineStageFlags2, dst_access: vk.AccessFlags2) {
+	barriers := [7]vk.BufferMemoryBarrier2 {
+		{sType = .BUFFER_MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = particle_life_gpu(sim).analysis_cells_buffer.handle, offset = 0, size = particle_life_gpu(sim).analysis_cells_buffer.size},
+		{sType = .BUFFER_MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = particle_life_gpu(sim).analysis_coherence_buffer.handle, offset = 0, size = particle_life_gpu(sim).analysis_coherence_buffer.size},
+		{sType = .BUFFER_MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = particle_life_gpu(sim).analysis_labels_buffer.handle, offset = 0, size = particle_life_gpu(sim).analysis_labels_buffer.size},
+		{sType = .BUFFER_MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = particle_life_gpu(sim).analysis_tile_components_buffer.handle, offset = 0, size = particle_life_gpu(sim).analysis_tile_components_buffer.size},
+		{sType = .BUFFER_MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = particle_life_gpu(sim).analysis_parent_buffer.handle, offset = 0, size = particle_life_gpu(sim).analysis_parent_buffer.size},
+		{sType = .BUFFER_MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = particle_life_gpu(sim).analysis_blob_summaries_buffer.handle, offset = 0, size = particle_life_gpu(sim).analysis_blob_summaries_buffer.size},
+		{sType = .BUFFER_MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = dst_access, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, buffer = particle_life_gpu(sim).analysis_blob_count_buffer.handle, offset = 0, size = particle_life_gpu(sim).analysis_blob_count_buffer.size},
 	}
-	vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, dst_stage, {}, 0, nil, u32(len(barriers)), raw_data(barriers[:]), 0, nil)
+	engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, dst_stage, {}, 0, nil, u32(len(barriers)), raw_data(barriers[:]), 0, nil)
 }
 
 particle_life_dispatch_analysis_pipeline :: proc(sim: ^Particle_Life_Simulation, cmd: vk.CommandBuffer, pipeline: ^engine.Vk_Compute_Pipeline, groups_x, groups_y: u32) {
 	vk.CmdBindPipeline(cmd, .COMPUTE, pipeline.pipeline)
-	analysis_set := sim.gpu.analysis_sets[sim.gpu.active_frame_slot]
+	analysis_set := particle_life_gpu(sim).analysis_sets[particle_life_gpu(sim).active_frame_slot]
 	vk.CmdBindDescriptorSets(cmd, .COMPUTE, pipeline.layout, 0, 1, &analysis_set, 0, nil)
 	vk.CmdDispatch(cmd, max(groups_x, 1), max(groups_y, 1), 1)
 	particle_life_analysis_barrier(sim, cmd, {.COMPUTE_SHADER}, {.SHADER_READ, .SHADER_WRITE})
@@ -64,18 +64,18 @@ particle_life_dispatch_gpu_blob_analysis :: proc(sim: ^Particle_Life_Simulation,
 		return
 	}
 	particle_life_write_analysis_uniforms(sim)
-	axis := max(sim.gpu.analysis_grid_axis, 1)
+	axis := max(particle_life_gpu(sim).analysis_grid_axis, 1)
 	cells := axis * axis
-	particle_groups := u32((sim.gpu.uploaded_particle_count + PARTICLE_LIFE_WORKGROUP_SIZE - 1) / PARTICLE_LIFE_WORKGROUP_SIZE)
+	particle_groups := u32((particle_life_gpu(sim).uploaded_particle_count + PARTICLE_LIFE_WORKGROUP_SIZE - 1) / PARTICLE_LIFE_WORKGROUP_SIZE)
 	cell_groups := u32((cells + PARTICLE_LIFE_WORKGROUP_SIZE - 1) / PARTICLE_LIFE_WORKGROUP_SIZE)
-	tile_count := max(sim.gpu.analysis_tile_count, 1)
+	tile_count := max(particle_life_gpu(sim).analysis_tile_count, 1)
 
-	particle_life_dispatch_analysis_pipeline(sim, cmd, &sim.gpu.analysis_clear_pipeline, cell_groups, 1)
-	particle_life_dispatch_analysis_pipeline(sim, cmd, &sim.gpu.analysis_scatter_pipeline, particle_groups, 1)
-	particle_life_dispatch_analysis_pipeline(sim, cmd, &sim.gpu.analysis_coherence_pipeline, cell_groups, 1)
-	particle_life_dispatch_analysis_pipeline(sim, cmd, &sim.gpu.analysis_tile_label_pipeline, tile_count, tile_count)
-	particle_life_dispatch_analysis_pipeline(sim, cmd, &sim.gpu.analysis_tile_merge_pipeline, cell_groups, 1)
-	particle_life_dispatch_analysis_pipeline(sim, cmd, &sim.gpu.analysis_summarize_pipeline, cell_groups, 1)
+	particle_life_dispatch_analysis_pipeline(sim, cmd, &particle_life_gpu(sim).analysis_clear_pipeline, cell_groups, 1)
+	particle_life_dispatch_analysis_pipeline(sim, cmd, &particle_life_gpu(sim).analysis_scatter_pipeline, particle_groups, 1)
+	particle_life_dispatch_analysis_pipeline(sim, cmd, &particle_life_gpu(sim).analysis_coherence_pipeline, cell_groups, 1)
+	particle_life_dispatch_analysis_pipeline(sim, cmd, &particle_life_gpu(sim).analysis_tile_label_pipeline, tile_count, tile_count)
+	particle_life_dispatch_analysis_pipeline(sim, cmd, &particle_life_gpu(sim).analysis_tile_merge_pipeline, cell_groups, 1)
+	particle_life_dispatch_analysis_pipeline(sim, cmd, &particle_life_gpu(sim).analysis_summarize_pipeline, cell_groups, 1)
 	particle_life_analysis_barrier(sim, cmd, {.HOST}, {.HOST_READ})
 	sim.runtime.last_analysis_frame = sim.runtime.frame_index
 }
@@ -84,12 +84,12 @@ particle_life_read_gpu_blob_analysis :: proc(sim: ^Particle_Life_Simulation) {
 	if !particle_life_analysis_frame_due(sim) || sim.runtime.last_analysis_frame == 0 || sim.runtime.last_analysis_read_frame == sim.runtime.last_analysis_frame || !particle_life_analysis_gpu_ready(sim) {
 		return
 	}
-	count_ptr := cast(^u32)sim.gpu.analysis_blob_count_buffer.mapped
-	accumulators := cast([^]Particle_Life_Blob_Accumulator)sim.gpu.analysis_blob_summaries_buffer.mapped
+	count_ptr := cast(^u32)particle_life_gpu(sim).analysis_blob_count_buffer.mapped
+	accumulators := cast([^]Particle_Life_Blob_Accumulator)particle_life_gpu(sim).analysis_blob_summaries_buffer.mapped
 	raw_count := min(count_ptr^, PARTICLE_LIFE_ANALYSIS_MAX_BLOBS)
 	summaries: [PARTICLE_LIFE_ANALYSIS_MAX_BLOBS]Particle_Life_Blob_Summary
 	out_count: u32
-	axis := max(sim.gpu.analysis_grid_axis, 1)
+	axis := max(particle_life_gpu(sim).analysis_grid_axis, 1)
 	world_size := particle_life_world_size(sim)
 	cell_w := world_size[0] / f32(axis)
 	cell_h := world_size[1] / f32(axis)
@@ -128,35 +128,69 @@ particle_life_read_gpu_blob_analysis :: proc(sim: ^Particle_Life_Simulation) {
 	sim.runtime.last_analysis_read_frame = sim.runtime.last_analysis_frame
 }
 
+particle_life_publish_runtime_status :: proc(sim: ^Particle_Life_Simulation) {
+	if sim == nil || particle_life_gpu(sim) == nil do return
+	sim.runtime.rendered_particle_count = particle_life_gpu(sim).uploaded_particle_count
+	sim.runtime.rendered_species_count = particle_life_gpu(sim).uploaded_species_count
+	sim.runtime.grid_width = particle_life_gpu(sim).grid_width
+	sim.runtime.grid_height = particle_life_gpu(sim).grid_height
+	sim.runtime.neighbor_radius_cells = particle_life_gpu(sim).neighbor_radius_cells
+	sim.runtime.collision_grid_width = particle_life_gpu(sim).collision_grid_width
+	sim.runtime.collision_grid_height = particle_life_gpu(sim).collision_grid_height
+}
+
+particle_life_consume_product_requests :: proc(sim: ^Particle_Life_Simulation) {
+	if sim == nil || particle_life_gpu(sim) == nil do return
+	if sim.runtime.trail_reset_requested {
+		particle_life_gpu(sim).trail_initialized = false
+		sim.runtime.trail_reset_requested = false
+	}
+	if !sim.runtime.render_rebuild_requested do return
+	if sim.runtime.preserve_particles_requested && particle_life_gpu(sim).particle_buffer.mapped != nil && particle_life_gpu(sim).uploaded_particle_count > 0 && particle_life_gpu(sim).uploaded_particle_count == particle_life_target_particle_count(sim.settings^) && particle_life_gpu(sim).uploaded_species_count == particle_life_target_species_count(sim.settings^) {
+		particle_life_clear_preserved_particles(sim)
+		count := int(particle_life_gpu(sim).uploaded_particle_count)
+		sim.runtime.preserved_particles = make([]Particle_Life_Particle, count)
+		particles := (cast([^]Particle_Life_Particle)particle_life_gpu(sim).particle_buffer.mapped)[:count]
+		copy(sim.runtime.preserved_particles, particles)
+	}
+	sim.runtime.preserve_particles_requested = false
+	sim.runtime.render_rebuild_requested = false
+	particle_life_gpu(sim).ready = false
+}
+
 particle_life_gpu_step :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, dt: f32) {
+	particle_life_consume_product_requests(sim)
 	if sim.runtime.force_matrix_dirty {
 		particle_life_upload_force_matrix(sim)
 	}
 	if !particle_life_ensure_gpu_runtime(sim, vk_ctx) {
+		particle_life_publish_runtime_status(sim)
 		return
 	}
-	sim.gpu.active_frame_slot = int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
-	particle_life_update_descriptors_for_slot(sim, vk_ctx, sim.gpu.active_frame_slot)
-	target_analysis_axis := particle_life_target_analysis_grid_axis(sim.settings)
+	particle_life_publish_runtime_status(sim)
+	particle_life_gpu(sim).active_frame_slot = int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
+	particle_life_update_descriptors_for_slot(sim, vk_ctx, particle_life_gpu(sim).active_frame_slot)
+	target_analysis_axis := particle_life_target_analysis_grid_axis(sim.settings^)
 	world_size := particle_life_world_size(sim)
-	target_grid_width, target_grid_height := particle_life_target_grid_dimensions(sim.settings, world_size)
-	target_collision_width, target_collision_height := particle_life_target_collision_grid_dimensions(sim.settings, world_size)
-	grid_capacity_sufficient := target_grid_width * target_grid_height <= sim.gpu.grid_cell_capacity &&
-		target_collision_width * target_collision_height <= sim.gpu.grid_cell_capacity
+	target_grid_width, target_grid_height := particle_life_target_grid_dimensions(sim.settings^, world_size)
+	target_collision_width, target_collision_height := particle_life_target_collision_grid_dimensions(sim.settings^, world_size)
+	grid_capacity_sufficient := target_grid_width * target_grid_height <= particle_life_gpu(sim).grid_cell_capacity &&
+		target_collision_width * target_collision_height <= particle_life_gpu(sim).grid_cell_capacity
 	if grid_capacity_sufficient {
-		sim.gpu.grid_width = target_grid_width
-		sim.gpu.grid_height = target_grid_height
-		sim.gpu.neighbor_radius_cells = particle_life_target_neighbor_radius_cells(sim.settings, target_grid_width, target_grid_height, world_size)
-		sim.gpu.collision_grid_width = target_collision_width
-		sim.gpu.collision_grid_height = target_collision_height
+		particle_life_gpu(sim).grid_width = target_grid_width
+		particle_life_gpu(sim).grid_height = target_grid_height
+		particle_life_gpu(sim).neighbor_radius_cells = particle_life_target_neighbor_radius_cells(sim.settings^, target_grid_width, target_grid_height, world_size)
+		particle_life_gpu(sim).collision_grid_width = target_collision_width
+		particle_life_gpu(sim).collision_grid_height = target_collision_height
 		particle_life_write_grid_uniforms(sim)
 		particle_life_write_collision_grid_uniforms(sim)
+		particle_life_publish_runtime_status(sim)
 	}
 	grid_satisfies_target := particle_life_current_grid_satisfies_settings(sim)
-	if sim.gpu.uploaded_particle_count != particle_life_target_particle_count(sim.settings) || sim.gpu.uploaded_species_count != particle_life_target_species_count(sim.settings) || !grid_satisfies_target || sim.gpu.analysis_grid_axis != target_analysis_axis {
-		if sim.gpu.uploaded_particle_count != particle_life_target_particle_count(sim.settings) || sim.gpu.uploaded_species_count != particle_life_target_species_count(sim.settings) {
+	if particle_life_gpu(sim).uploaded_particle_count != particle_life_target_particle_count(sim.settings^) || particle_life_gpu(sim).uploaded_species_count != particle_life_target_species_count(sim.settings^) || !grid_satisfies_target || particle_life_gpu(sim).analysis_grid_axis != target_analysis_axis {
+		if particle_life_gpu(sim).uploaded_particle_count != particle_life_target_particle_count(sim.settings^) || particle_life_gpu(sim).uploaded_species_count != particle_life_target_species_count(sim.settings^) {
 			particle_life_clear_preserved_particles(sim)
-			sim.gpu.ready = false
+			particle_life_gpu(sim).ready = false
 		} else {
 			particle_life_request_resource_rebuild(sim)
 		}
@@ -198,12 +232,12 @@ particle_life_gpu_step :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.V
 particle_life_draw_particles :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, pipeline: ^engine.Vk_Graphics_Pipeline) {
 	vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	frame_slot := sim.gpu.active_frame_slot
-	sets := [3]vk.DescriptorSet{sim.gpu.sim_sets[frame_slot], sim.gpu.color_sets[frame_slot], sim.gpu.view_sets[frame_slot]}
+	frame_slot := particle_life_gpu(sim).active_frame_slot
+	sets := [3]vk.DescriptorSet{particle_life_gpu(sim).sim_sets[frame_slot], particle_life_gpu(sim).color_sets[frame_slot], particle_life_gpu(sim).view_sets[frame_slot]}
 	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout, 0, u32(len(sets)), raw_data(sets[:]), 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	particle_life_push_viewport_uniform_mode(vk_ctx, cmd, pipeline)
-	vk.CmdDraw(cmd, 6, sim.gpu.uploaded_particle_count, 0, 0)
+	vk.CmdDraw(cmd, 6, particle_life_gpu(sim).uploaded_particle_count, 0, 0)
 	engine.vk_cmd_count_draw(vk_ctx)
 }
 
@@ -212,12 +246,12 @@ particle_life_draw_infinite_tiles :: proc(sim: ^Particle_Life_Simulation, vk_ctx
 	if sim.runtime.camera_zoom >= 1.0 {
 		vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		frame_slot := sim.gpu.active_frame_slot
-		sets := [3]vk.DescriptorSet{sim.gpu.sim_sets[frame_slot], sim.gpu.color_sets[frame_slot], sim.gpu.view_sets[frame_slot]}
+		frame_slot := particle_life_gpu(sim).active_frame_slot
+		sets := [3]vk.DescriptorSet{particle_life_gpu(sim).sim_sets[frame_slot], particle_life_gpu(sim).color_sets[frame_slot], particle_life_gpu(sim).view_sets[frame_slot]}
 		vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout, 0, u32(len(sets)), raw_data(sets[:]), 0, nil)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		particle_life_push_wrapped_viewport_mode(vk_ctx, cmd, pipeline)
-		vk.CmdDraw(cmd, 6, sim.gpu.uploaded_particle_count, 0, 0)
+		vk.CmdDraw(cmd, 6, particle_life_gpu(sim).uploaded_particle_count, 0, 0)
 		engine.vk_cmd_count_draw(vk_ctx)
 		particle_life_push_viewport_uniform_mode(vk_ctx, cmd, pipeline)
 		return
@@ -228,15 +262,15 @@ particle_life_draw_infinite_tiles :: proc(sim: ^Particle_Life_Simulation, vk_ctx
 	tile_range := particle_life_tile_range_for_bounds(bounds, sim.runtime.camera_x, sim.runtime.camera_y, tile_count / 2, tile_size)
 	vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	frame_slot := sim.gpu.active_frame_slot
-	sets := [3]vk.DescriptorSet{sim.gpu.sim_sets[frame_slot], sim.gpu.color_sets[frame_slot], sim.gpu.view_sets[frame_slot]}
+	frame_slot := particle_life_gpu(sim).active_frame_slot
+	sets := [3]vk.DescriptorSet{particle_life_gpu(sim).sim_sets[frame_slot], particle_life_gpu(sim).color_sets[frame_slot], particle_life_gpu(sim).view_sets[frame_slot]}
 	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout, 0, u32(len(sets)), raw_data(sets[:]), 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	for tile_y := tile_range.min_y; tile_y <= tile_range.max_y; tile_y += 1 {
 		for tile_x := tile_range.min_x; tile_x <= tile_range.max_x; tile_x += 1 {
 			tile_bounds := particle_life_tile_bounds_for_offset(bounds, tile_x, tile_y, tile_size)
 			particle_life_push_viewport_bounds(vk_ctx, cmd, pipeline, tile_bounds)
-			vk.CmdDraw(cmd, 6, sim.gpu.uploaded_particle_count, 0, 0)
+			vk.CmdDraw(cmd, 6, particle_life_gpu(sim).uploaded_particle_count, 0, 0)
 			engine.vk_cmd_count_draw(vk_ctx)
 		}
 	}
@@ -244,15 +278,15 @@ particle_life_draw_infinite_tiles :: proc(sim: ^Particle_Life_Simulation, vk_ctx
 }
 
 particle_life_transition_trail_image :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, index: int, new_layout: vk.ImageLayout) {
-	image := &sim.gpu.trail_images[index]
+	image := &particle_life_gpu(sim).trail_images[index]
 	if image.handle == vk.Image(0) || image.layout == new_layout {
 		return
 	}
 	old_layout := image.layout
-	src_access: vk.AccessFlags
-	dst_access: vk.AccessFlags
-	src_stage := vk.PipelineStageFlags{.TOP_OF_PIPE}
-	dst_stage := vk.PipelineStageFlags{.TOP_OF_PIPE}
+	src_access: vk.AccessFlags2
+	dst_access: vk.AccessFlags2
+	src_stage := vk.PipelineStageFlags2{.TOP_OF_PIPE}
+	dst_stage := vk.PipelineStageFlags2{.TOP_OF_PIPE}
 	#partial switch old_layout {
 	case .UNDEFINED:
 		#partial switch new_layout {
@@ -306,8 +340,8 @@ particle_life_transition_trail_image :: proc(sim: ^Particle_Life_Simulation, vk_
 			dst_stage = {.FRAGMENT_SHADER}
 		}
 	}
-	barrier := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	barrier := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = src_access,
 		dstAccessMask = dst_access,
 		oldLayout = old_layout,
@@ -323,16 +357,16 @@ particle_life_transition_trail_image :: proc(sim: ^Particle_Life_Simulation, vk_
 			layerCount = 1,
 		},
 	}
-	vk.CmdPipelineBarrier(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
+	engine.vk_cmd_pipeline_barrier2(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 	image.layout = new_layout
 }
 
 particle_life_update_fade_descriptor :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, frame_slot, set_index, read_index: int) {
-	params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.fade_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Fade_Params))}
-	image_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = sim.gpu.trail_images[read_index].view}
-	sampler_info := vk.DescriptorImageInfo{sampler = sim.gpu.trail_sampler}
-	set := sim.gpu.fade_sets[frame_slot][set_index]
+	params_info := vk.DescriptorBufferInfo{buffer = particle_life_gpu(sim).fade_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Fade_Params))}
+	image_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = particle_life_gpu(sim).trail_images[read_index].view}
+	sampler_info := vk.DescriptorImageInfo{sampler = particle_life_gpu(sim).trail_sampler}
+	set := particle_life_gpu(sim).fade_sets[frame_slot][set_index]
 	writes := [3]vk.WriteDescriptorSet {
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &params_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 1, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
@@ -342,10 +376,10 @@ particle_life_update_fade_descriptor :: proc(sim: ^Particle_Life_Simulation, vk_
 }
 
 particle_life_update_background_descriptor :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
-	params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.background_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Background_Params))}
+	params_info := vk.DescriptorBufferInfo{buffer = particle_life_gpu(sim).background_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Background_Params))}
 	write := vk.WriteDescriptorSet {
 		sType = .WRITE_DESCRIPTOR_SET,
-		dstSet = sim.gpu.background_sets[frame_slot],
+		dstSet = particle_life_gpu(sim).background_sets[frame_slot],
 		dstBinding = 0,
 		descriptorType = .UNIFORM_BUFFER,
 		descriptorCount = 1,
@@ -355,12 +389,12 @@ particle_life_update_background_descriptor :: proc(sim: ^Particle_Life_Simulatio
 }
 
 particle_life_update_post_descriptors :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
-	params_info := vk.DescriptorBufferInfo{buffer = sim.gpu.post_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Post_Params))}
-	camera_info := vk.DescriptorBufferInfo{buffer = sim.gpu.camera_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Camera))}
-	sampler_info := vk.DescriptorImageInfo{sampler = sim.gpu.trail_sampler}
-	for i in 0 ..< len(sim.gpu.trail_images) {
-		image_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = sim.gpu.trail_images[i].view}
-		set := sim.gpu.post_sets[frame_slot][i]
+	params_info := vk.DescriptorBufferInfo{buffer = particle_life_gpu(sim).post_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Post_Params))}
+	camera_info := vk.DescriptorBufferInfo{buffer = particle_life_gpu(sim).camera_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Particle_Life_Camera))}
+	sampler_info := vk.DescriptorImageInfo{sampler = particle_life_gpu(sim).trail_sampler}
+	for i in 0 ..< len(particle_life_gpu(sim).trail_images) {
+		image_info := vk.DescriptorImageInfo{imageLayout = .SHADER_READ_ONLY_OPTIMAL, imageView = particle_life_gpu(sim).trail_images[i].view}
+		set := particle_life_gpu(sim).post_sets[frame_slot][i]
 		writes := [4]vk.WriteDescriptorSet {
 			{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = 1, pImageInfo = &image_info},
 			{sType = .WRITE_DESCRIPTOR_SET, dstSet = set, dstBinding = 1, descriptorType = .SAMPLER, descriptorCount = 1, pImageInfo = &sampler_info},
@@ -372,9 +406,6 @@ particle_life_update_post_descriptors :: proc(sim: ^Particle_Life_Simulation, vk
 }
 
 particle_life_destroy_trail_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Particle_Life_Trail_Image) {
-	if image.framebuffer != vk.Framebuffer(0) {
-		vk.DestroyFramebuffer(vk_ctx.device, image.framebuffer, nil)
-	}
 	if image.view != vk.ImageView(0) {
 		vk.DestroyImageView(vk_ctx.device, image.view, nil)
 	}
@@ -388,13 +419,13 @@ particle_life_destroy_trail_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Pa
 }
 
 particle_life_destroy_trail_targets :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context) {
-	for i in 0 ..< len(sim.gpu.trail_images) {
-		particle_life_destroy_trail_image(vk_ctx, &sim.gpu.trail_images[i])
+	for i in 0 ..< len(particle_life_gpu(sim).trail_images) {
+		particle_life_destroy_trail_image(vk_ctx, &particle_life_gpu(sim).trail_images[i])
 	}
-	sim.gpu.trail_width = 0
-	sim.gpu.trail_height = 0
-	sim.gpu.trail_initialized = false
-	sim.gpu.trail_write_index = 0
+	particle_life_gpu(sim).trail_width = 0
+	particle_life_gpu(sim).trail_height = 0
+	particle_life_gpu(sim).trail_initialized = false
+	particle_life_gpu(sim).trail_write_index = 0
 }
 
 particle_life_frame_slot_mask :: proc() -> u32 {
@@ -404,7 +435,7 @@ particle_life_frame_slot_mask :: proc() -> u32 {
 particle_life_collect_retired_trail_targets :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
 	bit := u32(1) << u32(frame_slot)
 	for i in 0 ..< PARTICLE_LIFE_RETIRED_TRAIL_TARGET_CAP {
-		retired := &sim.gpu.retired_trail_targets[i]
+		retired := &particle_life_gpu(sim).retired_trail_targets[i]
 		if retired.pending_frame_slots == 0 {
 			continue
 		}
@@ -418,24 +449,24 @@ particle_life_collect_retired_trail_targets :: proc(sim: ^Particle_Life_Simulati
 }
 
 particle_life_retire_trail_targets :: proc(sim: ^Particle_Life_Simulation) -> bool {
-	if sim.gpu.trail_images[0].handle == vk.Image(0) && sim.gpu.trail_images[1].handle == vk.Image(0) {
-		sim.gpu.trail_images = {}
-		sim.gpu.trail_width = 0
-		sim.gpu.trail_height = 0
-		sim.gpu.trail_initialized = false
-		sim.gpu.trail_write_index = 0
+	if particle_life_gpu(sim).trail_images[0].handle == vk.Image(0) && particle_life_gpu(sim).trail_images[1].handle == vk.Image(0) {
+		particle_life_gpu(sim).trail_images = {}
+		particle_life_gpu(sim).trail_width = 0
+		particle_life_gpu(sim).trail_height = 0
+		particle_life_gpu(sim).trail_initialized = false
+		particle_life_gpu(sim).trail_write_index = 0
 		return true
 	}
 	for i in 0 ..< PARTICLE_LIFE_RETIRED_TRAIL_TARGET_CAP {
-		retired := &sim.gpu.retired_trail_targets[i]
+		retired := &particle_life_gpu(sim).retired_trail_targets[i]
 		if retired.pending_frame_slots == 0 {
-			retired.images = sim.gpu.trail_images
+			retired.images = particle_life_gpu(sim).trail_images
 			retired.pending_frame_slots = particle_life_frame_slot_mask()
-			sim.gpu.trail_images = {}
-			sim.gpu.trail_width = 0
-			sim.gpu.trail_height = 0
-			sim.gpu.trail_initialized = false
-			sim.gpu.trail_write_index = 0
+			particle_life_gpu(sim).trail_images = {}
+			particle_life_gpu(sim).trail_width = 0
+			particle_life_gpu(sim).trail_height = 0
+			particle_life_gpu(sim).trail_initialized = false
+			particle_life_gpu(sim).trail_write_index = 0
 			return true
 		}
 	}
@@ -446,20 +477,20 @@ particle_life_retire_trail_targets :: proc(sim: ^Particle_Life_Simulation) -> bo
 particle_life_ensure_trail_targets :: proc(sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context) -> bool {
 	width := max(vk_ctx.swapchain_extent.width, u32(1))
 	height := max(vk_ctx.swapchain_extent.height, u32(1))
-	if sim.gpu.trail_width == width && sim.gpu.trail_height == height && sim.gpu.trail_images[0].handle != vk.Image(0) && sim.gpu.trail_images[1].handle != vk.Image(0) {
+	if particle_life_gpu(sim).trail_width == width && particle_life_gpu(sim).trail_height == height && particle_life_gpu(sim).trail_images[0].handle != vk.Image(0) && particle_life_gpu(sim).trail_images[1].handle != vk.Image(0) {
 		return true
 	}
 	if !particle_life_retire_trail_targets(sim) {
 		return false
 	}
-	for i in 0 ..< len(sim.gpu.trail_images) {
+	for i in 0 ..< len(particle_life_gpu(sim).trail_images) {
 		if !particle_life_create_trail_image(sim, vk_ctx, i, width, height) {
 			particle_life_destroy_trail_targets(sim, vk_ctx)
 			return false
 		}
 	}
-	sim.gpu.trail_width = width
-	sim.gpu.trail_height = height
+	particle_life_gpu(sim).trail_width = width
+	particle_life_gpu(sim).trail_height = height
 	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
 	particle_life_update_background_descriptor(sim, vk_ctx, frame_slot)
 	particle_life_update_post_descriptors(sim, vk_ctx, frame_slot)

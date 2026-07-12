@@ -22,7 +22,6 @@ Post_Processing_Gpu_State :: struct {
 	width: u32,
 	height: u32,
 	format: vk.Format,
-	render_pass: vk.RenderPass,
 	source: Post_Processing_Image,
 	source_layout: vk.ImageLayout,
 	sampler: vk.Sampler,
@@ -79,8 +78,7 @@ post_processing_gpu_ensure :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^eng
 	if gpu.ready &&
 	   gpu.width == width &&
 	   gpu.height == height &&
-	   gpu.format == vk_ctx.swapchain_format &&
-	   gpu.render_pass == vk_ctx.render_pass_load {
+	   gpu.format == vk_ctx.swapchain_format {
 		return true
 	}
 
@@ -88,7 +86,6 @@ post_processing_gpu_ensure :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^eng
 	gpu.width = width
 	gpu.height = height
 	gpu.format = vk_ctx.swapchain_format
-	gpu.render_pass = vk_ctx.render_pass_load
 	gpu.source_layout = .UNDEFINED
 
 	if !post_processing_create_source_image(gpu, vk_ctx) {
@@ -253,8 +250,10 @@ post_processing_create_pipeline :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx:
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = u32(len(dynamic_states)), pDynamicStates = raw_data(dynamic_states[:])}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
 	info := vk.GraphicsPipelineCreateInfo {
 		sType = .GRAPHICS_PIPELINE_CREATE_INFO,
+		pNext = &rendering,
 		stageCount = u32(len(stages)),
 		pStages = raw_data(stages[:]),
 		pVertexInputState = &vertex_input,
@@ -265,8 +264,6 @@ post_processing_create_pipeline :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx:
 		pColorBlendState = &blend,
 		pDynamicState = &dynamic_state,
 		layout = gpu.pipeline.layout,
-		renderPass = vk_ctx.render_pass_load,
-		subpass = 0,
 	}
 	return vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &gpu.pipeline.pipeline) == .SUCCESS
 }
@@ -304,8 +301,8 @@ post_processing_apply_blur :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^eng
 	}
 	swapchain_image := vk_ctx.swapchain_images[frame.image_index]
 
-	to_src := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_src := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = {},
 		dstAccessMask = {.TRANSFER_READ},
 		oldLayout = .PRESENT_SRC_KHR,
@@ -315,9 +312,9 @@ post_processing_apply_blur :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^eng
 		image = swapchain_image,
 		subresourceRange = range,
 	}
-	to_dst := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
-		srcAccessMask = gpu.source_layout == .SHADER_READ_ONLY_OPTIMAL ? vk.AccessFlags{.SHADER_READ} : vk.AccessFlags{},
+	to_dst := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
+		srcAccessMask = gpu.source_layout == .SHADER_READ_ONLY_OPTIMAL ? vk.AccessFlags2{.SHADER_READ} : vk.AccessFlags2{},
 		dstAccessMask = {.TRANSFER_WRITE},
 		oldLayout = gpu.source_layout,
 		newLayout = .TRANSFER_DST_OPTIMAL,
@@ -326,8 +323,8 @@ post_processing_apply_blur :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^eng
 		image = gpu.source.image,
 		subresourceRange = range,
 	}
-	pre_barriers := [2]vk.ImageMemoryBarrier{to_src, to_dst}
-	vk.CmdPipelineBarrier(frame.command_buffer, {.COLOR_ATTACHMENT_OUTPUT, .FRAGMENT_SHADER}, {.TRANSFER}, {}, 0, nil, 0, nil, u32(len(pre_barriers)), raw_data(pre_barriers[:]))
+	pre_barriers := [2]vk.ImageMemoryBarrier2{to_src, to_dst}
+	engine.vk_cmd_pipeline_barrier2(frame.command_buffer, {.COLOR_ATTACHMENT_OUTPUT, .FRAGMENT_SHADER}, {.TRANSFER}, {}, 0, nil, 0, nil, u32(len(pre_barriers)), raw_data(pre_barriers[:]))
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx, u32(len(pre_barriers)))
 
 	src_min := vk.Offset3D{0, 0, 0}
@@ -343,8 +340,8 @@ post_processing_apply_blur :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^eng
 	vk.CmdBlitImage(frame.command_buffer, swapchain_image, .TRANSFER_SRC_OPTIMAL, gpu.source.image, .TRANSFER_DST_OPTIMAL, 1, &blit, .LINEAR)
 	engine.vk_cmd_count_transfer_copy(vk_ctx)
 
-	to_color := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_color := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = {.TRANSFER_READ},
 		dstAccessMask = {.COLOR_ATTACHMENT_WRITE},
 		oldLayout = .TRANSFER_SRC_OPTIMAL,
@@ -354,8 +351,8 @@ post_processing_apply_blur :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^eng
 		image = swapchain_image,
 		subresourceRange = range,
 	}
-	to_shader := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_shader := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = {.TRANSFER_WRITE},
 		dstAccessMask = {.SHADER_READ},
 		oldLayout = .TRANSFER_DST_OPTIMAL,
@@ -365,8 +362,8 @@ post_processing_apply_blur :: proc(gpu: ^Post_Processing_Gpu_State, vk_ctx: ^eng
 		image = gpu.source.image,
 		subresourceRange = range,
 	}
-	post_barriers := [2]vk.ImageMemoryBarrier{to_color, to_shader}
-	vk.CmdPipelineBarrier(frame.command_buffer, {.TRANSFER}, {.COLOR_ATTACHMENT_OUTPUT, .FRAGMENT_SHADER}, {}, 0, nil, 0, nil, u32(len(post_barriers)), raw_data(post_barriers[:]))
+	post_barriers := [2]vk.ImageMemoryBarrier2{to_color, to_shader}
+	engine.vk_cmd_pipeline_barrier2(frame.command_buffer, {.TRANSFER}, {.COLOR_ATTACHMENT_OUTPUT, .FRAGMENT_SHADER}, {}, 0, nil, 0, nil, u32(len(post_barriers)), raw_data(post_barriers[:]))
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx, u32(len(post_barriers)))
 	gpu.source_layout = .SHADER_READ_ONLY_OPTIMAL
 

@@ -41,10 +41,14 @@ test_controls_help_teaches_current_input_model_and_supports_back :: proc(t: ^tes
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .How_To_Play
+	assets: uifw.Ui_Document_Assets
+	defer uifw.ui_document_assets_destroy(&assets)
+	testing.expect_value(t, uifw.ui_document_assets_load(&assets).error, uifw.Ui_Document_Error.None)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720})
-	game.app_ui_draw_how_to_play(&ui, &ctx)
+	game.app_ui_draw_how_to_play_document(&ui, &ctx, &assets, {1280, 720})
 	uifw.gui_end_frame(&ctx)
 	testing.expect(t, controls_help_has_text(&ctx, "Controls"))
 	// The intro is normally wrapped into line commands; assert its opening is
@@ -60,14 +64,14 @@ test_controls_help_teaches_current_input_model_and_supports_back :: proc(t: ^tes
 	for section in game.HOW_TO_PLAY_SECTIONS {
 		testing.expect(t, controls_help_has_text(&ctx, section.title))
 	}
-	back, found := controls_help_find_item(&ctx, uifw.gui_make_id(&ctx, "back"))
+	back, found := controls_help_find_item(&ctx, uifw.gui_make_id(&ctx, "close"))
 	testing.expect(t, found)
 	testing.expect(t, back.bounds.x >= 0 && back.bounds.y >= 0)
 	testing.expect(t, back.bounds.x + back.bounds.w <= 1280)
 	testing.expect(t, back.bounds.y + back.bounds.h <= 720)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, back = true})
-	game.app_ui_draw_how_to_play(&ui, &ctx)
+	game.app_ui_draw_how_to_play_document(&ui, &ctx, &assets, {1280, 720})
 	testing.expect_value(t, ui.mode, game.App_Mode.Main_Menu)
 }
 
@@ -78,6 +82,7 @@ test_ui_component_fixture_renders_only_the_requested_target_state :: proc(t: ^te
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default(), true)
+	defer game.app_ui_destroy(&ui)
 	ui.component_fixture = .Number
 	ui.component_fixture_state = .Editing
 	ui.component_fixture_value = 12.5
@@ -95,19 +100,23 @@ test_ui_component_fixture_renders_only_the_requested_target_state :: proc(t: ^te
 
 @(test)
 test_main_menu_actions_fit_wide_and_compact_layouts_without_controls :: proc(t: ^testing.T) {
+	assets: uifw.Ui_Document_Assets
+	defer uifw.ui_document_assets_destroy(&assets)
+	testing.expect_value(t, uifw.ui_document_assets_load(&assets).error, uifw.Ui_Document_Error.None)
 	viewports := [?]uifw.Vec2{{1920, 1080}, {800, 700}, {480, 640}}
 	for viewport in viewports {
 		ctx: uifw.Gui_Context
 		uifw.gui_init(&ctx)
 		ui: game.App_Ui_State
 		game.app_ui_init(&ui, game.settings_default())
+		defer game.app_ui_destroy(&ui)
 		ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), viewport.x, viewport.y, 1)
 		vk_ctx: engine.Vk_Context
 		vk_ctx.swapchain_extent = {width = u32(viewport.x), height = u32(viewport.y)}
 		worker: host.Render_Worker_State
 
 		uifw.gui_begin_frame(&ctx, {window_width = i32(viewport.x), window_height = i32(viewport.y), mouse_pos = {-1000, -1000}})
-		game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+		game.app_ui_draw_main_menu_document(&ui, &ctx, &assets, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 		options, options_found := controls_help_find_item(&ctx, uifw.gui_make_id(&ctx, "options"))
 		controls, controls_found := controls_help_find_item(&ctx, uifw.gui_make_id(&ctx, "controls"))
 		quit, quit_found := controls_help_find_item(&ctx, uifw.gui_make_id(&ctx, "quit"))
@@ -127,10 +136,11 @@ test_simulation_f1_opens_modal_help_without_leaking_through_an_editor :: proc(t:
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720})
-	_ = game.app_ui_simulation_filter_input(&ui, &ctx, {window_width = 1280, window_height = 720, key_f1 = true, frame_index = 7})
+	_ = game.app_ui_simulation_filter_input(&ui, &ctx, {window_width = 1280, window_height = 720, actions = {help = {pressed = true, owner = .Mouse_Keyboard}}, frame_index = 7})
 	testing.expect(t, ui.controls_help_open)
 	testing.expect_value(t, ui.controls_help_open_frame, ctx.frame_index)
 
@@ -139,7 +149,7 @@ test_simulation_f1_opens_modal_help_without_leaking_through_an_editor :: proc(t:
 
 	game.app_ui_close_controls_help(&ui, &ctx)
 	ctx.text_edit_id = 42
-	_ = game.app_ui_simulation_filter_input(&ui, &ctx, {window_width = 1280, window_height = 720, key_f1 = true})
+	_ = game.app_ui_simulation_filter_input(&ui, &ctx, {window_width = 1280, window_height = 720, actions = {help = {pressed = true, owner = .Mouse_Keyboard}}})
 	testing.expect(t, !ui.controls_help_open)
 }
 
@@ -150,6 +160,7 @@ test_simulation_help_modal_restores_invoker_focus_on_back :: proc(t: ^testing.T)
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 	invoker := uifw.gui_make_id(&ctx, "help_invoker")
 	ctx.focused = invoker
@@ -202,12 +213,13 @@ test_simulation_bar_help_affordance_fits_compact_and_wide_windows :: proc(t: ^te
 		uifw.gui_init(&ctx)
 		ui: game.App_Ui_State
 		game.app_ui_init(&ui, game.settings_default())
+		defer game.app_ui_destroy(&ui)
 		ui.mode = .Gray_Scott
 		ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), viewport.x, viewport.y, 1)
 		vk_ctx: engine.Vk_Context
 		vk_ctx.swapchain_extent = {width = u32(viewport.x), height = u32(viewport.y)}
 		uifw.gui_begin_frame(&ctx, {window_width = i32(viewport.x), window_height = i32(viewport.y), mouse_pos = {-1000, -1000}})
-		game.app_ui_draw_simulation_bar(&ui, &ctx, .Gray_Scott, nil, nil, nil, false, false, "Gray-Scott", &vk_ctx, viewport.x, nil)
+		game.app_ui_draw_simulation_bar(&ui, &ctx, .Gray_Scott, nil, nil, nil, false, false, "Gray-Scott", {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, viewport.x, nil)
 		uifw.gui_push_id(&ctx, "simulation_bar")
 		help, found := controls_help_find_item(&ctx, uifw.gui_make_id(&ctx, "help"))
 		uifw.gui_pop_id(&ctx)

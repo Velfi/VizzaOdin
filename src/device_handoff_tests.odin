@@ -13,6 +13,7 @@ test_active_controller_disconnect_explains_pause_and_preserves_edit_focus :: pro
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Flow_Field
 	ui.flow_field.paused = false
 	ctx.focused = 41
@@ -22,7 +23,7 @@ test_active_controller_disconnect_explains_pause_and_preserves_edit_focus :: pro
 		active_device = .Controller,
 		controller_disconnected = true,
 	})
-	game.app_ui_handle_controller_disconnect(&ui, &ctx, nil, nil)
+	game.app_ui_handle_controller_disconnect(&ui, &ctx)
 	game.app_ui_update_device_notice(&ui, &ctx)
 
 	testing.expect(t, ui.flow_field.paused)
@@ -39,6 +40,7 @@ test_device_notice_reports_connection_and_expires :: proc(t: ^testing.T) {
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 
 	uifw.gui_begin_frame(&ctx, {controller_connected = true})
 	game.app_ui_update_device_notice(&ui, &ctx)
@@ -58,6 +60,7 @@ test_device_notice_stays_at_top_with_bottom_simulation_bar :: proc(t: ^testing.T
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 	ui.simulation_shell.controls_visible = true
 	game.write_fixed_string(ui.device_notice[:], "Controller connected")
@@ -85,6 +88,7 @@ test_device_notice_scales_long_text_to_narrow_window :: proc(t: ^testing.T) {
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	game.write_fixed_string(ui.device_notice[:], "Controller disconnected - simulation paused")
 	ui.device_notice_seconds = game.APP_UI_DEVICE_NOTICE_SECONDS
 

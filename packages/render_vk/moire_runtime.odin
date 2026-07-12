@@ -11,10 +11,10 @@ moire_transition_image :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context
 	if old_layout == new_layout {
 		return
 	}
-	src_access: vk.AccessFlags
-	dst_access: vk.AccessFlags
-	src_stage := vk.PipelineStageFlags{.TOP_OF_PIPE}
-	dst_stage := vk.PipelineStageFlags{.TOP_OF_PIPE}
+	src_access: vk.AccessFlags2
+	dst_access: vk.AccessFlags2
+	src_stage := vk.PipelineStageFlags2{.TOP_OF_PIPE}
+	dst_stage := vk.PipelineStageFlags2{.TOP_OF_PIPE}
 	#partial switch old_layout {
 	case .UNDEFINED:
 		#partial switch new_layout {
@@ -42,8 +42,8 @@ moire_transition_image :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context
 			dst_stage = {.COMPUTE_SHADER}
 		}
 	}
-	barrier := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	barrier := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = src_access,
 		dstAccessMask = dst_access,
 		oldLayout = old_layout,
@@ -53,7 +53,7 @@ moire_transition_image :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context
 		image = gpu.images[index].handle,
 		subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1},
 	}
-	vk.CmdPipelineBarrier(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
+	engine.vk_cmd_pipeline_barrier2(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
 	gpu.images[index].layout = new_layout
 }
 
@@ -119,8 +119,8 @@ moire_gpu_step :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: v
 	group_y := (u32(gpu.height) + MOIRE_WORKGROUP_SIZE - 1) / MOIRE_WORKGROUP_SIZE
 	vk.CmdDispatch(cmd, group_x, group_y, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
-	barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
-	vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER, .FRAGMENT_SHADER}, {}, 1, &barrier, 0, nil, 0, nil)
+	barrier := vk.MemoryBarrier2{sType = .MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
+	engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER, .FRAGMENT_SHADER}, {}, 1, &barrier, 0, nil, 0, nil)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 	gpu.state_index = u32(write_index)
 }

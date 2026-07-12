@@ -228,8 +228,8 @@ moire_upload_sampled_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Moire_Ima
 		return false
 	}
 	range := vk.ImageSubresourceRange{aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}
-	to_transfer := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_transfer := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		dstAccessMask = {.TRANSFER_WRITE},
 		oldLayout = .UNDEFINED,
 		newLayout = .TRANSFER_DST_OPTIMAL,
@@ -238,7 +238,7 @@ moire_upload_sampled_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Moire_Ima
 		image = image.handle,
 		subresourceRange = range,
 	}
-	vk.CmdPipelineBarrier(command_buffer, {.TOP_OF_PIPE}, {.TRANSFER}, {}, 0, nil, 0, nil, 1, &to_transfer)
+	engine.vk_cmd_pipeline_barrier2(command_buffer, {.TOP_OF_PIPE}, {.TRANSFER}, {}, 0, nil, 0, nil, 1, &to_transfer)
 	region := vk.BufferImageCopy {
 		bufferOffset = 0,
 		bufferRowLength = 0,
@@ -248,8 +248,8 @@ moire_upload_sampled_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Moire_Ima
 		imageExtent = {width, height, 1},
 	}
 	vk.CmdCopyBufferToImage(command_buffer, staging.handle, image.handle, .TRANSFER_DST_OPTIMAL, 1, &region)
-	to_shader := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_shader := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = {.TRANSFER_WRITE},
 		dstAccessMask = {.SHADER_READ},
 		oldLayout = .TRANSFER_DST_OPTIMAL,
@@ -259,7 +259,7 @@ moire_upload_sampled_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Moire_Ima
 		image = image.handle,
 		subresourceRange = range,
 	}
-	vk.CmdPipelineBarrier(command_buffer, {.TRANSFER}, {.COMPUTE_SHADER}, {}, 0, nil, 0, nil, 1, &to_shader)
+	engine.vk_cmd_pipeline_barrier2(command_buffer, {.TRANSFER}, {.COMPUTE_SHADER}, {}, 0, nil, 0, nil, 1, &to_shader)
 	if !engine.vk_submit_upload_commands(vk_ctx) {
 		return false
 	}
@@ -535,8 +535,10 @@ moire_create_present_pipeline :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = 2, pDynamicStates = raw_data(dynamic_states[:])}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
 	info := vk.GraphicsPipelineCreateInfo {
 		sType = .GRAPHICS_PIPELINE_CREATE_INFO,
+		pNext = &rendering,
 		stageCount = 2,
 		pStages = raw_data(stages[:]),
 		pVertexInputState = &vertex_input,
@@ -547,8 +549,6 @@ moire_create_present_pipeline :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_
 		pColorBlendState = &blend,
 		pDynamicState = &dynamic_state,
 		layout = gpu.present_pipeline.layout,
-		renderPass = vk_ctx.render_pass,
-		subpass = 0,
 	}
 	return vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &gpu.present_pipeline.pipeline) == .SUCCESS
 }

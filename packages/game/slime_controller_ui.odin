@@ -198,6 +198,7 @@ slime_controller_ui_focus_deck :: proc(state: ^Slime_Controller_Ui_State, gui: ^
 	deck_region := slime_controller_ui_deck_region_id(gui)
 	fallback := uifw.gui_make_id(gui, fmt.tprintf("slime_deck_%d", state.focused_index))
 	gui.focused = uifw.gui_controller_focus_enter_region(&state.focus, deck_region, uifw.GUI_ID_NONE, fallback)
+	uifw.gui_focus_owner_claim(gui, .Control_Deck, deck_region)
 }
 
 slime_controller_ui_deck_rect :: proc(gui: ^uifw.Gui_Context, width, height: f32, mode: Control_Ui_Mode) -> uifw.Rect {
@@ -275,23 +276,16 @@ slime_controller_ui_update_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Conte
 		gui.input.focus_prev = false
 	}
 
-	control_deck_pressed := app_ui_control_deck_pressed(
-		ui.frame_actions.control_deck,
-		gui.input.key_space || gui.input.key_space_pressed,
-	)
-	control_deck_active := app_ui_control_deck_active(
-		ui.frame_actions.control_deck,
-		gui.input.key_space || gui.input.key_space_down || gui.input.key_space_pressed || gui.input.key_space_released,
-	)
+	control_deck_pressed := app_ui_control_deck_pressed(ui.frame_actions.control_deck)
+	control_deck_active := app_ui_control_deck_active(ui.frame_actions.control_deck)
 	if control_deck_pressed {
 		app_ui_set_simulation_chrome_visible(ui, true)
 		slime_controller_ui_focus_deck(state, gui)
 		pause_consumed = true
 	}
-	if ui.frame_actions.toggle_ui.pressed || gui.input.toggle_ui {
+	if ui.frame_actions.toggle_ui.pressed && ui.frame_actions.toggle_ui.owner == .Controller {
 		app_ui_set_simulation_chrome_visible(ui, true)
 		slime_controller_ui_focus_deck(state, gui)
-		gui.input.toggle_ui = false
 		pause_consumed = true
 	}
 	if control_deck_active {
@@ -306,15 +300,18 @@ slime_controller_ui_update_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Conte
 		if gui.input.back && !back_owned_by_widget {
 			if state.focus.phase == .Active_Control {
 				uifw.gui_controller_focus_deactivate(&state.focus)
+				uifw.gui_focus_owner_release(gui, .Active_Control)
 			} else if state.focus.phase == .Child_Region {
 				state.panel_open = false
 				state.pending_panel_focus = false
 				uifw.gui_controller_focus_leave_region(&state.focus)
 				gui.focused = uifw.gui_make_id(gui, fmt.tprintf("slime_deck_%d", state.focused_index))
+				uifw.gui_focus_owner_release(gui, .Panel)
 			} else {
 				state.panel_open = false
 				uifw.gui_controller_focus_leave_region(&state.focus)
 				gui.focused = uifw.GUI_ID_NONE
+				uifw.gui_focus_owner_release(gui, .Control_Deck)
 			}
 			gui.input.back = false
 		}
@@ -339,12 +336,14 @@ slime_controller_ui_update_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Conte
 						panel_region := slime_controller_ui_panel_region_id(gui, instrument.instrument)
 						deck_region := slime_controller_ui_deck_region_id(gui)
 						_ = uifw.gui_controller_focus_enter_region(&state.focus, panel_region, deck_region, uifw.GUI_ID_NONE)
+						uifw.gui_focus_owner_claim(gui, .Panel, panel_region)
 						state.pending_panel_focus = true
 					}
 				}
 			}
 		} else if state.focus.phase == .Child_Region && gui.input.accept && gui.focused != uifw.GUI_ID_NONE {
 			uifw.gui_controller_focus_activate(&state.focus, gui.focused)
+			uifw.gui_focus_owner_claim(gui, .Active_Control, gui.focused)
 			// Let the Accept press flow through so the widget can enter edit mode
 			// and set focus_edit_id, preventing an immediate deactivation revert.
 			// Do not clear accept here: gui_accept_pressed already edge-detects the
@@ -516,8 +515,7 @@ slime_controller_ui_panel_content_height :: proc(gui: ^uifw.Gui_Context, sim: ^R
 	row_count := f32(1)
 	slider_count := f32(0)
 	extra := f32(0)
-	settings := &sim.slime
-
+	settings := sim.slime
 	#partial switch instrument {
 	case .Look:
 		row_count = 6

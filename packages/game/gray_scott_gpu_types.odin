@@ -1,10 +1,6 @@
 package game
 
 import uifw "../ui"
-import engine "../engine"
-
-import vk "vendor:vulkan"
-
 GRAY_SCOTT_STEP_SHADER_SOURCE :: "assets/shaders/gray_scott_step.slang"
 GRAY_SCOTT_PRESENT_SHADER_SOURCE :: "assets/shaders/gray_scott_present.slang"
 GRAY_SCOTT_VERTEX_SHADER_SOURCE :: GRAY_SCOTT_PRESENT_SHADER_SOURCE
@@ -17,7 +13,6 @@ GRAY_SCOTT_PRESENT_ENTRY :: "fragment_main"
 GRAY_SCOTT_STEP_SPIRV_ENTRY :: "main"
 GRAY_SCOTT_VERTEX_SPIRV_ENTRY :: "main"
 GRAY_SCOTT_PRESENT_SPIRV_ENTRY :: "main"
-GRAY_SCOTT_IMAGE_FORMAT :: vk.Format(.R32G32B32A32_SFLOAT)
 GRAY_SCOTT_WORKGROUP_SIZE :: 8
 GRAY_SCOTT_DEFAULT_ITERATIONS :: u32(1)
 GRAY_SCOTT_MAX_STABLE_SUBSTEPS :: 128
@@ -58,6 +53,38 @@ Gray_Scott_Params :: struct #align(16) {
 	_pad0: u32,
 	_pad1: u32,
 	_pad2: u32,
+	noise_kind: u32,
+	noise_fractal_mode: u32,
+	noise_seed: u32,
+	noise_warp_mode: u32,
+	noise_offset_x: f32,
+	noise_offset_y: f32,
+	noise_rotation: f32,
+	noise_anchor_x: f32,
+	noise_anchor_y: f32,
+	noise_strength: f32,
+	noise_amplitude: f32,
+	noise_frequency: f32,
+	noise_octaves: u32,
+	noise_lacunarity: f32,
+	noise_gain: f32,
+	noise_warp_octaves: u32,
+	noise_warp_amplitude: f32,
+	noise_warp_frequency: f32,
+	noise_gabor_iterations: u32,
+	noise_gabor_velocity: f32,
+	noise_gabor_band_width: f32,
+	noise_gabor_band_softness: f32,
+	noise_phasor_iterations: u32,
+	noise_phasor_velocity: f32,
+	noise_phasor_band_width: f32,
+	noise_voronoi_output: u32,
+	noise_voronoi_distance_mode: u32,
+	noise_wave_velocity: f32,
+	noise_wave_band_width: f32,
+	noise_wave_band_softness: f32,
+	seed_density: f32,
+	seed_amplitude: f32,
 }
 
 Gray_Scott_Present_Params :: struct #align(16) {
@@ -82,46 +109,6 @@ Gray_Scott_Camera :: struct #align(16) {
 	aspect_ratio: f32,
 }
 
-Gray_Scott_Gpu_Image :: struct {
-	handle: vk.Image,
-	memory: vk.DeviceMemory,
-	view: vk.ImageView,
-	layout: vk.ImageLayout,
-}
-
-Gray_Scott_Gpu_State :: struct {
-	ready: bool,
-	step_shader_module: engine.Vk_Shader_Module,
-	present_shader_module: engine.Vk_Shader_Module,
-	vertex_shader_module: engine.Vk_Shader_Module,
-	step_shader_spirv_path: string,
-	vertex_shader_spirv_path: string,
-	present_shader_spirv_path: string,
-	compute_pipeline: engine.Vk_Compute_Pipeline,
-	present_pipeline: engine.Vk_Graphics_Pipeline,
-	compute_set_layout: vk.DescriptorSetLayout,
-	present_set_layout: vk.DescriptorSetLayout,
-	compute_pool: vk.DescriptorPool,
-	present_pool: vk.DescriptorPool,
-	compute_sets: [GRAY_SCOTT_COMPUTE_DISPATCH_SLOTS]vk.DescriptorSet,
-	present_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	storage: [2]Gray_Scott_Gpu_Image,
-	sampler: vk.Sampler,
-	params_buffers: [GRAY_SCOTT_COMPUTE_DISPATCH_SLOTS]engine.Vk_Buffer,
-	nutrient_buffer: engine.Vk_Buffer,
-	lut_buffer: engine.Vk_Buffer,
-	present_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	camera_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	fullscreen_vertices: engine.Vk_Buffer,
-	lut_uploaded_scheme: Color_Scheme_Name,
-	lut_uploaded_reversed: bool,
-	state_index: u32,
-	compute_dispatch_slot: u32,
-	present_frame_slot: u32,
-	width: i32,
-	height: i32,
-}
-
 Gray_Scott_Fullscreen_Vertex :: struct {
 	pos: uifw.Vec2,
 	color: uifw.Color,
@@ -130,4 +117,3 @@ Gray_Scott_Fullscreen_Vertex :: struct {
 	effect: uifw.Color,
 	material: uifw.Color,
 }
-

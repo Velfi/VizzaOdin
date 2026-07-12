@@ -37,6 +37,7 @@ vk_begin_frame :: proc(ctx: ^Vk_Context) -> (Vk_Frame, bool) {
 	}
 	if acquire_result != .SUCCESS && acquire_result != .SUBOPTIMAL_KHR {
 		log_error("vk_begin_frame: acquire failed result=", acquire_result)
+		if acquire_result == .ERROR_DEVICE_LOST do vk_record_device_loss(ctx, "acquiring the next swapchain image")
 		return frame, false
 	}
 	if acquire_result == .SUBOPTIMAL_KHR {
@@ -77,30 +78,31 @@ vk_end_frame :: proc(ctx: ^Vk_Context, frame: Vk_Frame) -> bool {
 	}
 	ctx.last_cpu_timings.end_command_ms = vk_elapsed_ms(end_command_start)
 
-	wait_stage := vk.PipelineStageFlags{.COLOR_ATTACHMENT_OUTPUT}
-	command_buffer := frame.command_buffer
-	submit := vk.SubmitInfo {
-		sType = .SUBMIT_INFO,
-		waitSemaphoreCount = 1,
-		pWaitSemaphores = &frame.state.image_available,
-		pWaitDstStageMask = &wait_stage,
-		commandBufferCount = 1,
-		pCommandBuffers = &command_buffer,
-		signalSemaphoreCount = 1,
-		pSignalSemaphores = &frame.state.render_finished,
+	wait := vk.SemaphoreSubmitInfo{sType = .SEMAPHORE_SUBMIT_INFO, semaphore = frame.state.image_available, stageMask = {.COLOR_ATTACHMENT_OUTPUT}}
+	command := vk.CommandBufferSubmitInfo{sType = .COMMAND_BUFFER_SUBMIT_INFO, commandBuffer = frame.command_buffer, deviceMask = 1}
+	signal := vk.SemaphoreSubmitInfo{sType = .SEMAPHORE_SUBMIT_INFO, semaphore = frame.state.render_finished, stageMask = {.ALL_COMMANDS}}
+	submit := vk.SubmitInfo2 {
+		sType = .SUBMIT_INFO_2,
+		waitSemaphoreInfoCount = 1,
+		pWaitSemaphoreInfos = &wait,
+		commandBufferInfoCount = 1,
+		pCommandBufferInfos = &command,
+		signalSemaphoreInfoCount = 1,
+		pSignalSemaphoreInfos = &signal,
 	}
 	submit_start := time.tick_now()
 	// Reset only once the frame is guaranteed to be submitted; resetting in
 	// vk_begin_frame left the fence unsignaled forever when recording failed,
 	// deadlocking the next frame's WaitForFences.
 	_ = vk.ResetFences(ctx.device, 1, &frame.state.in_flight)
-	submit_result := vk.QueueSubmit(ctx.graphics_queue, 1, &submit, frame.state.in_flight)
+	submit_result := vk.QueueSubmit2(ctx.graphics_queue, 1, &submit, frame.state.in_flight)
 	ctx.last_cpu_timings.queue_submit_ms = vk_elapsed_ms(submit_start)
 	if ctx.debug_present_log_count < VK_DEBUG_FRAME_LOG_LIMIT {
 		log_debug("vk_end_frame: frame_slot=", frame.frame_index, " image_index=", frame.image_index, " submit_result=", submit_result, " end_cmd_ms=", ctx.last_cpu_timings.end_command_ms, " submit_ms=", ctx.last_cpu_timings.queue_submit_ms)
 	}
 	if submit_result != .SUCCESS {
 		log_error("vk_end_frame: QueueSubmit failed result=", submit_result)
+		if submit_result == .ERROR_DEVICE_LOST do vk_record_device_loss(ctx, "submitting GPU work")
 		return false
 	}
 
@@ -127,6 +129,7 @@ vk_end_frame :: proc(ctx: ^Vk_Context, frame: Vk_Frame) -> bool {
 		ctx.needs_swapchain_recreate = true
 	} else if present_result != .SUCCESS {
 		log_error("vk_end_frame: QueuePresent failed result=", present_result)
+		if present_result == .ERROR_DEVICE_LOST do vk_record_device_loss(ctx, "presenting the rendered frame")
 		return false
 	}
 	ctx.current_frame = (ctx.current_frame + 1) % MAX_FRAMES_IN_FLIGHT
@@ -155,13 +158,9 @@ vk_submit_upload_commands :: proc(ctx: ^Vk_Context) -> bool {
 	if vk.EndCommandBuffer(ctx.upload_command_buffer) != .SUCCESS {
 		return false
 	}
-	command_buffer := ctx.upload_command_buffer
-	submit := vk.SubmitInfo {
-		sType = .SUBMIT_INFO,
-		commandBufferCount = 1,
-		pCommandBuffers = &command_buffer,
-	}
-	if vk.QueueSubmit(ctx.graphics_queue, 1, &submit, vk.Fence(0)) != .SUCCESS {
+	command := vk.CommandBufferSubmitInfo{sType = .COMMAND_BUFFER_SUBMIT_INFO, commandBuffer = ctx.upload_command_buffer, deviceMask = 1}
+	submit := vk.SubmitInfo2{sType = .SUBMIT_INFO_2, commandBufferInfoCount = 1, pCommandBufferInfos = &command}
+	if vk.QueueSubmit2(ctx.graphics_queue, 1, &submit, vk.Fence(0)) != .SUCCESS {
 		return false
 	}
 	_ = vk.QueueWaitIdle(ctx.graphics_queue)
@@ -174,42 +173,15 @@ vk_elapsed_ms :: proc(start: time.Tick) -> f64 {
 
 vk_cmd_begin_swapchain_render_pass :: proc(ctx: ^Vk_Context, frame: Vk_Frame, clear_color: $Color) {
 	clear := vk.ClearValue{color = {float32 = {clear_color.r, clear_color.g, clear_color.b, clear_color.a}}}
-	render_area := vk.Rect2D {
-		offset = {0, 0},
-		extent = ctx.swapchain_extent,
-	}
-	rp_begin := vk.RenderPassBeginInfo {
-		sType = .RENDER_PASS_BEGIN_INFO,
-		renderPass = ctx.render_pass,
-		framebuffer = ctx.swapchain_framebuffers[frame.image_index],
-		renderArea = render_area,
-		clearValueCount = 1,
-		pClearValues = &clear,
-	}
-	vk.CmdBeginRenderPass(frame.command_buffer, &rp_begin, .INLINE)
-	ctx.command_shape.render_pass_count += 1
+	vk_cmd_begin_rendering(ctx, frame.command_buffer, ctx.swapchain_image_views[frame.image_index], ctx.swapchain_extent, .COLOR_ATTACHMENT_OPTIMAL, .CLEAR, .STORE, clear)
 }
 
 vk_cmd_begin_swapchain_render_pass_load :: proc(ctx: ^Vk_Context, frame: Vk_Frame) {
-	clear := vk.ClearValue{}
-	render_area := vk.Rect2D {
-		offset = {0, 0},
-		extent = ctx.swapchain_extent,
-	}
-	rp_begin := vk.RenderPassBeginInfo {
-		sType = .RENDER_PASS_BEGIN_INFO,
-		renderPass = ctx.render_pass_load,
-		framebuffer = ctx.swapchain_framebuffers[frame.image_index],
-		renderArea = render_area,
-		clearValueCount = 1,
-		pClearValues = &clear,
-	}
-	vk.CmdBeginRenderPass(frame.command_buffer, &rp_begin, .INLINE)
-	ctx.command_shape.render_pass_count += 1
+	vk_cmd_begin_rendering(ctx, frame.command_buffer, ctx.swapchain_image_views[frame.image_index], ctx.swapchain_extent, .COLOR_ATTACHMENT_OPTIMAL, .LOAD, .STORE, {})
 }
 
 vk_cmd_end_swapchain_render_pass :: proc(frame: Vk_Frame) {
-	vk.CmdEndRenderPass(frame.command_buffer)
+	vk_cmd_end_rendering(frame.command_buffer)
 }
 
 vk_recreate_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
@@ -239,6 +211,7 @@ vk_push_unique_queue :: proc(values: ^[3]u32, count: ^u32, value: u32) {
 vk_fill_device_caps :: proc(ctx: ^Vk_Context, configured_ceiling_fraction: f32) {
 	props: vk.PhysicalDeviceProperties
 	vk.GetPhysicalDeviceProperties(ctx.physical_device, &props)
+	ctx.caps.api_version = props.apiVersion
 	write_fixed_string(ctx.caps.adapter_name[:], fixed_string(props.deviceName[:]))
 	write_fixed_string(ctx.caps.adapter_type[:], vk_device_type_name(props.deviceType))
 	ctx.caps.supports_timestamp_queries = props.limits.timestampComputeAndGraphics == true && props.limits.timestampPeriod > 0

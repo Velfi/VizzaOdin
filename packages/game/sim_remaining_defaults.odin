@@ -283,28 +283,28 @@ remaining_sim_apply_builtin_preset :: proc(sim: ^Remaining_Sim_State, kind: Rema
 			settings.advect_strength = 0.2
 		case:
 		}
-		moire_settings_preserve_color_scheme(&settings, sim.moire)
-		sim.moire = settings
+		moire_settings_preserve_color_scheme(&settings, sim.moire^)
+		sim.moire^ = settings
 	case .Vectors:
 		settings := vectors_settings_default()
-		vectors_settings_preserve_color_scheme(&settings, sim.vectors)
-		sim.vectors = settings
+		vectors_settings_preserve_color_scheme(&settings, sim.vectors^)
+		sim.vectors^ = settings
 	case .Primordial:
 		settings := primordial_settings_default()
-		primordial_settings_preserve_color_scheme(&settings, sim.primordial)
-		sim.primordial = settings
+		primordial_settings_preserve_color_scheme(&settings, sim.primordial^)
+		sim.primordial^ = settings
 	case .Voronoi_CA:
 		settings := voronoi_settings_default()
-		voronoi_settings_preserve_color_scheme(&settings, sim.voronoi)
-		sim.voronoi = settings
+		voronoi_settings_preserve_color_scheme(&settings, sim.voronoi^)
+		sim.voronoi^ = settings
 	case .Pellets:
 		settings := pellets_settings_default()
-		pellets_settings_preserve_color_scheme(&settings, sim.pellets)
-		sim.pellets = settings
+		pellets_settings_preserve_color_scheme(&settings, sim.pellets^)
+		sim.pellets^ = settings
 	case .Flow_Field:
 		settings := flow_settings_default()
-		flow_settings_preserve_color_scheme(&settings, sim.flow)
-		sim.flow = settings
+		flow_settings_preserve_color_scheme(&settings, sim.flow^)
+		sim.flow^ = settings
 	case .Slime_Mold:
 		settings := slime_settings_default()
 		switch preset_index {
@@ -407,29 +407,32 @@ remaining_sim_apply_builtin_preset :: proc(sim: ^Remaining_Sim_State, kind: Rema
 			settings.agent_turn_rate = 0.20943952
 		case:
 		}
-		slime_settings_preserve_color_scheme(&settings, sim.slime)
-		sim.slime = settings
+	slime_settings_preserve_color_scheme(&settings, sim.slime^)
+	sim.slime^ = settings
 		slime_request_reset(sim)
 	case:
 	}
 }
 
 remaining_sim_init :: proc(sim: ^Remaining_Sim_State) {
-	sim^ = {
+	if sim == nil || sim.runtime == nil do return
+	kind := sim.runtime.kind
+	sim.runtime^ = {
+		kind = kind,
 		intensity = 0.72,
 		scale = 1.0,
 		speed = 1.0,
 		density = 0.55,
 		cursor_size = 0.20,
 		cursor_strength = 1.0,
-		moire = moire_settings_default(),
-		vectors = vectors_settings_default(),
-		primordial = primordial_settings_default(),
-		voronoi = voronoi_settings_default(),
-		pellets = pellets_settings_default(),
-		flow = flow_settings_default(),
-		slime = slime_settings_default(),
 	}
+	if sim.moire != nil do sim.moire^ = moire_settings_default()
+	if sim.vectors != nil do sim.vectors^ = vectors_settings_default()
+	if sim.primordial != nil do sim.primordial^ = primordial_settings_default()
+	if sim.voronoi != nil do sim.voronoi^ = voronoi_settings_default()
+	if sim.pellets != nil do sim.pellets^ = pellets_settings_default()
+	if sim.flow != nil do sim.flow^ = flow_settings_default()
+	if sim.slime != nil do sim.slime^ = slime_settings_default()
 	camera_controls_init(&sim.camera)
 }
 
@@ -449,15 +452,17 @@ remaining_sim_reset_with_undo :: proc(sim: ^Remaining_Sim_State) {
 		cursor_size = sim.cursor_size,
 		cursor_strength = sim.cursor_strength,
 		builtin_preset_index = sim.builtin_preset_index,
-		moire = sim.moire,
-		vectors = sim.vectors,
-		primordial = sim.primordial,
-		voronoi = sim.voronoi,
-		pellets = sim.pellets,
-		flow = sim.flow,
-		slime = sim.slime,
 		slime_randomize_undo = sim.slime_randomize_undo,
 		slime_randomize_undo_available = sim.slime_randomize_undo_available,
+	}
+	#partial switch sim.runtime.kind {
+	case .Moire: undo.moire = sim.moire^
+	case .Vectors: undo.vectors = sim.vectors^
+	case .Primordial: undo.primordial = sim.primordial^
+	case .Voronoi_CA: undo.voronoi = sim.voronoi^
+	case .Pellets: undo.pellets = sim.pellets^
+	case .Flow_Field: undo.flow = sim.flow^
+	case .Slime_Mold: undo.slime = sim.slime^
 	}
 	remaining_sim_init(sim)
 	sim.reset_undo = undo
@@ -478,13 +483,15 @@ remaining_sim_undo_reset :: proc(sim: ^Remaining_Sim_State) -> bool {
 	sim.cursor_size = undo.cursor_size
 	sim.cursor_strength = undo.cursor_strength
 	sim.builtin_preset_index = undo.builtin_preset_index
-	sim.moire = undo.moire
-	sim.vectors = undo.vectors
-	sim.primordial = undo.primordial
-	sim.voronoi = undo.voronoi
-	sim.pellets = undo.pellets
-	sim.flow = undo.flow
-	sim.slime = undo.slime
+	#partial switch sim.runtime.kind {
+	case .Moire: sim.moire^ = undo.moire
+	case .Vectors: sim.vectors^ = undo.vectors
+	case .Primordial: sim.primordial^ = undo.primordial
+	case .Voronoi_CA: sim.voronoi^ = undo.voronoi
+	case .Pellets: sim.pellets^ = undo.pellets
+	case .Flow_Field: sim.flow^ = undo.flow
+	case .Slime_Mold: sim.slime^ = undo.slime
+	}
 	sim.slime_randomize_undo = undo.slime_randomize_undo
 	sim.slime_randomize_undo_available = undo.slime_randomize_undo_available
 	sim.reset_undo.available = false
@@ -504,6 +511,13 @@ slime_request_clear_trails :: proc(sim: ^Remaining_Sim_State) {
 		return
 	}
 	sim.slime_clear_trails_requested = true
+}
+
+flow_request_clear_trails :: proc(sim: ^Remaining_Sim_State) {
+	if sim == nil {
+		return
+	}
+	sim.flow_clear_trails_requested = true
 }
 
 slime_random01 :: proc(seed: ^u32) -> f32 {
@@ -528,6 +542,93 @@ slime_randomize_seed :: proc(sim: ^Remaining_Sim_State) {
 	slime_request_reset(sim)
 }
 
+primordial_next_seed :: proc(seed: u32) -> u32 {
+	value := seed != 0 ? seed : u32(0x6d2b79f5)
+	value = value * 1664525 + 1013904223
+	return value != 0 ? value : u32(0x9e3779b9)
+}
+
+primordial_random01 :: proc(seed: ^u32) -> f32 {
+	seed^ = primordial_next_seed(seed^)
+	return f32(seed^) / f32(0xffffffff)
+}
+
+primordial_random_range :: proc(seed: ^u32, low, high: f32) -> f32 {
+	return low + (high - low) * primordial_random01(seed)
+}
+
+primordial_regenerate :: proc(sim: ^Remaining_Sim_State) {
+	if sim == nil do return
+	sim.primordial.random_seed = primordial_next_seed(sim.primordial.random_seed)
+}
+
+primordial_randomize_settings :: proc(sim: ^Remaining_Sim_State) {
+	if sim == nil do return
+	settings := sim.primordial
+	sim.primordial_randomize_undo = {
+		alpha = settings.alpha,
+		beta = settings.beta,
+		velocity = settings.velocity,
+		radius = settings.radius,
+		random_seed = settings.random_seed,
+	}
+	sim.primordial_randomize_undo_available = true
+	seed := primordial_next_seed(settings.random_seed)
+	settings.alpha = primordial_random_range(&seed, -180, 180)
+	settings.beta = primordial_random_range(&seed, -60, 60)
+	settings.velocity = primordial_random_range(&seed, 0.1, 0.8)
+	settings.radius = primordial_random_range(&seed, 0.015, 0.15)
+	settings.random_seed = seed
+}
+
+primordial_undo_randomize_settings :: proc(sim: ^Remaining_Sim_State) -> bool {
+	if sim == nil || !sim.primordial_randomize_undo_available do return false
+	undo := sim.primordial_randomize_undo
+	sim.primordial.alpha = undo.alpha
+	sim.primordial.beta = undo.beta
+	sim.primordial.velocity = undo.velocity
+	sim.primordial.radius = undo.radius
+	sim.primordial.random_seed = undo.random_seed
+	sim.primordial_randomize_undo_available = false
+	return true
+}
+
+voronoi_regenerate :: proc(sim: ^Remaining_Sim_State) {
+	if sim == nil do return
+	sim.voronoi.random_seed = primordial_next_seed(sim.voronoi.random_seed)
+}
+
+voronoi_randomize_settings :: proc(sim: ^Remaining_Sim_State) {
+	if sim == nil do return
+	settings := sim.voronoi
+	sim.voronoi_randomize_undo = {
+		point_count = settings.point_count,
+		time_scale = settings.time_scale,
+		drift = settings.drift,
+		brownian_speed = settings.brownian_speed,
+		random_seed = settings.random_seed,
+	}
+	sim.voronoi_randomize_undo_available = true
+	seed := primordial_next_seed(settings.random_seed)
+	settings.point_count = u32(primordial_random_range(&seed, 80, 1800))
+	settings.time_scale = primordial_random_range(&seed, 0.25, 2.5)
+	settings.drift = primordial_random_range(&seed, 0, 2)
+	settings.brownian_speed = primordial_random_range(&seed, 0, 180)
+	settings.random_seed = seed
+}
+
+voronoi_undo_randomize_settings :: proc(sim: ^Remaining_Sim_State) -> bool {
+	if sim == nil || !sim.voronoi_randomize_undo_available do return false
+	undo := sim.voronoi_randomize_undo
+	sim.voronoi.point_count = undo.point_count
+	sim.voronoi.time_scale = undo.time_scale
+	sim.voronoi.drift = undo.drift
+	sim.voronoi.brownian_speed = undo.brownian_speed
+	sim.voronoi.random_seed = undo.random_seed
+	sim.voronoi_randomize_undo_available = false
+	return true
+}
+
 slime_randomize_settings :: proc(sim: ^Remaining_Sim_State) {
 	if sim == nil {
 		return
@@ -545,7 +646,7 @@ slime_randomize_settings :: proc(sim: ^Remaining_Sim_State) {
 		random_seed = sim.slime.random_seed,
 	}
 	sim.slime_randomize_undo_available = true
-	settings := &sim.slime
+	settings := sim.slime
 	seed := settings.random_seed
 	if seed == 0 {
 		seed = 0x9e3779b9

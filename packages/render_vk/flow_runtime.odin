@@ -8,10 +8,10 @@ import vk "vendor:vulkan"
 
 flow_transition_image :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, image: ^Flow_Image, new_layout: vk.ImageLayout) {
 	if image.layout == new_layout {return}
-	src_access: vk.AccessFlags
-	dst_access: vk.AccessFlags
-	src_stage := vk.PipelineStageFlags{.TOP_OF_PIPE}
-	dst_stage := vk.PipelineStageFlags{.COMPUTE_SHADER}
+	src_access: vk.AccessFlags2
+	dst_access: vk.AccessFlags2
+	src_stage := vk.PipelineStageFlags2{.TOP_OF_PIPE}
+	dst_stage := vk.PipelineStageFlags2{.COMPUTE_SHADER}
 	if image.layout == .GENERAL {
 		src_access = {.SHADER_WRITE}
 		src_stage = {.COMPUTE_SHADER}
@@ -28,15 +28,15 @@ flow_transition_image :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer,
 		dst_access = {.TRANSFER_WRITE}
 		dst_stage = {.TRANSFER}
 	}
-	barrier := vk.ImageMemoryBarrier{sType = .IMAGE_MEMORY_BARRIER, srcAccessMask = src_access, dstAccessMask = dst_access, oldLayout = image.layout, newLayout = new_layout, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, image = image.handle, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
-	vk.CmdPipelineBarrier(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
+	barrier := vk.ImageMemoryBarrier2{sType = .IMAGE_MEMORY_BARRIER_2, srcAccessMask = src_access, dstAccessMask = dst_access, oldLayout = image.layout, newLayout = new_layout, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, image = image.handle, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
+	engine.vk_cmd_pipeline_barrier2(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 	image.layout = new_layout
 }
 
-flow_compute_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, dst: vk.PipelineStageFlags) {
-	barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
-	vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, dst, {}, 1, &barrier, 0, nil, 0, nil)
+flow_compute_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, dst: vk.PipelineStageFlags2) {
+	barrier := vk.MemoryBarrier2{sType = .MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
+	engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, dst, {}, 1, &barrier, 0, nil, 0, nil)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 }
 
@@ -47,15 +47,23 @@ flow_gpu_step :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.
 }
 
 flow_gpu_step_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim: ^Remaining_Sim_State, dt: f32, trail_width, trail_height, screen_width, screen_height: u32) {
-	settings := &sim.flow
+	settings := sim.flow
 	if !flow_gpu_ensure_size(gpu, vk_ctx, settings, trail_width, trail_height) {return}
 	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
 	flow_record_webcam_upload(gpu, vk_ctx, cmd, frame_slot)
 	flow_write_params_size(gpu, vk_ctx, frame_slot, sim, dt, screen_width, screen_height)
 	flow_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
 	flow_collect_retired_vector_field_images(gpu, vk_ctx, frame_slot)
-	if sim.paused {return}
 	flow_transition_image(vk_ctx, cmd, &gpu.trail_image, .GENERAL)
+	if sim.flow_clear_trails_requested {
+		background_color := flow_background_color(settings)
+		clear := vk.ClearColorValue{float32 = {background_color[0], background_color[1], background_color[2], background_color[3]}}
+		range := vk.ImageSubresourceRange{aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}
+		vk.CmdClearColorImage(cmd, gpu.trail_image.handle, .GENERAL, &clear, 1, &range)
+		gpu.trail_cleared = true
+		sim.flow_clear_trails_requested = false
+	}
+	if sim.paused {return}
 	if !gpu.default_image_initialized {
 		flow_transition_image(vk_ctx, cmd, &gpu.default_image, .TRANSFER_DST_OPTIMAL)
 		default_clear := vk.ClearColorValue{float32 = {1, 1, 1, 1}}

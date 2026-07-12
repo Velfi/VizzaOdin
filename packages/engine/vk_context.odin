@@ -41,6 +41,10 @@ Vk_Device_Caps :: struct {
 	queue_families: Vk_Queue_Family_Indices,
 	memory: Gpu_Memory_Budget,
 	supports_memory_budget_ext: bool,
+	supports_synchronization2: bool,
+	supports_dynamic_rendering: bool,
+	supports_device_fault: bool,
+	api_version: u32,
 	supports_timestamp_queries: bool,
 	timestamp_period: f32,
 	swapchain_format: vk.Format,
@@ -73,7 +77,7 @@ Vk_Frame_Cpu_Timings :: struct {
 }
 
 Vk_Command_Shape_Counters :: struct {
-	render_pass_count: u32,
+	rendering_scope_count: u32,
 	compute_dispatch_count: u32,
 	draw_count: u32,
 	pipeline_bind_count: u32,
@@ -113,18 +117,18 @@ Vk_Context :: struct {
 	swapchain: vk.SwapchainKHR,
 	swapchain_images: [MAX_SWAPCHAIN_IMAGES]vk.Image,
 	swapchain_image_views: [MAX_SWAPCHAIN_IMAGES]vk.ImageView,
-	swapchain_framebuffers: [MAX_SWAPCHAIN_IMAGES]vk.Framebuffer,
 	swapchain_image_count: u32,
 	swapchain_format: vk.Format,
 	swapchain_extent: vk.Extent2D,
-	render_pass: vk.RenderPass,
-	render_pass_load: vk.RenderPass,
 	frames: [MAX_FRAMES_IN_FLIGHT]Vk_Frame_State,
 	upload_command_pool: vk.CommandPool,
 	upload_command_buffer: vk.CommandBuffer,
 	current_frame: u32,
 	frame_resources_ready: bool,
 	needs_swapchain_recreate: bool,
+	device_lost: bool,
+	device_loss_stage: [32]u8,
+	device_loss_detail: [256]u8,
 	graphics_queue: vk.Queue,
 	compute_queue: vk.Queue,
 	present_queue: vk.Queue,
@@ -139,6 +143,30 @@ Vk_Context :: struct {
 	supports_debug_utils: bool,
 	debug_acquire_log_count: u32,
 	debug_present_log_count: u32,
+}
+
+vk_record_device_loss :: proc(ctx: ^Vk_Context, stage: string) {
+	if ctx == nil do return
+	ctx.device_lost = true
+	write_fixed_string(ctx.device_loss_stage[:], stage)
+	write_fixed_string(ctx.device_loss_detail[:], "The Vulkan driver did not provide a more specific cause")
+	if !ctx.caps.supports_device_fault || vk.GetDeviceFaultInfoEXT == nil do return
+	counts := vk.DeviceFaultCountsEXT{sType = .DEVICE_FAULT_COUNTS_EXT}
+	if vk.GetDeviceFaultInfoEXT(ctx.device, &counts, nil) != .SUCCESS do return
+	address_infos: [8]vk.DeviceFaultAddressInfoEXT
+	vendor_infos: [8]vk.DeviceFaultVendorInfoEXT
+	counts.addressInfoCount = min(counts.addressInfoCount, u32(len(address_infos)))
+	counts.vendorInfoCount = min(counts.vendorInfoCount, u32(len(vendor_infos)))
+	counts.vendorBinarySize = 0
+	info := vk.DeviceFaultInfoEXT {
+		sType = .DEVICE_FAULT_INFO_EXT,
+		pAddressInfos = raw_data(address_infos[:]),
+		pVendorInfos = raw_data(vendor_infos[:]),
+	}
+	if vk.GetDeviceFaultInfoEXT(ctx.device, &counts, &info) == .SUCCESS {
+		description := fixed_string(info.description[:])
+		if len(description) > 0 do write_fixed_string(ctx.device_loss_detail[:], description)
+	}
 }
 
 vk_context_init :: proc(ctx: ^Vk_Context, window: ^sdl.Window, width, height: i32, configured_ceiling_fraction: f32, capture_enabled := false) -> bool {
@@ -158,6 +186,13 @@ vk_context_init :: proc(ctx: ^Vk_Context, window: ^sdl.Window, width, height: i3
 		log_error("vk_context_init: vkCreateInstance unavailable after loading proc addresses")
 		ctx.caps = vk_make_placeholder_caps(configured_ceiling_fraction)
 		write_fixed_string(ctx.caps.adapter_name[:], "vkCreateInstance unavailable")
+		return false
+	}
+	loader_version := u32(0)
+	if vk.EnumerateInstanceVersion == nil || vk.EnumerateInstanceVersion(&loader_version) != .SUCCESS || loader_version < vk_make_version(1, 3, 0) {
+		ctx.caps = vk_make_placeholder_caps(configured_ceiling_fraction)
+		write_fixed_string(ctx.caps.adapter_name[:], "Vulkan 1.3 loader is required")
+		log_error("vk_context_init: Vulkan 1.3 loader is required; reported version=", loader_version)
 		return false
 	}
 
@@ -207,17 +242,26 @@ vk_context_destroy :: proc(ctx: ^Vk_Context) {
 	log_info("shutdown: vk context begin")
 	if ctx.device != nil {
 		step_start := time.tick_now()
-		frame_fences_idle := vk_wait_for_frame_fences(ctx)
+		// A lost device cannot make outstanding fences progress. Waiting for them
+		// (or for the whole device) turns recoverable adapter loss into an app
+		// freeze, so proceed directly to destruction in that state.
+		frame_fences_idle := ctx.device_lost || vk_wait_for_frame_fences(ctx)
 		when ODIN_OS == .Darwin {
-			if frame_fences_idle {
+			if ctx.device_lost {
+				log_info("shutdown: vk waits skipped for lost device")
+			} else if frame_fences_idle {
 				log_info("shutdown: vk DeviceWaitIdle skipped on Darwin after frame fence wait ms=", vk_elapsed_ms(step_start))
 			} else {
 				_ = vk.DeviceWaitIdle(ctx.device)
 				log_info("shutdown: vk DeviceWaitIdle fallback ms=", vk_elapsed_ms(step_start))
 			}
 		} else {
-			_ = vk.DeviceWaitIdle(ctx.device)
-			log_info("shutdown: vk DeviceWaitIdle ms=", vk_elapsed_ms(step_start))
+			if !ctx.device_lost {
+				_ = vk.DeviceWaitIdle(ctx.device)
+				log_info("shutdown: vk DeviceWaitIdle ms=", vk_elapsed_ms(step_start))
+			} else {
+				log_info("shutdown: vk waits skipped for lost device")
+			}
 		}
 		step_start = time.tick_now()
 		gpu_profiler_destroy(ctx)
@@ -323,7 +367,7 @@ vk_create_instance :: proc(ctx: ^Vk_Context) -> bool {
 		applicationVersion = vk_make_version(APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_VERSION_PATCH),
 		pEngineName = "VizzaOdin",
 		engineVersion = vk_make_version(APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_VERSION_PATCH),
-		apiVersion = vk_make_version(1, 2, 0),
+		apiVersion = vk_make_version(1, 3, 0),
 	}
 	create_info := vk.InstanceCreateInfo {
 		sType = .INSTANCE_CREATE_INFO,
@@ -374,6 +418,14 @@ vk_pick_physical_device :: proc(ctx: ^Vk_Context, configured_ceiling_fraction: f
 	}
 
 	for device in devices {
+		props: vk.PhysicalDeviceProperties
+		vk.GetPhysicalDeviceProperties(device, &props)
+		if props.apiVersion < vk_make_version(1, 3, 0) {
+			continue
+		}
+		if !vk_device_supports_required_13_features(device) {
+			continue
+		}
 		indices := vk_find_queue_families(device, ctx.surface)
 		if indices.graphics >= 0 && indices.compute >= 0 && indices.present >= 0 && vk_device_extension_available(device, vk.KHR_SWAPCHAIN_EXTENSION_NAME) {
 			ctx.physical_device = device
@@ -384,8 +436,15 @@ vk_pick_physical_device :: proc(ctx: ^Vk_Context, configured_ceiling_fraction: f
 	}
 
 	ctx.caps = vk_make_placeholder_caps(configured_ceiling_fraction)
-	write_fixed_string(ctx.caps.adapter_name[:], "No Vulkan device supports graphics, compute, present, and swapchain")
+	write_fixed_string(ctx.caps.adapter_name[:], "Vulkan 1.3 with graphics, compute, present, and swapchain is required")
 	return false
+}
+
+vk_device_supports_required_13_features :: proc(device: vk.PhysicalDevice) -> bool {
+	features13 := vk.PhysicalDeviceVulkan13Features{sType = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES}
+	features2 := vk.PhysicalDeviceFeatures2{sType = .PHYSICAL_DEVICE_FEATURES_2, pNext = &features13}
+	vk.GetPhysicalDeviceFeatures2(device, &features2)
+	return features13.dynamicRendering == true && features13.synchronization2 == true
 }
 
 vk_find_queue_families :: proc(device: vk.PhysicalDevice, surface: vk.SurfaceKHR) -> Vk_Queue_Family_Indices {
@@ -464,7 +523,7 @@ vk_create_logical_device :: proc(ctx: ^Vk_Context) -> bool {
 		}
 	}
 
-	extensions: [2]cstring
+	extensions: [3]cstring
 	extension_count: u32
 	extensions[extension_count] = vk.KHR_SWAPCHAIN_EXTENSION_NAME
 	extension_count += 1
@@ -472,8 +531,32 @@ vk_create_logical_device :: proc(ctx: ^Vk_Context) -> bool {
 		extensions[extension_count] = vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME
 		extension_count += 1
 	}
+	supports_device_fault := vk_device_extension_available(ctx.physical_device, vk.EXT_DEVICE_FAULT_EXTENSION_NAME)
+	if supports_device_fault {
+		extensions[extension_count] = vk.EXT_DEVICE_FAULT_EXTENSION_NAME
+		extension_count += 1
+	}
+	queried_features13 := vk.PhysicalDeviceVulkan13Features{sType = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES}
+	queried_fault := vk.PhysicalDeviceFaultFeaturesEXT{sType = .PHYSICAL_DEVICE_FAULT_FEATURES_EXT, pNext = &queried_features13}
+	features2 := vk.PhysicalDeviceFeatures2{sType = .PHYSICAL_DEVICE_FEATURES_2, pNext = &queried_fault}
+	vk.GetPhysicalDeviceFeatures2(ctx.physical_device, &features2)
+	if !queried_features13.dynamicRendering || !queried_features13.synchronization2 {
+		write_fixed_string(ctx.caps.adapter_name[:], "Vulkan 1.3 dynamicRendering and synchronization2 are required")
+		return false
+	}
+	enabled_features13 := vk.PhysicalDeviceVulkan13Features {
+		sType = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+		dynamicRendering = true,
+		synchronization2 = true,
+	}
+	enabled_fault := vk.PhysicalDeviceFaultFeaturesEXT {
+		sType = .PHYSICAL_DEVICE_FAULT_FEATURES_EXT,
+		pNext = &enabled_features13,
+		deviceFault = b32(supports_device_fault && queried_fault.deviceFault == true),
+	}
 	create_info := vk.DeviceCreateInfo {
 		sType = .DEVICE_CREATE_INFO,
+		pNext = &enabled_fault,
 		queueCreateInfoCount = unique_count,
 		pQueueCreateInfos = raw_data(queue_infos[:]),
 		enabledExtensionCount = extension_count,
@@ -487,5 +570,8 @@ vk_create_logical_device :: proc(ctx: ^Vk_Context) -> bool {
 	vk.GetDeviceQueue(ctx.device, u32(ctx.caps.queue_families.compute), 0, &ctx.compute_queue)
 	vk.GetDeviceQueue(ctx.device, u32(ctx.caps.queue_families.present), 0, &ctx.present_queue)
 	ctx.supports_debug_utils = vk.CmdBeginDebugUtilsLabelEXT != nil && vk.CmdEndDebugUtilsLabelEXT != nil
+	ctx.caps.supports_dynamic_rendering = true
+	ctx.caps.supports_synchronization2 = true
+	ctx.caps.supports_device_fault = enabled_fault.deviceFault == true
 	return true
 }

@@ -7,10 +7,10 @@ import "core:math"
 import vk "vendor:vulkan"
 
 primordial_create_render_pipeline :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
-	return primordial_create_render_pipeline_for_pass(gpu, vk_ctx, vk_ctx.render_pass, &gpu.render_pipeline)
+	return primordial_create_render_pipeline_for_pass(gpu, vk_ctx, &gpu.render_pipeline)
 }
 
-primordial_create_render_pipeline_for_pass :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, render_pass: vk.RenderPass, out: ^engine.Vk_Graphics_Pipeline) -> bool {
+primordial_create_render_pipeline_for_pass :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, out: ^engine.Vk_Graphics_Pipeline) -> bool {
 	layouts := [1]vk.DescriptorSetLayout{gpu.render_set_layout}
 	layout_info := vk.PipelineLayoutCreateInfo{sType = .PIPELINE_LAYOUT_CREATE_INFO, setLayoutCount = 1, pSetLayouts = raw_data(layouts[:])}
 	if result := vk.CreatePipelineLayout(vk_ctx.device, &layout_info, nil, &out.layout); result != .SUCCESS {
@@ -39,8 +39,10 @@ primordial_create_render_pipeline_for_pass :: proc(gpu: ^Primordial_Gpu_State, v
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = u32(len(dynamic_states)), pDynamicStates = raw_data(dynamic_states[:])}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
 	info := vk.GraphicsPipelineCreateInfo {
 		sType = .GRAPHICS_PIPELINE_CREATE_INFO,
+		pNext = &rendering,
 		stageCount = 2,
 		pStages = raw_data(stages[:]),
 		pVertexInputState = &vertex_input,
@@ -51,8 +53,6 @@ primordial_create_render_pipeline_for_pass :: proc(gpu: ^Primordial_Gpu_State, v
 		pColorBlendState = &blend,
 		pDynamicState = &dynamic_state,
 		layout = out.layout,
-		renderPass = render_pass,
-		subpass = 0,
 	}
 	result := vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &out.pipeline)
 	if result != .SUCCESS {
@@ -62,7 +62,7 @@ primordial_create_render_pipeline_for_pass :: proc(gpu: ^Primordial_Gpu_State, v
 	return true
 }
 
-primordial_create_fade_pipeline :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, render_pass: vk.RenderPass, out: ^engine.Vk_Graphics_Pipeline) -> bool {
+primordial_create_fade_pipeline :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, out: ^engine.Vk_Graphics_Pipeline) -> bool {
 	layouts := [1]vk.DescriptorSetLayout{gpu.fade_set_layout}
 	layout_info := vk.PipelineLayoutCreateInfo{sType = .PIPELINE_LAYOUT_CREATE_INFO, setLayoutCount = 1, pSetLayouts = raw_data(layouts[:])}
 	if vk.CreatePipelineLayout(vk_ctx.device, &layout_info, nil, &out.layout) != .SUCCESS {
@@ -81,17 +81,9 @@ primordial_create_fade_pipeline :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^eng
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = u32(len(dynamic_states)), pDynamicStates = raw_data(dynamic_states[:])}
-	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = out.layout, renderPass = render_pass, subpass = 0}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
+	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, pNext = &rendering, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = out.layout}
 	return vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &out.pipeline) == .SUCCESS
-}
-
-primordial_create_trace_render_pass :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
-	attachment := vk.AttachmentDescription{format = vk_ctx.swapchain_format, samples = {._1}, loadOp = .CLEAR, storeOp = .STORE, stencilLoadOp = .DONT_CARE, stencilStoreOp = .DONT_CARE, initialLayout = .COLOR_ATTACHMENT_OPTIMAL, finalLayout = .COLOR_ATTACHMENT_OPTIMAL}
-	color_ref := vk.AttachmentReference{attachment = 0, layout = .COLOR_ATTACHMENT_OPTIMAL}
-	subpass := vk.SubpassDescription{pipelineBindPoint = .GRAPHICS, colorAttachmentCount = 1, pColorAttachments = &color_ref}
-	dependency := vk.SubpassDependency{srcSubpass = vk.SUBPASS_EXTERNAL, dstSubpass = 0, srcStageMask = {.COLOR_ATTACHMENT_OUTPUT}, dstStageMask = {.COLOR_ATTACHMENT_OUTPUT}, dstAccessMask = {.COLOR_ATTACHMENT_WRITE}, dependencyFlags = {.BY_REGION}}
-	info := vk.RenderPassCreateInfo{sType = .RENDER_PASS_CREATE_INFO, attachmentCount = 1, pAttachments = &attachment, subpassCount = 1, pSubpasses = &subpass, dependencyCount = 1, pDependencies = &dependency}
-	return vk.CreateRenderPass(vk_ctx.device, &info, nil, &gpu.trace_render_pass) == .SUCCESS
 }
 
 primordial_create_sampler :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
@@ -122,17 +114,11 @@ primordial_create_trace_image :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 	if vk.CreateImageView(vk_ctx.device, &view_info, nil, &image.view) != .SUCCESS {
 		return false
 	}
-	attachment := image.view
-	framebuffer_info := vk.FramebufferCreateInfo{sType = .FRAMEBUFFER_CREATE_INFO, renderPass = gpu.trace_render_pass, attachmentCount = 1, pAttachments = &attachment, width = width, height = height, layers = 1}
-	if vk.CreateFramebuffer(vk_ctx.device, &framebuffer_info, nil, &image.framebuffer) != .SUCCESS {
-		return false
-	}
 	image.layout = .UNDEFINED
 	return true
 }
 
 primordial_destroy_trace_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Primordial_Trace_Image) {
-	if image.framebuffer != vk.Framebuffer(0) {vk.DestroyFramebuffer(vk_ctx.device, image.framebuffer, nil)}
 	if image.view != vk.ImageView(0) {vk.DestroyImageView(vk_ctx.device, image.view, nil)}
 	if image.handle != vk.Image(0) {vk.DestroyImage(vk_ctx.device, image.handle, nil)}
 	if image.memory != vk.DeviceMemory(0) {vk.FreeMemory(vk_ctx.device, image.memory, nil)}
@@ -224,10 +210,10 @@ primordial_transition_trace_image :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^e
 		return
 	}
 	old_layout := image.layout
-	src_access: vk.AccessFlags
-	dst_access: vk.AccessFlags
-	src_stage := vk.PipelineStageFlags{.TOP_OF_PIPE}
-	dst_stage := vk.PipelineStageFlags{.TOP_OF_PIPE}
+	src_access: vk.AccessFlags2
+	dst_access: vk.AccessFlags2
+	src_stage := vk.PipelineStageFlags2{.TOP_OF_PIPE}
+	dst_stage := vk.PipelineStageFlags2{.TOP_OF_PIPE}
 	#partial switch old_layout {
 	case .UNDEFINED:
 		#partial switch new_layout {
@@ -252,14 +238,14 @@ primordial_transition_trace_image :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^e
 			dst_stage = {.COLOR_ATTACHMENT_OUTPUT}
 		}
 	}
-	barrier := vk.ImageMemoryBarrier{sType = .IMAGE_MEMORY_BARRIER, srcAccessMask = src_access, dstAccessMask = dst_access, oldLayout = old_layout, newLayout = new_layout, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, image = image.handle, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
-	vk.CmdPipelineBarrier(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
+	barrier := vk.ImageMemoryBarrier2{sType = .IMAGE_MEMORY_BARRIER_2, srcAccessMask = src_access, dstAccessMask = dst_access, oldLayout = old_layout, newLayout = new_layout, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, image = image.handle, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
+	engine.vk_cmd_pipeline_barrier2(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 	image.layout = new_layout
 }
 
 primordial_gpu_step :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim: ^Remaining_Sim_State, dt: f32) {
-	if !primordial_gpu_ensure(gpu, vk_ctx, &sim.primordial) || sim.paused {
+	if !primordial_gpu_ensure(gpu, vk_ctx, sim.primordial) || sim.paused {
 		return
 	}
 	frame_slot := int(vk_ctx.current_frame % engine.MAX_FRAMES_IN_FLIGHT)
@@ -268,9 +254,9 @@ primordial_gpu_step :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Conte
 	primordial_write_step_params(gpu, frame_slot, sim, dt, f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height))
 	primordial_update_descriptors_for_slot(gpu, vk_ctx, frame_slot)
 	grid_clear_set := gpu.grid_clear_sets[frame_slot]
-	grid_clear_barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
+	grid_clear_barrier := vk.MemoryBarrier2{sType = .MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
 	groups := (gpu.particle_count + PRIMORDIAL_WORKGROUP_SIZE - 1) / PRIMORDIAL_WORKGROUP_SIZE
-	grid_populate_barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ}}
+	grid_populate_barrier := vk.MemoryBarrier2{sType = .MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ}}
 	if !gpu.grid_state_valid || gpu.grid_state_index != u32(read_index) {
 		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_clear_pipeline.pipeline)
 		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.grid_clear_pipeline.layout, 0, 1, &grid_clear_set, 0, nil)
@@ -278,7 +264,7 @@ primordial_gpu_step :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Conte
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		engine.vk_cmd_count_compute_dispatch(vk_ctx)
-		vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &grid_clear_barrier, 0, nil, 0, nil)
+		engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &grid_clear_barrier, 0, nil, 0, nil)
 		engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_populate_pipeline.pipeline)
 		grid_populate_set := gpu.grid_populate_sets[frame_slot][write_index]
@@ -287,7 +273,7 @@ primordial_gpu_step :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Conte
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		engine.vk_cmd_count_compute_dispatch(vk_ctx)
-		vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &grid_populate_barrier, 0, nil, 0, nil)
+		engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &grid_populate_barrier, 0, nil, 0, nil)
 		engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 		gpu.grid_state_index = u32(read_index)
 		gpu.grid_state_valid = true
@@ -300,8 +286,8 @@ primordial_gpu_step :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Conte
 	vk.CmdDispatch(cmd, max(groups, 1), 1, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
 	if sim.primordial.foreground_color_mode == .Density {
-		barrier_update := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
-		vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &barrier_update, 0, nil, 0, nil)
+		barrier_update := vk.MemoryBarrier2{sType = .MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
+		engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &barrier_update, 0, nil, 0, nil)
 		engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 		// Density consumes the newly written positions, so rebuild the shared
 		// grid for the output buffer before traversing its local cells.
@@ -311,7 +297,7 @@ primordial_gpu_step :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Conte
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		engine.vk_cmd_count_compute_dispatch(vk_ctx)
-		vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &grid_clear_barrier, 0, nil, 0, nil)
+		engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &grid_clear_barrier, 0, nil, 0, nil)
 		engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_populate_pipeline.pipeline)
 		output_grid_set := gpu.grid_populate_sets[frame_slot][read_index]
@@ -320,7 +306,7 @@ primordial_gpu_step :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Conte
 		engine.vk_cmd_count_pipeline_bind(vk_ctx)
 		engine.vk_cmd_count_descriptor_bind(vk_ctx)
 		engine.vk_cmd_count_compute_dispatch(vk_ctx)
-		vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &grid_populate_barrier, 0, nil, 0, nil)
+		engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, {.COMPUTE_SHADER}, {}, 1, &grid_populate_barrier, 0, nil, 0, nil)
 		engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 		gpu.grid_state_index = u32(write_index)
 		gpu.grid_state_valid = true
@@ -334,8 +320,8 @@ primordial_gpu_step :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Conte
 	} else {
 		gpu.grid_state_valid = false
 	}
-	barrier_density := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ}}
-	vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.VERTEX_SHADER}, {}, 1, &barrier_density, 0, nil, 0, nil)
+	barrier_density := vk.MemoryBarrier2{sType = .MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ}}
+	engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, {.VERTEX_SHADER}, {}, 1, &barrier_density, 0, nil, 0, nil)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 	gpu.state_index = u32(write_index)
 }
@@ -380,7 +366,7 @@ primordial_set_viewport :: proc(cmd: vk.CommandBuffer, width, height: u32) {
 }
 
 primordial_gpu_present_direct :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, sim: ^Remaining_Sim_State, ui: ^Ui_Render_Sink = nil) {
-	settings := &sim.primordial
+	settings := sim.primordial
 	engine.vk_cmd_begin_swapchain_render_pass(vk_ctx, frame, primordial_clear_color(settings))
 	cmd := frame.command_buffer
 	frame_slot := int(frame.frame_index)
@@ -392,7 +378,7 @@ primordial_gpu_present_direct :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 }
 
 primordial_gpu_present_traces :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, sim: ^Remaining_Sim_State, ui: ^Ui_Render_Sink = nil) {
-	settings := &sim.primordial
+	settings := sim.primordial
 	if !primordial_ensure_trace_targets(gpu, vk_ctx) {
 		primordial_gpu_present_direct(gpu, vk_ctx, frame, sim, ui)
 		return
@@ -410,9 +396,7 @@ primordial_gpu_present_traces :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 	}
 	clear := primordial_clear_color(settings)
 	clear_value := vk.ClearValue{color = {float32 = {clear.r, clear.g, clear.b, clear.a}}}
-	begin := vk.RenderPassBeginInfo{sType = .RENDER_PASS_BEGIN_INFO, renderPass = gpu.trace_render_pass, framebuffer = gpu.trace_images[write_index].framebuffer, renderArea = {offset = {0, 0}, extent = {gpu.trace_width, gpu.trace_height}}, clearValueCount = 1, pClearValues = &clear_value}
-	vk.CmdBeginRenderPass(cmd, &begin, .INLINE)
-	vk_ctx.command_shape.render_pass_count += 1
+	engine.vk_cmd_begin_rendering(vk_ctx, cmd, gpu.trace_images[write_index].view, {gpu.trace_width, gpu.trace_height}, .COLOR_ATTACHMENT_OPTIMAL, .CLEAR, .STORE, clear_value)
 	primordial_set_viewport(cmd, gpu.trace_width, gpu.trace_height)
 	if gpu.trace_initialized {
 		vk.CmdBindPipeline(cmd, .GRAPHICS, gpu.fade_pipeline.pipeline)
@@ -424,7 +408,7 @@ primordial_gpu_present_traces :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engin
 		engine.vk_cmd_count_draw(vk_ctx)
 	}
 	primordial_draw_particles(gpu, vk_ctx, cmd, frame_slot, &gpu.trace_particle_pipeline)
-	vk.CmdEndRenderPass(cmd)
+	engine.vk_cmd_end_rendering(cmd)
 	gpu.trace_images[write_index].layout = .COLOR_ATTACHMENT_OPTIMAL
 	gpu.trace_initialized = true
 	primordial_transition_trace_image(gpu, vk_ctx, cmd, write_index, .SHADER_READ_ONLY_OPTIMAL)
@@ -452,7 +436,7 @@ primordial_gpu_present :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Co
 		engine.log_warn("primordial_gpu_present: render pipeline missing")
 		return
 	}
-	settings := &sim.primordial
+	settings := sim.primordial
 	frame_slot := int(frame.frame_index)
 	if gpu.trace_images[0].handle != vk.Image(0) && gpu.trace_images[1].handle != vk.Image(0) {
 		primordial_update_trace_descriptors_for_slot(gpu, vk_ctx, frame_slot)
@@ -475,7 +459,7 @@ primordial_gpu_present_viewport :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^eng
 	if !gpu.ready || gpu.render_pipeline.pipeline == vk.Pipeline(0) {
 		return
 	}
-	settings := &sim.primordial
+	settings := sim.primordial
 	frame_slot := int(frame.frame_index)
 	primordial_upload_lut(gpu, settings)
 	primordial_upload_camera(gpu, frame_slot, viewport.width, viewport.height)
@@ -538,9 +522,6 @@ primordial_gpu_destroy :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Co
 	}
 	if gpu.trace_sampler != vk.Sampler(0) {
 		vk.DestroySampler(vk_ctx.device, gpu.trace_sampler, nil)
-	}
-	if gpu.trace_render_pass != vk.RenderPass(0) {
-		vk.DestroyRenderPass(vk_ctx.device, gpu.trace_render_pass, nil)
 	}
 	if gpu.descriptor_pool != vk.DescriptorPool(0) {
 		vk.DestroyDescriptorPool(vk_ctx.device, gpu.descriptor_pool, nil)

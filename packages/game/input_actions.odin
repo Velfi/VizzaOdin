@@ -27,9 +27,10 @@ app_controller_right_trigger_is_primary :: proc(settings: App_Settings) -> bool 
 	return settings.controller_trigger_layout != "Left Primary"
 }
 
-// The event loop resolves physical inputs into these stable, semantic actions.
-// Render/UI code can migrate one consumer at a time while Ui_Frame_Input keeps
-// its legacy fields as a compatibility projection.
+// The event loop resolves physical inputs into these stable semantic actions.
+// Simulation focus ownership and controller shortcuts consume this frame as
+// their authoritative route; raw key/button fields remain only for widgets and
+// canvas gestures that have no semantic action.
 Input_Action_Source :: enum u8 {
 	None,
 	Mouse_Keyboard,

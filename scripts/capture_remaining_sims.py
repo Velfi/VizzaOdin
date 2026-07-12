@@ -26,7 +26,10 @@ CAPTURE_SLIME_IMAGES = os.environ.get("VIZZA_CAPTURE_SLIME_IMAGES") == "1"
 
 
 SIM_CLICKS = [
-    ("slime_mold", 1428, 792),
+	("gray_scott", 0, 0),
+	("particle_life", 0, 0),
+	("slime_mold", 1428, 792),
+	("gradient_editor", 0, 0),
     ("flow_field", 1990, 914),
     ("pellets", 1428, 1037),
     ("voronoi_ca", 1428, 1158),
@@ -36,7 +39,10 @@ SIM_CLICKS = [
 ]
 
 SIM_MODES = {
-    "slime_mold": "Slime_Mold",
+	"gray_scott": "Gray_Scott",
+	"particle_life": "Particle_Life",
+	"slime_mold": "Slime_Mold",
+	"gradient_editor": "Gradient_Editor",
     "flow_field": "Flow_Field",
     "pellets": "Pellets",
     "voronoi_ca": "Voronoi_CA",

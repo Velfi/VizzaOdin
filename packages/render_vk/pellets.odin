@@ -29,12 +29,19 @@ pellets_gpu_ensure :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 		return false
 	}
 	total_cells := gpu.grid_width * gpu.grid_height
-	grid_size := vk.DeviceSize(size_of(Pellets_Grid_Cell) * int(total_cells))
+	grid_size := vk.DeviceSize(size_of(u32) * int(gpu.particle_count))
 	if !engine.vk_create_host_buffer(vk_ctx, grid_size, {.STORAGE_BUFFER}, &gpu.grid_buffer) {
 		pellets_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
 	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * int(total_cells)), {.STORAGE_BUFFER}, &gpu.grid_counts_buffer) {
+		pellets_gpu_destroy(gpu, vk_ctx)
+		return false
+	}
+	block_count := max((total_cells + 255) / 256, 1)
+	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * int(total_cells)), {.STORAGE_BUFFER}, &gpu.grid_offsets_buffer) ||
+	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * int(total_cells)), {.STORAGE_BUFFER}, &gpu.grid_cursors_buffer) ||
+	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(u32) * int(block_count)), {.STORAGE_BUFFER}, &gpu.grid_block_sums_buffer) {
 		pellets_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
@@ -58,10 +65,6 @@ pellets_gpu_ensure :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
 		pellets_write_static_params(gpu, vk_ctx, frame_slot, settings)
 	}
-	if !pellets_create_trail_render_pass(gpu, vk_ctx) {
-		pellets_gpu_destroy(gpu, vk_ctx)
-		return false
-	}
 	if !pellets_create_sampler(gpu, vk_ctx) {
 		pellets_gpu_destroy(gpu, vk_ctx)
 		return false
@@ -72,6 +75,10 @@ pellets_gpu_ensure :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 	}
 	if !pellets_create_compute_pipeline(vk_ctx, gpu.grid_clear_shader.handle, gpu.grid_clear_set_layout, &gpu.grid_clear_pipeline) ||
 	   !pellets_create_compute_pipeline(vk_ctx, gpu.grid_populate_shader.handle, gpu.grid_populate_set_layout, &gpu.grid_populate_pipeline) ||
+	   !pellets_create_compute_pipeline(vk_ctx, gpu.grid_prefix_shader.handle, gpu.grid_prefix_set_layout, &gpu.grid_prefix_pipeline) ||
+	   !pellets_create_compute_pipeline(vk_ctx, gpu.grid_prefix_blocks_shader.handle, gpu.grid_prefix_set_layout, &gpu.grid_prefix_blocks_pipeline) ||
+	   !pellets_create_compute_pipeline(vk_ctx, gpu.grid_prefix_add_shader.handle, gpu.grid_prefix_set_layout, &gpu.grid_prefix_add_pipeline) ||
+	   !pellets_create_compute_pipeline(vk_ctx, gpu.grid_scatter_shader.handle, gpu.grid_scatter_set_layout, &gpu.grid_scatter_pipeline) ||
 	   !pellets_create_compute_pipeline(vk_ctx, gpu.physics_shader.handle, gpu.physics_set_layout, &gpu.physics_pipeline) ||
 	   !pellets_create_compute_pipeline(vk_ctx, gpu.density_shader.handle, gpu.density_set_layout, &gpu.density_pipeline) {
 		pellets_gpu_destroy(gpu, vk_ctx)
@@ -85,19 +92,19 @@ pellets_gpu_ensure :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 		pellets_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
-	if !pellets_create_background_pipeline_for_pass(gpu, vk_ctx, gpu.trail_render_pass, &gpu.trail_background_pipeline) {
+	if !pellets_create_background_pipeline_for_pass(gpu, vk_ctx, &gpu.trail_background_pipeline) {
 		pellets_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
-	if !pellets_create_render_pipeline_for_pass(gpu, vk_ctx, gpu.trail_render_pass, &gpu.trail_particle_pipeline) {
+	if !pellets_create_render_pipeline_for_pass(gpu, vk_ctx, &gpu.trail_particle_pipeline) {
 		pellets_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
-	if !pellets_create_fullscreen_pipeline(vk_ctx, gpu.trail_fade_vertex_shader, gpu.trail_fade_fragment_shader, gpu.trail_render_pass, gpu.trail_fade_set_layout, true, &gpu.trail_fade_pipeline) {
+	if !pellets_create_fullscreen_pipeline(vk_ctx, gpu.trail_fade_vertex_shader, gpu.trail_fade_fragment_shader, gpu.trail_fade_set_layout, true, &gpu.trail_fade_pipeline) {
 		pellets_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
-	if !pellets_create_fullscreen_pipeline(vk_ctx, gpu.trail_blit_vertex_shader, gpu.trail_blit_fragment_shader, vk_ctx.render_pass, gpu.trail_blit_set_layout, true, &gpu.trail_blit_pipeline) {
+	if !pellets_create_fullscreen_pipeline(vk_ctx, gpu.trail_blit_vertex_shader, gpu.trail_blit_fragment_shader, gpu.trail_blit_set_layout, true, &gpu.trail_blit_pipeline) {
 		pellets_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
@@ -108,6 +115,10 @@ pellets_gpu_ensure :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 pellets_load_shaders :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
 	return engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_GRID_CLEAR_SHADER_SOURCE, PELLETS_GRID_CLEAR_FALLBACK_SPV, .Compute, PELLETS_SOURCE_ENTRY, &gpu.grid_clear_shader) &&
 	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_GRID_POPULATE_SHADER_SOURCE, PELLETS_GRID_POPULATE_FALLBACK_SPV, .Compute, PELLETS_SOURCE_ENTRY, &gpu.grid_populate_shader) &&
+	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_GRID_PREFIX_SHADER_SOURCE, PELLETS_GRID_PREFIX_FALLBACK_SPV, .Compute, PELLETS_SOURCE_ENTRY, &gpu.grid_prefix_shader) &&
+	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_GRID_PREFIX_BLOCKS_SHADER_SOURCE, PELLETS_GRID_PREFIX_BLOCKS_FALLBACK_SPV, .Compute, PELLETS_SOURCE_ENTRY, &gpu.grid_prefix_blocks_shader) &&
+	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_GRID_PREFIX_ADD_SHADER_SOURCE, PELLETS_GRID_PREFIX_ADD_FALLBACK_SPV, .Compute, PELLETS_SOURCE_ENTRY, &gpu.grid_prefix_add_shader) &&
+	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_GRID_SCATTER_SHADER_SOURCE, PELLETS_GRID_SCATTER_FALLBACK_SPV, .Compute, PELLETS_SOURCE_ENTRY, &gpu.grid_scatter_shader) &&
 	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_PHYSICS_SHADER_SOURCE, PELLETS_PHYSICS_FALLBACK_SPV, .Compute, PELLETS_SOURCE_ENTRY, &gpu.physics_shader) &&
 	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_DENSITY_SHADER_SOURCE, PELLETS_DENSITY_FALLBACK_SPV, .Compute, PELLETS_SOURCE_ENTRY, &gpu.density_shader) &&
 	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_BACKGROUND_SHADER_SOURCE, PELLETS_BACKGROUND_VERTEX_FALLBACK_SPV, .Vertex, PELLETS_VERTEX_SOURCE_ENTRY, &gpu.background_vertex_shader) &&
@@ -234,7 +245,7 @@ pellets_write_physics_params :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk
 	if gpu.physics_params_buffers[frame_slot].mapped == nil {
 		return
 	}
-	settings := &sim.pellets
+	settings := sim.pellets
 	aspect := f32(vk_ctx.swapchain_extent.width) / max(f32(vk_ctx.swapchain_extent.height), 1)
 	params := cast(^Pellets_Physics_Params)gpu.physics_params_buffers[frame_slot].mapped
 	params^ = {
@@ -256,37 +267,48 @@ pellets_write_physics_params :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk
 		density_damping_enabled = settings.density_damping_enabled ? u32(1) : u32(0),
 		overlap_resolution_strength = settings.overlap_resolution_strength,
 		frame_index = gpu.frame_index,
+		coloring_mode = u32(settings.foreground_color_mode),
 	}
 }
 
 pellets_create_descriptors :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
-	clear_bindings := [3]vk.DescriptorSetLayoutBinding{
+	clear_bindings := [2]vk.DescriptorSetLayoutBinding{
 		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
 	if !pellets_create_set_layout(vk_ctx, clear_bindings[:], &gpu.grid_clear_set_layout) {return false}
-	populate_bindings := [4]vk.DescriptorSetLayoutBinding{
+	populate_bindings := [3]vk.DescriptorSetLayoutBinding{
 		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
 	if !pellets_create_set_layout(vk_ctx, populate_bindings[:], &gpu.grid_populate_set_layout) {return false}
-	physics_bindings := [5]vk.DescriptorSetLayoutBinding{
+	prefix_bindings := [5]vk.DescriptorSetLayoutBinding{
 		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
-	if !pellets_create_set_layout(vk_ctx, physics_bindings[:], &gpu.physics_set_layout) {return false}
-	density_bindings := [5]vk.DescriptorSetLayoutBinding{
+	if !pellets_create_set_layout(vk_ctx, prefix_bindings[:], &gpu.grid_prefix_set_layout) {return false}
+	scatter_bindings := prefix_bindings
+	if !pellets_create_set_layout(vk_ctx, scatter_bindings[:], &gpu.grid_scatter_set_layout) {return false}
+	physics_bindings := [6]vk.DescriptorSetLayoutBinding{
 		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 		{binding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 5, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+	}
+	if !pellets_create_set_layout(vk_ctx, physics_bindings[:], &gpu.physics_set_layout) {return false}
+	density_bindings := [6]vk.DescriptorSetLayoutBinding{
+		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
+		{binding = 5, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
 	if !pellets_create_set_layout(vk_ctx, density_bindings[:], &gpu.density_set_layout) {return false}
 	background_bindings := [2]vk.DescriptorSetLayoutBinding{
@@ -313,17 +335,19 @@ pellets_create_descriptors :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 	if !pellets_create_set_layout(vk_ctx, blit_bindings[:], &gpu.trail_blit_set_layout) {return false}
 
 	pool_sizes := [4]vk.DescriptorPoolSize{
-		{type = .STORAGE_BUFFER, descriptorCount = 14 * engine.MAX_FRAMES_IN_FLIGHT},
+		{type = .STORAGE_BUFFER, descriptorCount = 32 * engine.MAX_FRAMES_IN_FLIGHT},
 		{type = .UNIFORM_BUFFER, descriptorCount = 11 * engine.MAX_FRAMES_IN_FLIGHT},
 		{type = .SAMPLED_IMAGE, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
 		{type = .SAMPLER, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
 	}
-	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 10 * engine.MAX_FRAMES_IN_FLIGHT}
+	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 12 * engine.MAX_FRAMES_IN_FLIGHT}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {return false}
 	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
-		layouts := [10]vk.DescriptorSetLayout{
+		layouts := [12]vk.DescriptorSetLayout{
 			gpu.grid_clear_set_layout,
 			gpu.grid_populate_set_layout,
+			gpu.grid_prefix_set_layout,
+			gpu.grid_scatter_set_layout,
 			gpu.physics_set_layout,
 			gpu.density_set_layout,
 			gpu.background_set_layout,
@@ -333,19 +357,21 @@ pellets_create_descriptors :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 			gpu.trail_blit_set_layout,
 			gpu.trail_blit_set_layout,
 		}
-		sets: [10]vk.DescriptorSet
+		sets: [12]vk.DescriptorSet
 		alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = u32(len(layouts)), pSetLayouts = raw_data(layouts[:])}
 		if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {return false}
 		gpu.grid_clear_sets[frame_slot] = sets[0]
 		gpu.grid_populate_sets[frame_slot] = sets[1]
-		gpu.physics_sets[frame_slot] = sets[2]
-		gpu.density_sets[frame_slot] = sets[3]
-		gpu.background_sets[frame_slot] = sets[4]
-		gpu.render_sets[frame_slot] = sets[5]
-		gpu.trail_fade_sets[frame_slot][0] = sets[6]
-		gpu.trail_fade_sets[frame_slot][1] = sets[7]
-		gpu.trail_blit_sets[frame_slot][0] = sets[8]
-		gpu.trail_blit_sets[frame_slot][1] = sets[9]
+		gpu.grid_prefix_sets[frame_slot] = sets[2]
+		gpu.grid_scatter_sets[frame_slot] = sets[3]
+		gpu.physics_sets[frame_slot] = sets[4]
+		gpu.density_sets[frame_slot] = sets[5]
+		gpu.background_sets[frame_slot] = sets[6]
+		gpu.render_sets[frame_slot] = sets[7]
+		gpu.trail_fade_sets[frame_slot][0] = sets[8]
+		gpu.trail_fade_sets[frame_slot][1] = sets[9]
+		gpu.trail_blit_sets[frame_slot][0] = sets[10]
+		gpu.trail_blit_sets[frame_slot][1] = sets[11]
 	}
 	pellets_update_descriptors(gpu, vk_ctx)
 	return true
@@ -364,8 +390,11 @@ pellets_update_descriptors :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 
 pellets_update_descriptors_for_slot :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int) {
 	particle_info := vk.DescriptorBufferInfo{buffer = gpu.particle_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Pellets_Particle) * int(gpu.particle_count))}
-	grid_info := vk.DescriptorBufferInfo{buffer = gpu.grid_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(Pellets_Grid_Cell) * int(gpu.grid_width * gpu.grid_height))}
+	grid_info := vk.DescriptorBufferInfo{buffer = gpu.grid_buffer.handle, offset = 0, range = gpu.grid_buffer.size}
 	counts_info := vk.DescriptorBufferInfo{buffer = gpu.grid_counts_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * int(gpu.grid_width * gpu.grid_height))}
+	offsets_info := vk.DescriptorBufferInfo{buffer = gpu.grid_offsets_buffer.handle, offset = 0, range = gpu.grid_offsets_buffer.size}
+	cursors_info := vk.DescriptorBufferInfo{buffer = gpu.grid_cursors_buffer.handle, offset = 0, range = gpu.grid_cursors_buffer.size}
+	block_sums_info := vk.DescriptorBufferInfo{buffer = gpu.grid_block_sums_buffer.handle, offset = 0, range = gpu.grid_block_sums_buffer.size}
 	physics_info := vk.DescriptorBufferInfo{buffer = gpu.physics_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Pellets_Physics_Params))}
 	density_info := vk.DescriptorBufferInfo{buffer = gpu.density_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Pellets_Density_Params))}
 	render_info := vk.DescriptorBufferInfo{buffer = gpu.render_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Pellets_Render_Params))}
@@ -375,28 +404,40 @@ pellets_update_descriptors_for_slot :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^en
 	lut_info := vk.DescriptorBufferInfo{buffer = gpu.lut_buffer.handle, offset = 0, range = vk.DeviceSize(size_of(u32) * COLOR_SCHEME_U32_COUNT)}
 	grid_clear_set := gpu.grid_clear_sets[frame_slot]
 	grid_populate_set := gpu.grid_populate_sets[frame_slot]
+	grid_prefix_set := gpu.grid_prefix_sets[frame_slot]
+	grid_scatter_set := gpu.grid_scatter_sets[frame_slot]
 	physics_set := gpu.physics_sets[frame_slot]
 	density_set := gpu.density_sets[frame_slot]
 	background_set := gpu.background_sets[frame_slot]
 	render_set := gpu.render_sets[frame_slot]
 	writes := [?]vk.WriteDescriptorSet{
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_clear_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_clear_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &counts_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_clear_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &grid_params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_clear_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &counts_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_populate_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_populate_set, dstBinding = 1, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_populate_set, dstBinding = 2, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &grid_params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_populate_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &counts_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_populate_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &grid_params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_populate_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &counts_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_prefix_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &counts_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_prefix_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &grid_params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_prefix_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &offsets_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_prefix_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &cursors_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_prefix_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &block_sums_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_scatter_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_scatter_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &grid_params_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_scatter_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &offsets_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_scatter_set, dstBinding = 3, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &cursors_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = grid_scatter_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = physics_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = physics_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &physics_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = physics_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = physics_set, dstBinding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &grid_params_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = physics_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &counts_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = physics_set, dstBinding = 5, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &offsets_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &density_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &grid_params_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &counts_info},
+		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 5, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &offsets_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &background_params_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &background_color_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = render_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
@@ -416,10 +457,10 @@ pellets_create_compute_pipeline :: proc(vk_ctx: ^engine.Vk_Context, shader: vk.S
 }
 
 pellets_create_background_pipeline :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
-	return pellets_create_background_pipeline_for_pass(gpu, vk_ctx, vk_ctx.render_pass, &gpu.background_pipeline)
+	return pellets_create_background_pipeline_for_pass(gpu, vk_ctx, &gpu.background_pipeline)
 }
 
-pellets_create_background_pipeline_for_pass :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, render_pass: vk.RenderPass, out: ^engine.Vk_Graphics_Pipeline) -> bool {
+pellets_create_background_pipeline_for_pass :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, out: ^engine.Vk_Graphics_Pipeline) -> bool {
 	layouts := [1]vk.DescriptorSetLayout{gpu.background_set_layout}
 	layout_info := vk.PipelineLayoutCreateInfo{sType = .PIPELINE_LAYOUT_CREATE_INFO, setLayoutCount = 1, pSetLayouts = raw_data(layouts[:])}
 	if vk.CreatePipelineLayout(vk_ctx.device, &layout_info, nil, &out.layout) != .SUCCESS {return false}
@@ -436,15 +477,16 @@ pellets_create_background_pipeline_for_pass :: proc(gpu: ^Pellets_Gpu_State, vk_
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = 2, pDynamicStates = raw_data(dynamic_states[:])}
-	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = out.layout, renderPass = render_pass, subpass = 0}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
+	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, pNext = &rendering, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = out.layout}
 	return vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &out.pipeline) == .SUCCESS
 }
 
 pellets_create_render_pipeline :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
-	return pellets_create_render_pipeline_for_pass(gpu, vk_ctx, vk_ctx.render_pass, &gpu.render_pipeline)
+	return pellets_create_render_pipeline_for_pass(gpu, vk_ctx, &gpu.render_pipeline)
 }
 
-pellets_create_render_pipeline_for_pass :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, render_pass: vk.RenderPass, out: ^engine.Vk_Graphics_Pipeline) -> bool {
+pellets_create_render_pipeline_for_pass :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, out: ^engine.Vk_Graphics_Pipeline) -> bool {
 	layouts := [1]vk.DescriptorSetLayout{gpu.render_set_layout}
 	layout_info := vk.PipelineLayoutCreateInfo{sType = .PIPELINE_LAYOUT_CREATE_INFO, setLayoutCount = 1, pSetLayouts = raw_data(layouts[:])}
 	if vk.CreatePipelineLayout(vk_ctx.device, &layout_info, nil, &out.layout) != .SUCCESS {return false}
@@ -461,11 +503,12 @@ pellets_create_render_pipeline_for_pass :: proc(gpu: ^Pellets_Gpu_State, vk_ctx:
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = 2, pDynamicStates = raw_data(dynamic_states[:])}
-	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = out.layout, renderPass = render_pass, subpass = 0}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
+	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, pNext = &rendering, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = out.layout}
 	return vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &out.pipeline) == .SUCCESS
 }
 
-pellets_create_fullscreen_pipeline :: proc(vk_ctx: ^engine.Vk_Context, vertex_module, fragment_module: engine.Vk_Shader_Module, render_pass: vk.RenderPass, set_layout: vk.DescriptorSetLayout, blend_enabled: bool, out: ^engine.Vk_Graphics_Pipeline) -> bool {
+pellets_create_fullscreen_pipeline :: proc(vk_ctx: ^engine.Vk_Context, vertex_module, fragment_module: engine.Vk_Shader_Module, set_layout: vk.DescriptorSetLayout, blend_enabled: bool, out: ^engine.Vk_Graphics_Pipeline) -> bool {
 	layouts := [1]vk.DescriptorSetLayout{set_layout}
 	layout_info := vk.PipelineLayoutCreateInfo{sType = .PIPELINE_LAYOUT_CREATE_INFO, setLayoutCount = 1, pSetLayouts = raw_data(layouts[:])}
 	if vk.CreatePipelineLayout(vk_ctx.device, &layout_info, nil, &out.layout) != .SUCCESS {return false}
@@ -482,17 +525,9 @@ pellets_create_fullscreen_pipeline :: proc(vk_ctx: ^engine.Vk_Context, vertex_mo
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = 2, pDynamicStates = raw_data(dynamic_states[:])}
-	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = out.layout, renderPass = render_pass, subpass = 0}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
+	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, pNext = &rendering, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = out.layout}
 	return vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &out.pipeline) == .SUCCESS
-}
-
-pellets_create_trail_render_pass :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
-	attachment := vk.AttachmentDescription{format = vk_ctx.swapchain_format, samples = {._1}, loadOp = .CLEAR, storeOp = .STORE, stencilLoadOp = .DONT_CARE, stencilStoreOp = .DONT_CARE, initialLayout = .COLOR_ATTACHMENT_OPTIMAL, finalLayout = .COLOR_ATTACHMENT_OPTIMAL}
-	color_ref := vk.AttachmentReference{attachment = 0, layout = .COLOR_ATTACHMENT_OPTIMAL}
-	subpass := vk.SubpassDescription{pipelineBindPoint = .GRAPHICS, colorAttachmentCount = 1, pColorAttachments = &color_ref}
-	dependency := vk.SubpassDependency{srcSubpass = vk.SUBPASS_EXTERNAL, dstSubpass = 0, srcStageMask = {.COLOR_ATTACHMENT_OUTPUT}, dstStageMask = {.COLOR_ATTACHMENT_OUTPUT}, dstAccessMask = {.COLOR_ATTACHMENT_WRITE}, dependencyFlags = {.BY_REGION}}
-	info := vk.RenderPassCreateInfo{sType = .RENDER_PASS_CREATE_INFO, attachmentCount = 1, pAttachments = &attachment, subpassCount = 1, pSubpasses = &subpass, dependencyCount = 1, pDependencies = &dependency}
-	return vk.CreateRenderPass(vk_ctx.device, &info, nil, &gpu.trail_render_pass) == .SUCCESS
 }
 
 pellets_create_sampler :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
@@ -523,17 +558,11 @@ pellets_create_trail_image :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 	if vk.CreateImageView(vk_ctx.device, &view_info, nil, &image.view) != .SUCCESS {
 		return false
 	}
-	attachment := image.view
-	framebuffer_info := vk.FramebufferCreateInfo{sType = .FRAMEBUFFER_CREATE_INFO, renderPass = gpu.trail_render_pass, attachmentCount = 1, pAttachments = &attachment, width = width, height = height, layers = 1}
-	if vk.CreateFramebuffer(vk_ctx.device, &framebuffer_info, nil, &image.framebuffer) != .SUCCESS {
-		return false
-	}
 	image.layout = .UNDEFINED
 	return true
 }
 
 pellets_destroy_trail_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Pellets_Trail_Image) {
-	if image.framebuffer != vk.Framebuffer(0) {vk.DestroyFramebuffer(vk_ctx.device, image.framebuffer, nil)}
 	if image.view != vk.ImageView(0) {vk.DestroyImageView(vk_ctx.device, image.view, nil)}
 	if image.handle != vk.Image(0) {vk.DestroyImage(vk_ctx.device, image.handle, nil)}
 	if image.memory != vk.DeviceMemory(0) {vk.FreeMemory(vk_ctx.device, image.memory, nil)}

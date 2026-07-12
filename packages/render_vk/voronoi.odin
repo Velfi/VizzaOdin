@@ -16,13 +16,14 @@ voronoi_gpu_ensure_size :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Cont
 	target_width := max(width, 1)
 	target_height := max(height, 1)
 	point_count := max(settings.point_count, 1)
-	if gpu.ready && gpu.width == target_width && gpu.height == target_height && gpu.point_count == point_count {
+	if gpu.ready && gpu.width == target_width && gpu.height == target_height && gpu.point_count == point_count && gpu.initialized_seed == settings.random_seed {
 		return true
 	}
 	voronoi_gpu_destroy(gpu, vk_ctx)
 	gpu.width = target_width
 	gpu.height = target_height
 	gpu.point_count = point_count
+	gpu.initialized_seed = settings.random_seed
 	if !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_JFA_INIT_SHADER_SOURCE, VORONOI_JFA_INIT_FALLBACK_SPV, .Compute, VORONOI_SOURCE_ENTRY, &gpu.jfa_init_shader) ||
 	   !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_JFA_ITERATION_SHADER_SOURCE, VORONOI_JFA_ITERATION_FALLBACK_SPV, .Compute, VORONOI_SOURCE_ENTRY, &gpu.jfa_iteration_shader) ||
 	   !engine.vk_load_shader_module_with_fallback(vk_ctx, VORONOI_BROWNIAN_SHADER_SOURCE, VORONOI_BROWNIAN_FALLBACK_SPV, .Compute, VORONOI_SOURCE_ENTRY, &gpu.brownian_shader) ||
@@ -303,16 +304,17 @@ voronoi_create_render_pipeline :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = 2, pDynamicStates = raw_data(dynamic_states[:])}
-	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = gpu.render_pipeline.layout, renderPass = vk_ctx.render_pass, subpass = 0}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
+	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, pNext = &rendering, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = gpu.render_pipeline.layout}
 	return vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &gpu.render_pipeline.pipeline) == .SUCCESS
 }
 
 voronoi_transition_image :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, image: ^Voronoi_Image, new_layout: vk.ImageLayout) {
 	if image.layout == new_layout {return}
-	src_access: vk.AccessFlags
-	dst_access: vk.AccessFlags
-	src_stage := vk.PipelineStageFlags{.TOP_OF_PIPE}
-	dst_stage := vk.PipelineStageFlags{.COMPUTE_SHADER}
+	src_access: vk.AccessFlags2
+	dst_access: vk.AccessFlags2
+	src_stage := vk.PipelineStageFlags2{.TOP_OF_PIPE}
+	dst_stage := vk.PipelineStageFlags2{.COMPUTE_SHADER}
 	if image.layout == .GENERAL {
 		src_access = {.SHADER_WRITE}
 		src_stage = {.COMPUTE_SHADER}
@@ -327,16 +329,16 @@ voronoi_transition_image :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuff
 		dst_access = {.SHADER_READ}
 		dst_stage = {.COMPUTE_SHADER, .FRAGMENT_SHADER}
 	}
-	barrier := vk.ImageMemoryBarrier{sType = .IMAGE_MEMORY_BARRIER, srcAccessMask = src_access, dstAccessMask = dst_access, oldLayout = image.layout, newLayout = new_layout, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, image = image.handle, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
-	vk.CmdPipelineBarrier(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
+	barrier := vk.ImageMemoryBarrier2{sType = .IMAGE_MEMORY_BARRIER_2, srcAccessMask = src_access, dstAccessMask = dst_access, oldLayout = image.layout, newLayout = new_layout, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, image = image.handle, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
+	engine.vk_cmd_pipeline_barrier2(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 	image.layout = new_layout
 }
 
 voronoi_gpu_step :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim: ^Remaining_Sim_State, delta_time: f32) {
-	if !voronoi_gpu_ensure(gpu, vk_ctx, &sim.voronoi) {return}
+	if !voronoi_gpu_ensure(gpu, vk_ctx, sim.voronoi) {return}
 	voronoi_apply_interaction(gpu, sim, delta_time)
-	voronoi_gpu_step_ready(gpu, vk_ctx, cmd, &sim.voronoi, delta_time, sim.paused)
+	voronoi_gpu_step_ready(gpu, vk_ctx, cmd, sim.voronoi, delta_time, sim.paused)
 }
 
 voronoi_apply_interaction :: proc(gpu: ^Voronoi_Gpu_State, sim: ^Remaining_Sim_State, dt: f32) {
@@ -477,15 +479,15 @@ voronoi_gpu_step_ready :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Conte
 	}
 }
 
-voronoi_compute_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, dst: vk.PipelineStageFlags) {
-	barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
-	vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, dst, {}, 1, &barrier, 0, nil, 0, nil)
+voronoi_compute_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, dst: vk.PipelineStageFlags2) {
+	barrier := vk.MemoryBarrier2{sType = .MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
+	engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, dst, {}, 1, &barrier, 0, nil, 0, nil)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 }
 
 voronoi_transfer_to_compute_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer) {
-	barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.TRANSFER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
-	vk.CmdPipelineBarrier(cmd, {.TRANSFER}, {.COMPUTE_SHADER}, {}, 1, &barrier, 0, nil, 0, nil)
+	barrier := vk.MemoryBarrier2{sType = .MEMORY_BARRIER_2, srcAccessMask = {.TRANSFER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
+	engine.vk_cmd_pipeline_barrier2(cmd, {.TRANSFER}, {.COMPUTE_SHADER}, {}, 1, &barrier, 0, nil, 0, nil)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 }
 

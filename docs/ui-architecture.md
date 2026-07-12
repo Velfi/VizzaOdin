@@ -58,6 +58,19 @@ surface rather than the split module layout above.
 9. Vulkan backend lowers draw commands to transient vertices and submits after
    simulation rendering.
 
+### Interaction geometry
+
+Pointer interaction uses the stable-ID rectangle snapshot from the previous
+completed frame. Widget calls still return current input actions immediately
+and emit current-frame geometry for paint and for the next snapshot. The first
+bootstrap frame may use explicit current rectangles; once a snapshot exists, a
+new widget waits until it has completed layout before accepting pointer input.
+Keyboard and controller focus remain stable-ID based and spatial navigation is
+resolved at frame end.
+
+This hybrid avoids replaying product UI code or retaining product values while
+preventing input from targeting unresolved or discontinuously moving layout.
+
 This keeps the API immediate while allowing the implementation to be
 multi-pass, deterministic, and debuggable.
 
@@ -256,9 +269,24 @@ Text commands currently carry raw strings and are shaped during UI draw lowering
 through the `third_party/textshape` shim, falling back to bitmap-font advances
 when shaping is unavailable. A later split can cache shaped runs by handle.
 
-## Visual Editor
+## Main-menu previews
 
-The editor is a separate mode/app that edits `Ui_Document` assets:
+Simulation cards emit renderer-neutral preview slots during UI construction.
+All registered simulations use live preview callbacks from their paired render
+descriptors. The former simulation-by-simulation CPU illustration switch has
+been removed; Gradient Editor retains its palette-strip tool preview, with a
+generic surface fallback for non-feature screens.
+
+## Authored documents and future tooling
+
+Runtime-authored documents now use versioned `.vui.json` assets. Documents are
+parsed into arena-owned immutable structures, fully validated before swap, and
+bound to explicitly typed runtime slots. Failed debug reloads preserve the
+active document. Production builds load packaged documents during render-worker
+initialization and do not watch the filesystem.
+
+No visual editor is implemented by this refactor. A future separate tool could
+edit `Ui_Document` assets without becoming part of the runtime architecture:
 
 ```odin
 Ui_Document :: struct {
@@ -277,7 +305,7 @@ Ui_Template :: struct {
 }
 ```
 
-Editor features:
+Potential out-of-scope tooling features:
 
 - Canvas with selectable/resizable nodes
 - Hierarchy tree
@@ -344,19 +372,36 @@ Debugging layout without these would be misery with better branding.
 - Batch draw commands by texture, scissor, and pipeline state.
 - Solver budget visible in frame stats.
 
-## Next Architecture Scope
+## Current Hybrid Core
 
-The next editor/document-oriented architecture should add:
+The public API remains immediate and product values remain authoritative. Each
+widget also emits a transient semantic node. Layout containers form parent and
+sibling links, while controls record stable IDs, resolved bounds, enabled and
+focusable state. No transient node pointer survives `gui_end_frame`.
 
-1. Frame tree builder behind current immediate API.
-2. Stack, grid, overlay, and absolute-anchor layout.
-3. A small Cassowary-style solver for required/soft linear constraints.
-4. UI document schema for templates, tokens, styles, bindings, actions.
-5. Hand-authored `main_menu`, `options`, and `gray_scott_controls` documents.
-6. Runtime template binding API.
-7. Editor skeleton with hierarchy, canvas, properties, and constraint overlay.
-8. Cached text shaping handles layered over the current raw-string draw
-   command path.
+Interaction uses the previous completed frame's stable-ID rectangle snapshot.
+New widgets wait for one completed layout, unstable nodes suppress pointer
+interaction, and discontinuous position/size changes suppress interaction for
+the transition frame unless a control explicitly opts in. Internal semantic
+validation is bounded to two passes and exposes node, retry, overflow, and
+unstable-node diagnostics.
+
+Widget drawing first accumulates a transient draft command stream. After
+semantic validation and bounded layout retries complete, `gui_end_frame`
+publishes a separate renderer-neutral paint stream. Vulkan lowering and frame
+statistics consume only that completed stream; it remains unchanged while the
+next frame is being constructed.
+
+Focus ownership is centralized by semantic layer: canvas, utility rail,
+control deck, panel, active control, child region, and modal. Controller decks
+claim and release deck/panel/control owners as their region phase changes;
+focused editors claim the active-control layer; modal focus scopes push and
+restore the prior owner without accumulating duplicate claims across frames.
+
+Remaining core work is richer multi-node constraint solving and moving more
+specialized slot content from draft immediate paint emission into semantic-node
+paint lowering. All production shared screens now instantiate immutable
+documents. This refactor does not include a visual editor.
 
 Defer:
 

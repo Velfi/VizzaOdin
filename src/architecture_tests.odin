@@ -12,6 +12,791 @@ import "core:testing"
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
 
+Test_Gray_Scott_Product_Storage :: struct {
+	settings: game.Gray_Scott_Settings,
+	runtime: game.Gray_Scott_Runtime_State,
+}
+
+test_gray_scott_init :: proc(sim: ^game.Gray_Scott_Simulation, storage: ^Test_Gray_Scott_Product_Storage, width, height: i32) {
+	sim.settings = &storage.settings
+	sim.runtime = &storage.runtime
+	game.gray_scott_init(sim, width, height)
+}
+
+Test_Particle_Life_Product_Storage :: struct {
+	settings: game.Particle_Life_Settings,
+	runtime: game.Particle_Life_Runtime_State,
+}
+
+test_particle_life_init :: proc(sim: ^game.Particle_Life_Simulation, storage: ^Test_Particle_Life_Product_Storage, width, height: i32) {
+	sim.settings = &storage.settings
+	sim.runtime = &storage.runtime
+	game.particle_life_init(sim, width, height)
+}
+
+Test_Remaining_Sim_Product_Storage :: struct {
+	runtime: game.Remaining_Sim_Runtime_State,
+	moire: game.Moire_Settings,
+	vectors: game.Vectors_Settings,
+	primordial: game.Primordial_Settings,
+	voronoi: game.Voronoi_Settings,
+	pellets: game.Pellets_Settings,
+	flow: game.Flow_Settings,
+	slime: game.Slime_Settings,
+}
+
+test_remaining_sim_init :: proc(sim: ^game.Remaining_Sim_State, storage: ^Test_Remaining_Sim_Product_Storage) {
+	sim.runtime = &storage.runtime
+	sim.moire = &storage.moire
+	sim.vectors = &storage.vectors
+	sim.primordial = &storage.primordial
+	sim.voronoi = &storage.voronoi
+	sim.pellets = &storage.pellets
+	sim.flow = &storage.flow
+	sim.slime = &storage.slime
+	game.remaining_sim_init(sim)
+}
+
+@(test)
+test_feature_registry_is_unique_complete_and_stable :: proc(t: ^testing.T) {
+	testing.expect(t, game.feature_registry_validate())
+	testing.expect(t, rendervk.render_feature_registry_validate())
+	testing.expect_value(t, game.feature_count(), len(game.APP_SIMULATION_NAMES))
+	for i in 0 ..< game.feature_count() {
+		descriptor, ok := game.feature_descriptor_at(i)
+		testing.expect(t, ok)
+		if !ok {
+			continue
+		}
+		by_id, id_ok := game.feature_descriptor_by_id(descriptor.id)
+		by_mode, mode_ok := game.feature_descriptor_by_mode(descriptor.mode)
+		testing.expect(t, id_ok && mode_ok)
+		if id_ok && mode_ok {
+			testing.expect_value(t, by_id.mode, descriptor.mode)
+			testing.expect_value(t, by_mode.id, descriptor.id)
+		}
+	}
+}
+
+@(test)
+test_feature_registry_owns_settings_schema_defaults_validation_and_copy :: proc(t: ^testing.T) {
+	descriptor, found := game.feature_descriptor_by_mode(.Moire)
+	testing.expect(t, found)
+	if !found do return
+	testing.expect_value(t, descriptor.settings_size, size_of(game.Moire_Settings))
+	testing.expect_value(t, descriptor.settings_alignment, align_of(game.Moire_Settings))
+	defaults: game.Moire_Settings
+	testing.expect(t, descriptor.settings_defaults(&defaults))
+	testing.expect(t, descriptor.settings_validate(&defaults))
+	copy_value: game.Moire_Settings
+	testing.expect(t, descriptor.settings_copy(&copy_value, &defaults, descriptor.settings_size))
+	testing.expect_value(t, copy_value.generator_index, defaults.generator_index)
+	tool, tool_found := game.feature_descriptor_by_mode(.Gradient_Editor)
+	testing.expect(t, tool_found)
+	if tool_found {
+		testing.expect_value(t, tool.settings_size, 0)
+		testing.expect(t, tool.settings_defaults == nil)
+	}
+}
+
+@(test)
+test_product_feature_instance_separates_settings_from_transient_runtime :: proc(t: ^testing.T) {
+	modes := [?]game.App_Mode{.Slime_Mold, .Gray_Scott, .Particle_Life, .Flow_Field, .Pellets, .Voronoi_CA, .Moire, .Vectors, .Primordial}
+	for mode in modes {
+		instance: game.Feature_Instance
+		testing.expect(t, game.feature_instance_init(&instance, mode))
+		testing.expect(t, instance.settings != nil && instance.runtime != nil)
+		testing.expect(t, instance.settings != instance.runtime)
+		testing.expect(t, uintptr(instance.settings) % uintptr(instance.descriptor.settings_alignment) == 0)
+		testing.expect(t, uintptr(instance.runtime) % uintptr(instance.descriptor.runtime_alignment) == 0)
+		#partial switch mode {
+		case .Gray_Scott:
+			settings, settings_ok := game.feature_instance_settings(&instance, game.Gray_Scott_Settings)
+			runtime, runtime_ok := game.feature_instance_runtime(&instance, game.Gray_Scott_Runtime_State)
+			testing.expect(t, settings_ok && runtime_ok && settings != nil && runtime != nil)
+			testing.expect_value(t, settings.feed, game.gray_scott_default_settings().feed)
+		case .Particle_Life:
+			_, settings_ok := game.feature_instance_settings(&instance, game.Particle_Life_Settings)
+			_, runtime_ok := game.feature_instance_runtime(&instance, game.Particle_Life_Runtime_State)
+			testing.expect(t, settings_ok && runtime_ok)
+		case:
+		}
+		game.feature_instance_destroy(&instance)
+		testing.expect(t, instance.settings == nil && instance.runtime == nil)
+	}
+}
+
+@(test)
+test_product_feature_instance_set_owns_live_and_preview_variants :: proc(t: ^testing.T) {
+	set: game.Feature_Instance_Set
+	testing.expect(t, game.feature_instance_set_init(&set))
+	modes := [?]game.App_Mode{.Slime_Mold, .Gray_Scott, .Particle_Life, .Flow_Field, .Pellets, .Voronoi_CA, .Moire, .Vectors, .Primordial}
+	for mode in modes {
+		primary := game.feature_instance_set_get(&set, mode)
+		preview := game.feature_instance_set_get(&set, mode, true)
+		testing.expect(t, primary != nil && primary.settings != nil && primary.runtime != nil)
+		testing.expect(t, preview != nil && preview.settings != nil && preview.runtime != nil)
+		testing.expect(t, primary.settings != preview.settings && primary.runtime != preview.runtime)
+	}
+	tool := game.feature_instance_set_get(&set, .Gradient_Editor)
+	testing.expect(t, tool != nil && tool.settings == nil && tool.runtime == nil)
+	game.feature_instance_set_destroy(&set)
+	for mode in modes {
+		instance := game.feature_instance_set_get(&set, mode)
+		testing.expect(t, instance != nil && instance.settings == nil && instance.runtime == nil)
+	}
+}
+
+@(test)
+test_remaining_simulation_views_bind_distinct_live_and_preview_instances :: proc(t: ^testing.T) {
+	ui: game.App_Ui_State
+	testing.expect(t, game.app_ui_init(&ui, game.settings_default()))
+	defer game.app_ui_destroy(&ui)
+	views := [?]struct {mode: game.App_Mode, live, preview: ^game.Remaining_Sim_State, settings: rawptr} {
+		{.Slime_Mold, &ui.slime_mold, &ui.preview_slime_mold, ui.slime_mold.slime},
+		{.Flow_Field, &ui.flow_field, &ui.preview_flow_field, ui.flow_field.flow},
+		{.Pellets, &ui.pellets, &ui.preview_pellets, ui.pellets.pellets},
+		{.Voronoi_CA, &ui.voronoi_ca, &ui.preview_voronoi_ca, ui.voronoi_ca.voronoi},
+		{.Moire, &ui.moire, &ui.preview_moire, ui.moire.moire},
+		{.Vectors, &ui.vectors, &ui.preview_vectors, ui.vectors.vectors},
+		{.Primordial, &ui.primordial, &ui.preview_primordial, ui.primordial.primordial},
+	}
+	for view in views {
+		live := game.feature_instance_set_get(&ui.feature_instances, view.mode)
+		preview := game.feature_instance_set_get(&ui.feature_instances, view.mode, true)
+		testing.expect(t, live != nil && preview != nil)
+		testing.expect(t, view.live.runtime == live.runtime)
+		testing.expect(t, view.preview.runtime == preview.runtime)
+		testing.expect(t, view.settings == live.settings)
+		testing.expect(t, live.settings != preview.settings && live.runtime != preview.runtime)
+	}
+}
+
+@(test)
+test_gray_scott_simulation_is_a_view_over_descriptor_owned_product_storage :: proc(t: ^testing.T) {
+	instance: game.Feature_Instance
+	testing.expect(t, game.feature_instance_init(&instance, .Gray_Scott))
+	defer game.feature_instance_destroy(&instance)
+	sim: game.Gray_Scott_Simulation
+	testing.expect(t, game.gray_scott_bind_product_instance(&sim, &instance))
+	settings, settings_ok := game.feature_instance_settings(&instance, game.Gray_Scott_Settings)
+	runtime, runtime_ok := game.feature_instance_runtime(&instance, game.Gray_Scott_Runtime_State)
+	testing.expect(t, settings_ok && runtime_ok)
+	testing.expect(t, sim.settings == settings && sim.runtime == runtime)
+	game.gray_scott_init(&sim, 640, 480)
+	sim.settings.feed = 0.041
+	sim.runtime.seed = 1234
+	testing.expect_value(t, settings.feed, f32(0.041))
+	testing.expect_value(t, runtime.seed, u32(1234))
+}
+
+@(test)
+test_particle_life_simulation_is_a_view_over_descriptor_owned_product_storage :: proc(t: ^testing.T) {
+	instance: game.Feature_Instance
+	testing.expect(t, game.feature_instance_init(&instance, .Particle_Life))
+	defer game.feature_instance_destroy(&instance)
+	sim: game.Particle_Life_Simulation
+	testing.expect(t, game.particle_life_bind_product_instance(&sim, &instance))
+	settings, settings_ok := game.feature_instance_settings(&instance, game.Particle_Life_Settings)
+	runtime, runtime_ok := game.feature_instance_runtime(&instance, game.Particle_Life_Runtime_State)
+	testing.expect(t, settings_ok && runtime_ok)
+	testing.expect(t, sim.settings == settings && sim.runtime == runtime)
+	game.particle_life_init(&sim, 640, 480)
+	sim.settings.particle_count = 12_000
+	sim.runtime.seed = 9876
+	testing.expect_value(t, settings.particle_count, u32(12_000))
+	testing.expect_value(t, runtime.seed, u32(9876))
+}
+
+@(test)
+test_render_graph_compiles_hazards_deterministically :: proc(t: ^testing.T) {
+	graph: rendervk.Render_Graph
+	resource := rendervk.render_graph_add_resource(&graph, "state", .Storage_Image, false)
+	rendervk.render_graph_add_pass(&graph, "write", nil, []rendervk.Render_Resource_Handle{resource}, nil)
+	rendervk.render_graph_add_pass(&graph, "read", []rendervk.Render_Resource_Handle{resource}, nil, nil)
+	rendervk.render_graph_add_pass(&graph, "rewrite", nil, []rendervk.Render_Resource_Handle{resource}, nil)
+
+	testing.expect(t, rendervk.render_graph_compile(&graph))
+	testing.expect_value(t, graph.compiled_count, 3)
+	testing.expect_value(t, graph.compiled_order[0], 0)
+	testing.expect_value(t, graph.compiled_order[1], 1)
+	testing.expect_value(t, graph.compiled_order[2], 2)
+	testing.expect_value(t, graph.resource_first_use[int(resource)], 0)
+	testing.expect_value(t, graph.resource_last_use[int(resource)], 2)
+	testing.expect(t, graph.edges[0][1])
+	testing.expect(t, !graph.edges[0][2])
+	testing.expect(t, graph.edges[1][2])
+}
+
+@(test)
+test_render_graph_aliases_only_non_overlapping_compatible_transients :: proc(t: ^testing.T) {
+	graph: rendervk.Render_Graph
+	a := rendervk.render_graph_add_resource(&graph, "a", .Storage_Image, true)
+	b := rendervk.render_graph_add_resource(&graph, "b", .Storage_Image, true)
+	c := rendervk.render_graph_add_resource(&graph, "c", .Vertex_Buffer, true)
+	rendervk.render_graph_add_pass(&graph, "write a", nil, []rendervk.Render_Resource_Handle{a}, nil)
+	rendervk.render_graph_add_pass(&graph, "read a", []rendervk.Render_Resource_Handle{a}, nil, nil)
+	rendervk.render_graph_add_pass(&graph, "write b and c", nil, []rendervk.Render_Resource_Handle{b, c}, nil)
+	testing.expect(t, rendervk.render_graph_compile(&graph))
+	testing.expect_value(t, graph.resource_physical_slot[int(a)], graph.resource_physical_slot[int(b)])
+	testing.expect(t, graph.resource_physical_slot[int(c)] != graph.resource_physical_slot[int(a)])
+	testing.expect_value(t, graph.transient_barrier_count, 3)
+	testing.expect_value(t, graph.transient_barriers[1].previous_resource, a)
+}
+
+@(test)
+test_render_graph_alias_slot_checks_every_prior_lifetime :: proc(t: ^testing.T) {
+	graph: rendervk.Render_Graph
+	a := rendervk.render_graph_add_resource(&graph, "a", .Vertex_Buffer, true)
+	b := rendervk.render_graph_add_resource(&graph, "b", .Vertex_Buffer, true)
+	c := rendervk.render_graph_add_resource(&graph, "c", .Vertex_Buffer, true)
+	_ = rendervk.render_graph_set_resource_shape(&graph, a, byte_size = 256, usage = 1)
+	_ = rendervk.render_graph_set_resource_shape(&graph, b, byte_size = 256, usage = 1)
+	_ = rendervk.render_graph_set_resource_shape(&graph, c, byte_size = 256, usage = 1)
+	rendervk.render_graph_add_pass(&graph, "use a", nil, []rendervk.Render_Resource_Handle{a}, nil)
+	rendervk.render_graph_add_pass(&graph, "start b", nil, []rendervk.Render_Resource_Handle{b}, nil)
+	rendervk.render_graph_add_pass(&graph, "use c", nil, []rendervk.Render_Resource_Handle{c}, nil)
+	rendervk.render_graph_add_pass(&graph, "finish b", []rendervk.Render_Resource_Handle{b}, nil, nil)
+	testing.expect(t, rendervk.render_graph_compile(&graph))
+	testing.expect_value(t, graph.resource_physical_slot[int(a)], graph.resource_physical_slot[int(b)])
+	testing.expect(t, graph.resource_physical_slot[int(c)] != graph.resource_physical_slot[int(a)])
+}
+
+@(test)
+test_render_graph_rejects_aliasing_for_incompatible_shapes_and_exposes_diagnostics :: proc(t: ^testing.T) {
+	graph: rendervk.Render_Graph
+	a := rendervk.render_graph_add_resource(&graph, "rgba16", .Storage_Image, true)
+	b := rendervk.render_graph_add_resource(&graph, "rgba8", .Storage_Image, true)
+	testing.expect(t, rendervk.render_graph_set_resource_shape(&graph, a, .R16G16B16A16_SFLOAT, 256, 256, 1, usage = 1))
+	testing.expect(t, rendervk.render_graph_set_resource_shape(&graph, b, .R8G8B8A8_UNORM, 256, 256, 1, usage = 1))
+	rendervk.render_graph_add_pass(&graph, "write a", nil, []rendervk.Render_Resource_Handle{a}, nil)
+	rendervk.render_graph_add_pass(&graph, "read a", []rendervk.Render_Resource_Handle{a}, nil, nil)
+	rendervk.render_graph_add_pass(&graph, "write b", nil, []rendervk.Render_Resource_Handle{b}, nil)
+	testing.expect(t, rendervk.render_graph_compile(&graph))
+	testing.expect(t, graph.resource_physical_slot[int(a)] != graph.resource_physical_slot[int(b)])
+	diagnostics := rendervk.render_graph_diagnostics(&graph)
+	testing.expect(t, diagnostics.compiled)
+	testing.expect_value(t, diagnostics.compile_error, rendervk.Render_Graph_Compile_Error.None)
+	testing.expect_value(t, diagnostics.pass_count, 3)
+	testing.expect_value(t, diagnostics.resource_count, 2)
+	testing.expect_value(t, diagnostics.resource_first_use[int(a)], 0)
+	testing.expect_value(t, diagnostics.resource_last_use[int(a)], 1)
+}
+
+@(test)
+test_render_graph_hazards_respect_image_subresources :: proc(t: ^testing.T) {
+	graph: rendervk.Render_Graph
+	image := rendervk.render_graph_add_resource(&graph, "mipped image", .Storage_Image, false)
+	rendervk.render_graph_add_pass(&graph, "write mip 0", nil, nil, nil)
+	rendervk.render_graph_add_pass(&graph, "write mip 1", nil, nil, nil)
+	rendervk.render_graph_add_pass(&graph, "read mip 0", nil, nil, nil)
+	mip_0 := rendervk.Render_Subresource_Range{base_mip_level = 0, level_count = 1, base_array_layer = 0, layer_count = 1}
+	mip_1 := rendervk.Render_Subresource_Range{base_mip_level = 1, level_count = 1, base_array_layer = 0, layer_count = 1}
+	testing.expect(t, rendervk.render_graph_add_use(&graph.passes[0], image, .Write, subresource = mip_0))
+	testing.expect(t, rendervk.render_graph_add_use(&graph.passes[1], image, .Write, subresource = mip_1))
+	testing.expect(t, rendervk.render_graph_add_use(&graph.passes[2], image, .Read, subresource = mip_0))
+	testing.expect(t, rendervk.render_graph_compile(&graph))
+	testing.expect(t, graph.edges[0][2])
+	testing.expect(t, !graph.edges[0][1])
+	testing.expect(t, !graph.edges[1][2])
+}
+
+@(test)
+test_render_graph_rejects_explicit_dependency_cycle :: proc(t: ^testing.T) {
+	graph: rendervk.Render_Graph
+	rendervk.render_graph_add_pass(&graph, "a", nil, nil, nil)
+	rendervk.render_graph_add_pass(&graph, "b", nil, nil, nil)
+	testing.expect(t, rendervk.render_graph_add_explicit_dependency(&graph, 0, 1))
+	testing.expect(t, rendervk.render_graph_add_explicit_dependency(&graph, 1, 0))
+	testing.expect(t, !rendervk.render_graph_compile(&graph))
+	testing.expect_value(t, graph.compile_error, rendervk.Render_Graph_Compile_Error.Cycle)
+}
+
+@(test)
+test_render_graph_excludes_structurally_disabled_passes :: proc(t: ^testing.T) {
+	graph: rendervk.Render_Graph
+	resource := rendervk.render_graph_add_resource(&graph, "state", .Storage_Image, false)
+	rendervk.render_graph_add_pass(&graph, "write", nil, []rendervk.Render_Resource_Handle{resource}, nil)
+	rendervk.render_graph_add_pass(&graph, "disabled read", []rendervk.Render_Resource_Handle{resource}, nil, nil)
+	rendervk.render_graph_add_pass(&graph, "rewrite", nil, []rendervk.Render_Resource_Handle{resource}, nil)
+	testing.expect(t, rendervk.render_graph_set_pass_enabled(&graph, 1, false))
+	testing.expect(t, rendervk.render_graph_compile(&graph))
+	testing.expect_value(t, graph.compiled_count, 2)
+	testing.expect_value(t, graph.compiled_order[0], 0)
+	testing.expect_value(t, graph.compiled_order[1], 2)
+	testing.expect(t, graph.edges[0][2])
+	testing.expect(t, !graph.edges[0][1] && !graph.edges[1][2])
+	diagnostics := rendervk.render_graph_diagnostics(&graph)
+	testing.expect_value(t, diagnostics.disabled_pass_count, 1)
+	testing.expect_value(t, diagnostics.disabled_passes[0], 1)
+}
+
+@(test)
+test_render_graph_imported_state_validation_uses_per_frame_binding :: proc(t: ^testing.T) {
+	graph: rendervk.Render_Graph
+	image := rendervk.render_graph_add_resource(&graph, "imported", .Sampled_Image, false, true)
+	rendervk.render_graph_add_pass(&graph, "sample", []rendervk.Render_Resource_Handle{image}, nil, nil)
+	testing.expect(t, rendervk.render_graph_set_pass_use(&graph, 0, image, .Read, {.FRAGMENT_SHADER}, {.SHADER_SAMPLED_READ}, .SHADER_READ_ONLY_OPTIMAL))
+	testing.expect(t, rendervk.render_graph_compile(&graph))
+	ctx: rendervk.Render_Context
+	testing.expect(t, rendervk.render_graph_bind_imported_image(&graph, &ctx, image, vk.Image(1), .SHADER_READ_ONLY_OPTIMAL, {.FRAGMENT_SHADER}, {.SHADER_SAMPLED_READ}))
+	testing.expect(t, rendervk.render_graph_validate_imported_states(&graph, &ctx))
+	ctx.imported_resources[int(image)].observed_layout = .GENERAL
+	testing.expect(t, !rendervk.render_graph_validate_imported_states(&graph, &ctx))
+	missing: rendervk.Render_Context
+	testing.expect(t, !rendervk.render_graph_validate_imported_states(&graph, &missing))
+}
+
+@(test)
+test_render_graph_cache_reuses_only_matching_structure :: proc(t: ^testing.T) {
+	cache: rendervk.Render_Graph_Cache
+	key := rendervk.Render_Graph_Structural_Key{mode = .Moire, preview_count = 0, capture_active = false, target_format = .B8G8R8A8_SRGB}
+	first := rendervk.render_graph_cache_resolve(&cache, key)
+	testing.expect(t, first != nil)
+	testing.expect_value(t, cache.compile_count, u64(1))
+	testing.expect_value(t, first.compiled_count, 6)
+	testing.expect_value(t, rendervk.render_graph_diagnostics(first).disabled_pass_count, 1)
+	second := rendervk.render_graph_cache_resolve(&cache, key)
+	testing.expect(t, second == first)
+	testing.expect_value(t, cache.compile_count, u64(1))
+	key.capture_active = true
+	third := rendervk.render_graph_cache_resolve(&cache, key)
+	testing.expect(t, third != nil)
+	testing.expect_value(t, cache.compile_count, u64(2))
+	testing.expect_value(t, third.compiled_count, 7)
+	testing.expect_value(t, rendervk.render_graph_diagnostics(third).disabled_pass_count, 0)
+}
+
+@(test)
+test_render_graph_cache_distinguishes_equal_sized_preview_sets :: proc(t: ^testing.T) {
+	cache: rendervk.Render_Graph_Cache
+	key := rendervk.Render_Graph_Structural_Key{mode = .Main_Menu, preview_count = 2, preview_mode_mask = (u32(1) << u32(game.App_Mode.Gray_Scott)) | (u32(1) << u32(game.App_Mode.Moire)), target_format = .B8G8R8A8_SRGB}
+	testing.expect(t, rendervk.render_graph_cache_resolve(&cache, key) != nil)
+	testing.expect_value(t, cache.compile_count, u64(1))
+	key.preview_mode_mask = (u32(1) << u32(game.App_Mode.Gray_Scott)) | (u32(1) << u32(game.App_Mode.Flow_Field))
+	testing.expect(t, rendervk.render_graph_cache_resolve(&cache, key) != nil)
+	testing.expect_value(t, cache.compile_count, u64(2))
+}
+
+@(test)
+test_render_graph_preview_mask_is_order_independent :: proc(t: ^testing.T) {
+	ui: game.App_Ui_State
+	ui.main_menu_preview_slot_count = 2
+	ui.main_menu_preview_slots[0].mode = .Slime_Mold
+	ui.main_menu_preview_slots[1].mode = .Vectors
+	first := rendervk.render_graph_preview_mode_mask(&ui)
+	ui.main_menu_preview_slots[0].mode = .Vectors
+	ui.main_menu_preview_slots[1].mode = .Slime_Mold
+	testing.expect_value(t, rendervk.render_graph_preview_mode_mask(&ui), first)
+}
+
+@(test)
+test_main_menu_graph_declares_each_visible_preview_output :: proc(t: ^testing.T) {
+	mask := (u32(1) << u32(game.App_Mode.Gray_Scott)) | (u32(1) << u32(game.App_Mode.Particle_Life))
+	graph := rendervk.render_graph_build_v1(.Main_Menu, false, mask)
+	testing.expect_value(t, graph.resource_count, 4) // swapchain, two previews, UI vertices
+	testing.expect(t, graph.resources[1].feature_owned && graph.resources[1].external)
+	testing.expect(t, graph.resources[2].feature_owned && graph.resources[2].external)
+	testing.expect_value(t, graph.resources[1].kind, rendervk.Render_Resource_Kind.Storage_Image)
+	testing.expect_value(t, graph.resources[2].kind, rendervk.Render_Resource_Kind.Vertex_Buffer)
+	testing.expect(t, rendervk.render_graph_compile(&graph))
+	preview_barrier_count := 0
+	for barrier in graph.barriers[:graph.barrier_count] {
+		if barrier.producer_pass == 1 && barrier.consumer_pass == 3 do preview_barrier_count += 1
+	}
+	testing.expect_value(t, preview_barrier_count, 2)
+}
+
+@(test)
+test_render_graph_v1_declares_swapchain_transition_chain :: proc(t: ^testing.T) {
+	graph := rendervk.render_graph_build_v1()
+	testing.expect(t, rendervk.render_graph_compile(&graph))
+	found_acquire_to_color := false
+	found_color_to_present := false
+	for barrier in graph.barriers[:graph.barrier_count] {
+		if barrier.producer_pass == 0 && barrier.consumer_pass == 3 {
+			found_acquire_to_color = barrier.old_layout == .PRESENT_SRC_KHR && barrier.new_layout == .COLOR_ATTACHMENT_OPTIMAL &&
+				barrier.dst_stage == vk.PipelineStageFlags2{.COLOR_ATTACHMENT_OUTPUT} && .COLOR_ATTACHMENT_WRITE in barrier.dst_access
+		}
+		if barrier.producer_pass == 5 && barrier.consumer_pass == 6 {
+			found_color_to_present = barrier.old_layout == .COLOR_ATTACHMENT_OPTIMAL && barrier.new_layout == .PRESENT_SRC_KHR &&
+				.COLOR_ATTACHMENT_WRITE in barrier.src_access
+		}
+	}
+	testing.expect(t, found_acquire_to_color)
+	testing.expect(t, found_color_to_present)
+}
+
+@(test)
+test_video_capture_pass_owns_swapchain_transfer_transitions :: proc(t: ^testing.T) {
+	graph := rendervk.render_graph_build_v1(.Moire, true)
+	testing.expect(t, rendervk.render_graph_compile(&graph))
+	to_transfer, back_to_color := false, false
+	for barrier in graph.barriers[:graph.barrier_count] {
+		if barrier.resource != rendervk.Render_Resource_Handle(0) do continue
+		if barrier.producer_pass == 3 && barrier.consumer_pass == 4 {
+			to_transfer = barrier.old_layout == .COLOR_ATTACHMENT_OPTIMAL && barrier.new_layout == .TRANSFER_SRC_OPTIMAL && .TRANSFER_READ in barrier.dst_access
+		}
+		if barrier.producer_pass == 4 && barrier.consumer_pass == 5 {
+			back_to_color = barrier.old_layout == .TRANSFER_SRC_OPTIMAL && barrier.new_layout == .COLOR_ATTACHMENT_OPTIMAL && .COLOR_ATTACHMENT_WRITE in barrier.dst_access
+		}
+	}
+	testing.expect(t, to_transfer)
+	testing.expect(t, back_to_color)
+}
+
+@(test)
+test_capture_readback_pool_reuses_safe_frame_slot_buffer :: proc(t: ^testing.T) {
+	backend: rendervk.Render_Backend
+	vk_ctx: engine.Vk_Context
+	vk_ctx.swapchain_extent = {width = 320, height = 180}
+	backend.capture_readback_buffers[0][1] = {handle = vk.Buffer(7), size = vk.DeviceSize(320 * 180 * 4), mapped = rawptr(uintptr(1))}
+	ctx := rendervk.Render_Context{backend = &backend, vk_ctx = &vk_ctx, frame = {frame_index = 1}}
+	buffer := rendervk.render_backend_capture_readback_buffer(&ctx, 0)
+	testing.expect(t, buffer != nil)
+	if buffer != nil do testing.expect_value(t, buffer.handle, vk.Buffer(7))
+	testing.expect_value(t, backend.capture_readback_reuse_count, u64(1))
+	testing.expect_value(t, backend.capture_readback_allocation_count, u64(0))
+	diagnostics := rendervk.render_backend_graph_diagnostics(&backend)
+	testing.expect_value(t, diagnostics.physical_reuse_count, u64(0))
+	testing.expect_value(t, diagnostics.physical_allocation_count, u64(0))
+}
+
+@(test)
+test_render_graph_diagnostics_report_graph_owned_transient_pool :: proc(t: ^testing.T) {
+	backend := rendervk.Render_Backend{transient_allocation_count = 4, transient_reuse_count = 9}
+	diagnostics := rendervk.render_backend_graph_diagnostics(&backend)
+	testing.expect_value(t, diagnostics.physical_allocation_count, u64(4))
+	testing.expect_value(t, diagnostics.physical_reuse_count, u64(9))
+}
+
+@(test)
+test_render_graph_feature_resource_matches_active_mode :: proc(t: ^testing.T) {
+	image_graph := rendervk.render_graph_build_v1(.Gray_Scott)
+	buffer_graph := rendervk.render_graph_build_v1(.Particle_Life)
+	menu_graph := rendervk.render_graph_build_v1(.Main_Menu)
+	testing.expect_value(t, image_graph.resources[1].kind, rendervk.Render_Resource_Kind.Storage_Image)
+	testing.expect(t, image_graph.resources[1].external)
+	testing.expect_value(t, buffer_graph.resources[1].kind, rendervk.Render_Resource_Kind.Vertex_Buffer)
+	testing.expect(t, buffer_graph.resources[1].external)
+	testing.expect(t, menu_graph.resources[1].external)
+	testing.expect(t, !menu_graph.resources[1].transient)
+	testing.expect_value(t, menu_graph.resources[1].name, "ui frame vertices")
+}
+
+@(test)
+test_render_feature_descriptors_bind_real_graph_resources :: proc(t: ^testing.T) {
+	modes := [?]game.App_Mode{.Gray_Scott, .Particle_Life, .Flow_Field, .Pellets, .Voronoi_CA, .Moire, .Vectors, .Primordial, .Slime_Mold}
+	for mode in modes {
+		descriptor, ok := rendervk.render_feature_descriptor_by_mode(mode)
+		testing.expect(t, ok)
+		if ok do testing.expect(t, descriptor.bind_graph_resource != nil)
+	}
+}
+
+@(test)
+test_render_feature_descriptors_declare_target_resource_release :: proc(t: ^testing.T) {
+	rebuild_modes := [?]game.App_Mode{.Slime_Mold, .Flow_Field, .Pellets, .Voronoi_CA, .Moire, .Vectors, .Primordial}
+	for mode in rebuild_modes {
+		descriptor, ok := rendervk.render_feature_descriptor_by_mode(mode)
+		testing.expect(t, ok)
+		if ok do testing.expect(t, descriptor.release_target_resources != nil)
+	}
+	preserved_modes := [?]game.App_Mode{.Gray_Scott, .Particle_Life}
+	for mode in preserved_modes {
+		descriptor, ok := rendervk.render_feature_descriptor_by_mode(mode)
+		testing.expect(t, ok)
+		if ok do testing.expect(t, descriptor.release_target_resources == nil)
+	}
+}
+
+@(test)
+test_feature_command_schema_validates_owned_payload :: proc(t: ^testing.T) {
+	settings := game.moire_settings_default()
+	command, made := game.feature_command_make(game.FEATURE_ID_MOIRE, game.FEATURE_COMMAND_APPLY_SETTINGS, &settings)
+	testing.expect(t, made)
+	testing.expect_value(t, game.feature_command_validate(&command), game.Feature_Result_Error.None)
+	payload, payload_ok := game.feature_command_payload(&command, game.Moire_Settings)
+	testing.expect(t, payload_ok)
+	if payload_ok {
+		testing.expect_value(t, payload.generator_index, settings.generator_index)
+	}
+	command.payload_size -= 1
+	testing.expect_value(t, game.feature_command_validate(&command), game.Feature_Result_Error.Size_Mismatch)
+}
+
+@(test)
+test_simulation_feature_descriptors_own_mutation_and_preset_contracts :: proc(t: ^testing.T) {
+	for index in 0 ..< game.feature_count() {
+		descriptor, ok := game.feature_descriptor_at(index)
+		testing.expect(t, ok)
+		if !ok || descriptor == nil do continue
+		testing.expect(t, descriptor.draw_ui != nil)
+		testing.expect(t, descriptor.enter != nil)
+		testing.expect(t, descriptor.leave != nil)
+		if descriptor.mode == .Slime_Mold || .Tool in descriptor.capabilities {
+			testing.expect(t, descriptor.draw_controls == nil)
+		} else {
+			testing.expect(t, descriptor.draw_controls != nil)
+		}
+		if .Simulation in descriptor.capabilities {
+			testing.expect(t, descriptor.apply_settings != nil)
+			testing.expect(t, descriptor.reset != nil)
+			testing.expect(t, descriptor.preset_load != nil)
+			testing.expect(t, descriptor.preset_save != nil)
+			testing.expect(t, descriptor.update != nil)
+			testing.expect(t, descriptor.builtin_preset_names != nil)
+			testing.expect(t, descriptor.apply_input != nil)
+			testing.expect(t, descriptor.set_paused != nil)
+			if descriptor.builtin_preset_names != nil do testing.expect(t, len(descriptor.builtin_preset_names()) > 0)
+			if .Image_Source in descriptor.capabilities {
+				testing.expect(t, descriptor.image_target_count > 0)
+				for slot in 0 ..< descriptor.image_target_count {
+					target, target_ok := game.feature_image_target(descriptor.id, u16(slot))
+					testing.expect(t, target_ok)
+					if target_ok {
+						testing.expect_value(t, target, descriptor.image_targets[slot])
+						feature_id, resolved_slot, location_ok := game.feature_image_target_location(target)
+						testing.expect(t, location_ok)
+						testing.expect_value(t, feature_id, descriptor.id)
+						testing.expect_value(t, resolved_slot, u16(slot))
+					}
+				}
+			}
+		} else {
+			testing.expect(t, descriptor.apply_settings == nil)
+			testing.expect(t, descriptor.reset == nil)
+			testing.expect(t, descriptor.preset_load == nil)
+			testing.expect(t, descriptor.preset_save == nil)
+			testing.expect(t, descriptor.update == nil)
+			testing.expect(t, descriptor.builtin_preset_names == nil)
+			testing.expect(t, descriptor.apply_input == nil)
+			testing.expect(t, descriptor.set_paused == nil)
+		}
+	}
+}
+
+@(test)
+test_feature_lifecycle_dispatch_owns_pause_state :: proc(t: ^testing.T) {
+	testing.expect(t, game.app_ui_mode_is_simulation(.Gray_Scott))
+	testing.expect(t, !game.app_ui_mode_is_simulation(.Gradient_Editor))
+	ui: game.App_Ui_State
+	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
+	ui.gray_scott.settings.paused = false
+	ui.flow_field.paused = false
+	testing.expect(t, game.feature_instance_set_enter(&ui.feature_instances, .Gray_Scott))
+	testing.expect(t, game.feature_instance_set_leave(&ui.feature_instances, .Gray_Scott))
+	testing.expect(t, ui.gray_scott.settings.paused)
+	testing.expect(t, game.feature_instance_set_leave(&ui.feature_instances, .Flow_Field))
+	testing.expect(t, ui.flow_field.paused)
+	testing.expect(t, game.feature_instance_set_enter(&ui.feature_instances, .Gradient_Editor))
+	testing.expect(t, game.feature_instance_set_leave(&ui.feature_instances, .Gradient_Editor))
+}
+
+@(test)
+test_feature_image_commands_are_schema_owned_and_feature_scoped :: proc(t: ^testing.T) {
+	payload: game.Feature_Image_Command
+	game.write_fixed_string(payload.path[:], "/tmp/vector.png")
+	payload.slot = 0
+	payload.dialog_request_id = 37
+	command, made := game.feature_command_make(game.FEATURE_ID_VECTORS, game.FEATURE_COMMAND_LOAD_IMAGE, &payload)
+	testing.expect(t, made)
+	testing.expect_value(t, game.feature_command_validate(&command), game.Feature_Result_Error.None)
+	decoded, decoded_ok := game.feature_command_payload(&command, game.Feature_Image_Command)
+	testing.expect(t, decoded_ok)
+	if decoded_ok {
+		testing.expect_value(t, game.fixed_string(decoded.path[:]), "/tmp/vector.png")
+		testing.expect_value(t, decoded.slot, u16(0))
+		testing.expect_value(t, decoded.dialog_request_id, u64(37))
+	}
+	_, unsupported := game.feature_command_make(game.FEATURE_ID_PARTICLE_LIFE, game.FEATURE_COMMAND_LOAD_IMAGE, &payload)
+	testing.expect(t, !unsupported)
+}
+
+@(test)
+test_image_dialog_request_generation_rejects_stale_and_duplicate_results :: proc(t: ^testing.T) {
+	ui: game.App_Ui_State
+	ui.pending_image_dialog_requests[int(game.Feature_Image_Target.Vectors)] = 42
+	testing.expect(t, !game.app_ui_consume_image_dialog_request(&ui, .Vectors, 41))
+	testing.expect(t, game.app_ui_consume_image_dialog_request(&ui, .Vectors, 42))
+	testing.expect(t, !game.app_ui_consume_image_dialog_request(&ui, .Vectors, 42))
+}
+
+@(test)
+test_feature_image_command_reports_stale_dialog_result :: proc(t: ^testing.T) {
+	state: host.Render_Worker_State
+	runtime := new(host.Render_Worker_Runtime)
+	defer free(runtime)
+	queue := new(game.Render_To_Ui_Queue)
+	defer free(queue)
+	state.render_to_ui = queue
+	runtime.app_ui.mode = .Vectors
+	runtime.app_ui.pending_image_dialog_requests[int(game.Feature_Image_Target.Vectors)] = 99
+	payload := game.Feature_Image_Command{slot = 0, dialog_request_id = 98}
+	game.write_fixed_string(payload.path[:], "/tmp/stale.png")
+	command, made := game.feature_command_make(game.FEATURE_ID_VECTORS, game.FEATURE_COMMAND_LOAD_IMAGE, &payload)
+	testing.expect(t, made)
+	host.render_worker_handle_feature_command(&state, runtime, &command)
+	message: game.Render_To_Ui_Message
+	testing.expect(t, engine.queue_try_pop(queue, &message))
+	testing.expect_value(t, message.kind, game.Render_To_Ui_Message_Kind.Feature_Result)
+	testing.expect_value(t, message.feature_result.error, game.Feature_Result_Error.Stale_Result)
+	testing.expect_value(t, runtime.app_ui.pending_image_dialog_requests[int(game.Feature_Image_Target.Vectors)], u64(99))
+}
+
+@(test)
+test_feature_image_command_returns_typed_platform_dialog_request :: proc(t: ^testing.T) {
+	state: host.Render_Worker_State
+	runtime := new(host.Render_Worker_Runtime)
+	defer free(runtime)
+	queue := new(game.Render_To_Ui_Queue)
+	defer free(queue)
+	state.render_to_ui = queue
+	runtime.app_ui.mode = .Vectors
+	runtime.app_ui.pending_image_dialog_requests[int(game.Feature_Image_Target.Vectors)] = 77
+	payload := game.Feature_Image_Command{slot = 0, dialog_request_id = 77}
+	command, made := game.feature_command_make(game.FEATURE_ID_VECTORS, game.FEATURE_COMMAND_LOAD_IMAGE, &payload)
+	testing.expect(t, made)
+	host.render_worker_handle_feature_command(&state, runtime, &command)
+	message: game.Render_To_Ui_Message
+	testing.expect(t, engine.queue_try_pop(queue, &message))
+	testing.expect(t, message.feature_result.success)
+	testing.expect_value(t, message.feature_result.dialog.kind, game.Feature_Platform_Dialog_Kind.Open_Image)
+	testing.expect_value(t, message.feature_result.dialog.request_id, u64(77))
+	testing.expect_value(t, message.feature_result.dialog.feature_id, game.FEATURE_ID_VECTORS)
+	testing.expect_value(t, message.feature_result.dialog.slot, u16(0))
+	// Issuing the platform request does not consume it; only a matching callback does.
+	testing.expect_value(t, runtime.app_ui.pending_image_dialog_requests[int(game.Feature_Image_Target.Vectors)], u64(77))
+}
+
+@(test)
+test_named_preset_commands_are_owned_and_feature_scoped :: proc(t: ^testing.T) {
+	payload := game.Feature_Preset_File_Command {operation = .Save}
+	game.write_fixed_string(payload.path[:], "moire/example.toml")
+	command, made := game.feature_command_make(game.FEATURE_ID_MOIRE, game.FEATURE_COMMAND_PRESET_FILE, &payload)
+	testing.expect(t, made)
+	testing.expect_value(t, game.feature_command_validate(&command), game.Feature_Result_Error.None)
+	decoded, decoded_ok := game.feature_command_payload(&command, game.Feature_Preset_File_Command)
+	testing.expect(t, decoded_ok)
+	if decoded_ok {
+		testing.expect_value(t, decoded.operation, game.Feature_Preset_File_Operation.Save)
+		testing.expect_value(t, game.fixed_string(decoded.path[:]), "moire/example.toml")
+	}
+}
+
+@(test)
+test_feature_commands_reject_shutdown_with_structured_result :: proc(t: ^testing.T) {
+	state: host.Render_Worker_State
+	runtime := new(host.Render_Worker_Runtime)
+	defer free(runtime)
+	queue := new(game.Render_To_Ui_Queue)
+	defer free(queue)
+	state.render_to_ui = queue
+	state.shutdown_started = true
+	runtime.app_ui.mode = .Moire
+	payload := game.Feature_Reset_Command{}
+	command, made := game.feature_command_make(game.FEATURE_ID_MOIRE, game.FEATURE_COMMAND_RESET, &payload)
+	testing.expect(t, made)
+	host.render_worker_handle_feature_command(&state, runtime, &command)
+	message: game.Render_To_Ui_Message
+	testing.expect(t, engine.queue_try_pop(queue, &message))
+	testing.expect_value(t, message.kind, game.Render_To_Ui_Message_Kind.Feature_Result)
+	testing.expect(t, !message.feature_result.success)
+	testing.expect_value(t, message.feature_result.error, game.Feature_Result_Error.Shutting_Down)
+	testing.expect_value(t, message.feature_result.feature_id, game.FEATURE_ID_MOIRE)
+	testing.expect_value(t, message.feature_result.command_id, game.FEATURE_COMMAND_RESET)
+}
+
+@(test)
+test_moire_render_feature_runtime_is_aligned_owned_storage :: proc(t: ^testing.T) {
+	instance: rendervk.Render_Feature_Instance
+	testing.expect(t, rendervk.render_feature_instance_init(&instance, .Moire))
+	runtime, ok := rendervk.render_feature_instance_runtime(&instance, rendervk.Moire_Gpu_State)
+	testing.expect(t, ok)
+	testing.expect(t, runtime != nil)
+	if runtime != nil {
+		testing.expect_value(t, uintptr(runtime) % uintptr(align_of(rendervk.Moire_Gpu_State)), uintptr(0))
+	}
+	vk_ctx: engine.Vk_Context
+	rendervk.render_feature_instance_destroy(&instance, &vk_ctx)
+	testing.expect(t, instance.runtime == nil)
+}
+
+@(test)
+test_migrated_render_feature_instances_allocate_and_destroy :: proc(t: ^testing.T) {
+	modes := [?]game.App_Mode{
+		.Moire,
+		.Voronoi_CA,
+		.Pellets,
+		.Primordial,
+		.Flow_Field,
+		.Slime_Mold,
+		.Vectors,
+		.Gray_Scott,
+		.Particle_Life,
+	}
+	for mode in modes {
+		instance: rendervk.Render_Feature_Instance
+		testing.expect(t, rendervk.render_feature_instance_init(&instance, mode))
+		testing.expect(t, instance.runtime != nil)
+		testing.expect(t, instance.descriptor != nil)
+		vk_ctx: engine.Vk_Context
+		rendervk.render_feature_instance_destroy(&instance, &vk_ctx)
+		testing.expect(t, instance.runtime == nil)
+	}
+}
+
+@(test)
+test_render_feature_instance_set_is_registry_indexed_and_owns_preview_variants :: proc(t: ^testing.T) {
+	set: rendervk.Render_Feature_Instance_Set
+	vk_ctx: engine.Vk_Context
+	testing.expect(t, rendervk.render_feature_instance_set_init(&set, &vk_ctx))
+	modes := [?]game.App_Mode{.Slime_Mold, .Gray_Scott, .Particle_Life, .Flow_Field, .Pellets, .Voronoi_CA, .Moire, .Vectors, .Primordial}
+	for mode in modes {
+		primary := rendervk.render_feature_instance_set_get(&set, mode)
+		preview := rendervk.render_feature_instance_set_get(&set, mode, true)
+		testing.expect(t, primary != nil && primary.runtime != nil)
+		testing.expect(t, preview != nil && preview.runtime != nil)
+		testing.expect(t, primary != preview && primary.runtime != preview.runtime)
+	}
+	testing.expect(t, rendervk.render_feature_instance_set_get(&set, .Gradient_Editor) != nil)
+	testing.expect(t, rendervk.render_feature_instance_set_get(&set, .Gradient_Editor).runtime == nil)
+	rendervk.render_feature_instance_set_destroy(&set, &vk_ctx)
+	for mode in modes {
+		instance := rendervk.render_feature_instance_set_get(&set, mode)
+		testing.expect(t, instance != nil && instance.runtime == nil && instance.storage == nil)
+	}
+}
+
+@(test)
+test_feature_descriptors_route_color_and_render_invalidation_without_mode_switches :: proc(t: ^testing.T) {
+	product: game.Feature_Instance
+	testing.expect(t, game.feature_instance_init(&product, .Moire))
+	defer game.feature_instance_destroy(&product)
+	descriptor, found := game.feature_descriptor_by_mode(.Moire)
+	testing.expect(t, found && descriptor.color_scheme_access != nil)
+	name, reversed, access_ok := descriptor.color_scheme_access(product.settings)
+	testing.expect(t, access_ok && name != nil && reversed != nil)
+	game.color_scheme_name_set(name, "ZELDA_Aqua")
+	reversed^ = true
+	settings, settings_ok := game.feature_instance_settings(&product, game.Moire_Settings)
+	testing.expect(t, settings_ok)
+	testing.expect_value(t, game.color_scheme_name_get(&settings.color_scheme), "ZELDA_Aqua")
+	testing.expect(t, settings.color_scheme_reversed)
+
+	render: rendervk.Render_Feature_Instance
+	testing.expect(t, rendervk.render_feature_instance_init(&render, .Primordial))
+	vk_ctx: engine.Vk_Context
+	defer rendervk.render_feature_instance_destroy(&render, &vk_ctx)
+	render_descriptor, render_found := rendervk.render_feature_descriptor_by_mode(.Primordial)
+	gpu, gpu_ok := rendervk.render_feature_instance_runtime(&render, rendervk.Primordial_Gpu_State)
+	testing.expect(t, render_found && gpu_ok && render_descriptor.invalidate_runtime != nil)
+	gpu.ready = true
+	render_descriptor.invalidate_runtime(render.runtime)
+	testing.expect(t, !gpu.ready)
+}
+
 test_approx_f32 :: proc(a, b: f32) -> bool {
 	return math.abs(a - b) <= 0.01
 }
@@ -71,6 +856,18 @@ test_primordial_timestep_is_independent_of_render_rate :: proc(t: ^testing.T) {
 	steps := rendervk.simulation_substeps(1.0 / 60.0)
 	substep_total := rendervk.primordial_effective_step_dt(configured, steps.delta_time) * f32(steps.count)
 	testing.expect(t, math.abs(substep_total - at_60) < 0.00001)
+}
+
+@(test)
+test_pellets_caps_each_rendered_frame_to_one_stable_step :: proc(t: ^testing.T) {
+	slow := rendervk.pellets_simulation_substeps(0.1)
+	testing.expect_value(t, slow.count, 1)
+	testing.expect(t, math.abs(slow.delta_time - rendervk.SIMULATION_MAX_SUBSTEP_SECONDS) < 0.00001)
+	fast := rendervk.pellets_simulation_substeps(1.0 / 240.0)
+	testing.expect_value(t, fast.count, 1)
+	testing.expect(t, math.abs(fast.delta_time - f32(1.0 / 240.0)) < 0.00001)
+	stopped := rendervk.pellets_simulation_substeps(0)
+	testing.expect_value(t, stopped.count, 0)
 }
 
 @(test)
@@ -301,6 +1098,7 @@ test_video_recorder_resamples_wall_clock_to_fixed_rate_timeline :: proc(t: ^test
 test_app_ui_video_recording_command_state_transitions :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	testing.expect_value(t, ui.video_recording_state, game.Video_Recording_Ui_State.Idle)
 
 	game.app_ui_video_recording_apply_command_state(&ui, .Restoring_Fullscreen, "Restoring fullscreen before recording")
@@ -360,43 +1158,51 @@ test_screenshot_state_throttles_background_capture_but_honors_requests :: proc(t
 @(test)
 test_gray_scott_settings_round_trip :: proc(t: ^testing.T) {
 	sim: game.Gray_Scott_Simulation
-	game.gray_scott_init(&sim, 640, 480)
+	storage: Test_Gray_Scott_Product_Storage
+	test_gray_scott_init(&sim, &storage, 640, 480)
 	sim.settings.feed = 0.04
 	saved := game.gray_scott_save_settings(&sim)
 
 	other: game.Gray_Scott_Simulation
-	game.gray_scott_init(&other, 320, 240)
+	other_storage: Test_Gray_Scott_Product_Storage
+	test_gray_scott_init(&other, &other_storage, 320, 240)
 	game.gray_scott_load_settings(&other, saved)
 	testing.expect_value(t, other.settings.feed, f32(0.04))
 }
 
 @(test)
-test_gray_scott_noise_seed_preserves_live_gpu_runtime :: proc(t: ^testing.T) {
+test_gray_scott_noise_seed_preserves_product_runtime :: proc(t: ^testing.T) {
 	sim: game.Gray_Scott_Simulation
-	game.gray_scott_init(&sim, 640, 480)
-	sim.gpu.ready = true
+	storage: Test_Gray_Scott_Product_Storage
+	gpu: rendervk.Gray_Scott_Gpu_State
+	sim.render_runtime = &gpu
+	test_gray_scott_init(&sim, &storage, 640, 480)
+	gpu.ready = true
 	seed_before := sim.runtime.seed
 
 	game.gray_scott_seed_noise(&sim)
 
 	testing.expect(t, sim.runtime.seed != seed_before)
 	testing.expect_value(t, sim.runtime.pending_seed_mode, game.GRAY_SCOTT_MODE_NOISE_SEED)
-	testing.expect(t, sim.gpu.ready)
+	testing.expect(t, gpu.ready)
 }
 
 @(test)
 test_gray_scott_builtin_preset_preserves_live_field :: proc(t: ^testing.T) {
 	sim: game.Gray_Scott_Simulation
-	game.gray_scott_init(&sim, 640, 480)
+	storage: Test_Gray_Scott_Product_Storage
+	gpu: rendervk.Gray_Scott_Gpu_State
+	sim.render_runtime = &gpu
+	test_gray_scott_init(&sim, &storage, 640, 480)
 	sim.runtime.pending_seed_mode = 0
-	sim.gpu.ready = true
+	gpu.ready = true
 	seed_before := sim.runtime.seed
 
 	game.gray_scott_apply_builtin_preset(&sim, 2)
 
 	testing.expect_value(t, sim.runtime.seed, seed_before)
 	testing.expect_value(t, sim.runtime.pending_seed_mode, u32(0))
-	testing.expect(t, sim.gpu.ready)
+	testing.expect(t, gpu.ready)
 }
 
 @(test)
@@ -410,6 +1216,10 @@ test_gray_scott_toml_round_trip_through_tomlc17 :: proc(t: ^testing.T) {
 	settings.paused = true
 	settings.mask_pattern = .Nutrient_Map
 	settings.nutrient_image_fit_mode = .Fit_V
+	settings.seed_noise.kind = .Voronoi
+	settings.seed_noise.warp_mode = .Recursive
+	settings.seed_noise.warp_amplitude = 1.75
+	settings.seed_density = 0.61
 	game.write_fixed_string(settings.nutrient_image_path[:], "config/custom_nutrient.png")
 
 	testing.expect(t, game.settings_save_gray_scott(path, settings))
@@ -423,6 +1233,10 @@ test_gray_scott_toml_round_trip_through_tomlc17 :: proc(t: ^testing.T) {
 	testing.expect_value(t, loaded.mask_pattern, settings.mask_pattern)
 	testing.expect_value(t, loaded.nutrient_image_fit_mode, settings.nutrient_image_fit_mode)
 	testing.expect_value(t, game.fixed_string(loaded.nutrient_image_path[:]), "config/custom_nutrient.png")
+	testing.expect_value(t, loaded.seed_noise.kind, game.Noise_Kind.Voronoi)
+	testing.expect_value(t, loaded.seed_noise.warp_mode, game.Noise_Warp_Mode.Recursive)
+	testing.expect_value(t, loaded.seed_noise.warp_amplitude, f32(1.75))
+	testing.expect_value(t, loaded.seed_density, f32(0.61))
 }
 
 @(test)
@@ -521,7 +1335,10 @@ test_particle_life_saved_preset_keeps_current_color_scheme :: proc(t: ^testing.T
 @(test)
 test_particle_life_builtin_preset_keeps_current_color_scheme :: proc(t: ^testing.T) {
 	sim: game.Particle_Life_Simulation
-	game.particle_life_init(&sim, 320, 240)
+	gpu: rendervk.Particle_Life_Gpu_State
+	sim.render_runtime = &gpu
+	storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&sim, &storage, 320, 240)
 	game.color_scheme_name_set(&sim.settings.color_scheme, "ZELDA_Aqua")
 	sim.settings.color_scheme_reversed = true
 
@@ -533,7 +1350,8 @@ test_particle_life_builtin_preset_keeps_current_color_scheme :: proc(t: ^testing
 @(test)
 test_particle_life_force_randomize_does_not_regenerate_particles :: proc(t: ^testing.T) {
 	sim: game.Particle_Life_Simulation
-	game.particle_life_init(&sim, 320, 240)
+	storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&sim, &storage, 320, 240)
 	sim.runtime.needs_reset = false
 
 	game.particle_life_randomize_forces(&sim)
@@ -545,7 +1363,8 @@ test_particle_life_force_randomize_does_not_regenerate_particles :: proc(t: ^tes
 @(test)
 test_particle_life_particle_regenerate_preserves_forces :: proc(t: ^testing.T) {
 	sim: game.Particle_Life_Simulation
-	game.particle_life_init(&sim, 320, 240)
+	storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&sim, &storage, 320, 240)
 	game.particle_life_randomize_forces(&sim)
 	force_before := sim.runtime.force_matrix
 
@@ -560,14 +1379,17 @@ test_particle_life_particle_regenerate_preserves_forces :: proc(t: ^testing.T) {
 @(test)
 test_particle_life_resource_rebuild_does_not_regenerate_particles :: proc(t: ^testing.T) {
 	sim: game.Particle_Life_Simulation
-	game.particle_life_init(&sim, 320, 240)
+	gpu: rendervk.Particle_Life_Gpu_State
+	sim.render_runtime = &gpu
+	storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&sim, &storage, 320, 240)
 	sim.runtime.needs_reset = false
-	sim.gpu.ready = true
 
 	game.particle_life_request_resource_rebuild(&sim)
 
 	testing.expect(t, !sim.runtime.needs_reset)
-	testing.expect(t, !sim.gpu.ready)
+	testing.expect(t, sim.runtime.render_rebuild_requested)
+	testing.expect(t, sim.runtime.preserve_particles_requested)
 }
 
 particle_life_test_blob_summary :: proc(x, y, vx, vy: f32, area: u32, species: u32) -> game.Particle_Life_Blob_Summary {
@@ -772,27 +1594,30 @@ test_particle_life_contiguous_bins_preserve_exact_membership :: proc(t: ^testing
 @(test)
 test_particle_life_collision_toggle_reuses_interaction_grid :: proc(t: ^testing.T) {
 	sim: game.Particle_Life_Simulation
-	game.particle_life_init(&sim, 320, 240)
+	gpu: rendervk.Particle_Life_Gpu_State
+	sim.render_runtime = &gpu
+	storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&sim, &storage, 320, 240)
 	world_size := game.particle_life_world_size(&sim)
 
 	sim.settings.collision_enabled = true
-	fine_width, fine_height := game.particle_life_target_grid_dimensions(sim.settings, world_size)
-	fine_radius := game.particle_life_target_neighbor_radius_cells(sim.settings, fine_width, fine_height, world_size)
-	sim.gpu.grid_width = fine_width
-	sim.gpu.grid_height = fine_height
-	sim.gpu.neighbor_radius_cells = fine_radius
-	sim.gpu.collision_grid_width, sim.gpu.collision_grid_height = game.particle_life_target_collision_grid_dimensions(sim.settings, world_size)
+	fine_width, fine_height := game.particle_life_target_grid_dimensions(sim.settings^, world_size)
+	fine_radius := game.particle_life_target_neighbor_radius_cells(sim.settings^, fine_width, fine_height, world_size)
+	sim.runtime.grid_width = fine_width
+	sim.runtime.grid_height = fine_height
+	sim.runtime.neighbor_radius_cells = fine_radius
+	sim.runtime.collision_grid_width, sim.runtime.collision_grid_height = game.particle_life_target_collision_grid_dimensions(sim.settings^, world_size)
 	testing.expect(t, game.particle_life_current_grid_satisfies_settings(&sim))
 
 	sim.settings.collision_enabled = false
 	testing.expect(t, game.particle_life_current_grid_satisfies_settings(&sim))
 
-	interaction_width, interaction_height := game.particle_life_target_grid_dimensions(sim.settings, world_size)
-	interaction_radius := game.particle_life_target_neighbor_radius_cells(sim.settings, interaction_width, interaction_height, world_size)
-	sim.gpu.grid_width = interaction_width
-	sim.gpu.grid_height = interaction_height
-	sim.gpu.neighbor_radius_cells = interaction_radius
-	sim.gpu.collision_grid_width, sim.gpu.collision_grid_height = game.particle_life_target_collision_grid_dimensions(sim.settings, world_size)
+	interaction_width, interaction_height := game.particle_life_target_grid_dimensions(sim.settings^, world_size)
+	interaction_radius := game.particle_life_target_neighbor_radius_cells(sim.settings^, interaction_width, interaction_height, world_size)
+	sim.runtime.grid_width = interaction_width
+	sim.runtime.grid_height = interaction_height
+	sim.runtime.neighbor_radius_cells = interaction_radius
+	sim.runtime.collision_grid_width, sim.runtime.collision_grid_height = game.particle_life_target_collision_grid_dimensions(sim.settings^, world_size)
 	sim.settings.collision_enabled = true
 	testing.expect(t, game.particle_life_current_grid_satisfies_settings(&sim))
 }
@@ -800,16 +1625,19 @@ test_particle_life_collision_toggle_reuses_interaction_grid :: proc(t: ^testing.
 @(test)
 test_particle_life_range_change_rejects_stale_grid :: proc(t: ^testing.T) {
 	sim: game.Particle_Life_Simulation
-	game.particle_life_init(&sim, 320, 240)
+	gpu: rendervk.Particle_Life_Gpu_State
+	sim.render_runtime = &gpu
+	storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&sim, &storage, 320, 240)
 	world_size := game.particle_life_world_size(&sim)
 
 	sim.settings.collision_enabled = false
 	sim.settings.max_distance = 0.8
-	wide_width, wide_height := game.particle_life_target_grid_dimensions(sim.settings, world_size)
-	wide_radius := game.particle_life_target_neighbor_radius_cells(sim.settings, wide_width, wide_height, world_size)
-	sim.gpu.grid_width = wide_width
-	sim.gpu.grid_height = wide_height
-	sim.gpu.neighbor_radius_cells = wide_radius
+	wide_width, wide_height := game.particle_life_target_grid_dimensions(sim.settings^, world_size)
+	wide_radius := game.particle_life_target_neighbor_radius_cells(sim.settings^, wide_width, wide_height, world_size)
+	sim.runtime.grid_width = wide_width
+	sim.runtime.grid_height = wide_height
+	sim.runtime.neighbor_radius_cells = wide_radius
 	testing.expect(t, game.particle_life_current_grid_satisfies_settings(&sim))
 
 	sim.settings.max_distance = 0.02
@@ -819,7 +1647,8 @@ test_particle_life_range_change_rejects_stale_grid :: proc(t: ^testing.T) {
 @(test)
 test_particle_life_screen_to_world_keeps_mouse_y_upright :: proc(t: ^testing.T) {
 	sim: game.Particle_Life_Simulation
-	game.particle_life_init(&sim, 200, 100)
+	storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&sim, &storage, 200, 100)
 
 	top := game.particle_life_screen_to_world(&sim, {100, 0}, 200, 100)
 	bottom := game.particle_life_screen_to_world(&sim, {100, 100}, 200, 100)
@@ -856,7 +1685,8 @@ test_particle_life_random_spawn_scales_to_viewport_world :: proc(t: ^testing.T) 
 @(test)
 test_gray_scott_screen_to_texture_matches_rendered_y :: proc(t: ^testing.T) {
 	sim: game.Gray_Scott_Simulation
-	game.gray_scott_init(&sim, 200, 100)
+	storage: Test_Gray_Scott_Product_Storage
+	test_gray_scott_init(&sim, &storage, 200, 100)
 
 	top_x, top_y := game.gray_scott_screen_to_texture(&sim, {100, 0}, 200, 100)
 	bottom_x, bottom_y := game.gray_scott_screen_to_texture(&sim, {100, 100}, 200, 100)
@@ -890,20 +1720,22 @@ test_particle_life_tile_bounds_shift_view_instead_of_particle_positions :: proc(
 @(test)
 test_particle_life_trails_reset_when_camera_changes :: proc(t: ^testing.T) {
 	sim: game.Particle_Life_Simulation
-	game.particle_life_init(&sim, 1280, 720)
+	gpu: rendervk.Particle_Life_Gpu_State
+	sim.render_runtime = &gpu
+	storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&sim, &storage, 1280, 720)
 
-	sim.gpu.trail_initialized = true
 	game.particle_life_note_trail_camera(&sim)
-	testing.expect(t, sim.gpu.trail_initialized)
+	testing.expect(t, !sim.runtime.trail_reset_requested)
 
 	sim.runtime.camera_zoom = 2
 	game.particle_life_note_trail_camera(&sim)
-	testing.expect(t, !sim.gpu.trail_initialized)
+	testing.expect(t, sim.runtime.trail_reset_requested)
 	testing.expect_value(t, sim.runtime.trail_camera_zoom, f32(2))
 
-	sim.gpu.trail_initialized = true
+	sim.runtime.trail_reset_requested = false
 	game.particle_life_note_trail_camera(&sim)
-	testing.expect(t, sim.gpu.trail_initialized)
+	testing.expect(t, !sim.runtime.trail_reset_requested)
 }
 
 @(test)
@@ -984,7 +1816,8 @@ test_camera_controls_shift_trackpad_scroll_pans_without_zooming :: proc(t: ^test
 @(test)
 test_particle_life_camera_uses_shared_wasd_qe_reset_controls :: proc(t: ^testing.T) {
 	sim: game.Particle_Life_Simulation
-	game.particle_life_init(&sim, 1280, 720)
+	storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&sim, &storage, 1280, 720)
 
 	game.particle_life_apply_frame_input(&sim, {key_w = true, key_d = true, key_e = true, delta_time = 1.0 / 60.0, camera_sensitivity = 2})
 	testing.expect(t, sim.runtime.camera_target_x > 0)
@@ -993,7 +1826,7 @@ test_particle_life_camera_uses_shared_wasd_qe_reset_controls :: proc(t: ^testing
 	testing.expect(t, sim.runtime.camera_x > 0)
 	testing.expect(t, sim.runtime.camera_y < 0)
 
-	game.particle_life_apply_frame_input(&sim, {key_c = true, delta_time = 1.0 / 60.0, camera_sensitivity = 1})
+	game.particle_life_apply_frame_input(&sim, {actions = {camera_reset = {pressed = true, owner = .Mouse_Keyboard}}, delta_time = 1.0 / 60.0, camera_sensitivity = 1})
 	testing.expect_value(t, sim.runtime.camera_target_x, f32(0))
 	testing.expect_value(t, sim.runtime.camera_target_y, f32(0))
 	testing.expect_value(t, sim.runtime.camera_target_zoom, f32(1))
@@ -1002,7 +1835,8 @@ test_particle_life_camera_uses_shared_wasd_qe_reset_controls :: proc(t: ^testing
 @(test)
 test_slime_mold_camera_uses_shared_unfocused_controls :: proc(t: ^testing.T) {
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 
 	game.remaining_sim_apply_frame_input_for_kind(&sim, .Slime_Mold, {
 		key_w = true,
@@ -1018,7 +1852,7 @@ test_slime_mold_camera_uses_shared_unfocused_controls :: proc(t: ^testing.T) {
 	testing.expect(t, sim.camera.position[1] < 0)
 
 	game.remaining_sim_apply_frame_input_for_kind(&sim, .Slime_Mold, {
-		key_c = true,
+		actions = {camera_reset = {pressed = true, owner = .Mouse_Keyboard}},
 		delta_time = 1.0 / 60.0,
 		camera_sensitivity = 1,
 	})
@@ -1032,7 +1866,8 @@ test_toroidal_remaining_sims_use_shared_camera_and_wrapped_pointer :: proc(t: ^t
 	kinds := [?]game.Remaining_Sim_Kind{.Pellets, .Voronoi_CA, .Primordial}
 	for kind in kinds {
 		sim: game.Remaining_Sim_State
-		game.remaining_sim_init(&sim)
+		sim_storage: Test_Remaining_Sim_Product_Storage
+		test_remaining_sim_init(&sim, &sim_storage)
 		game.remaining_sim_apply_frame_input_for_kind(&sim, kind, {
 			window_width = 100,
 			window_height = 100,
@@ -1048,7 +1883,7 @@ test_toroidal_remaining_sims_use_shared_camera_and_wrapped_pointer :: proc(t: ^t
 		testing.expect(t, sim.cursor_world[1] >= -1 && sim.cursor_world[1] < 1)
 
 		game.remaining_sim_apply_frame_input_for_kind(&sim, kind, {
-			camera_reset = true,
+			actions = {camera_reset = {pressed = true, owner = .Controller}},
 			delta_time = 1.0 / 60.0,
 			camera_sensitivity = 1,
 		})
@@ -1077,7 +1912,8 @@ test_shared_camera_uniform_and_toroidal_coordinates :: proc(t: ^testing.T) {
 @(test)
 test_slime_mold_camera_accepts_controller_pan_and_zoom :: proc(t: ^testing.T) {
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 
 	game.remaining_sim_apply_frame_input_for_kind(&sim, .Slime_Mold, {
 		controller_left = {1, -1},
@@ -1135,14 +1971,15 @@ test_controller_camera_y_inversion_preserves_default_direction_and_isolates_sens
 @(test)
 test_slime_mold_camera_resets_from_controller_reset_action :: proc(t: ^testing.T) {
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 	sim.camera.position = {1, -0.5}
 	sim.camera.target_position = sim.camera.position
 	sim.camera.zoom = 2
 	sim.camera.target_zoom = 2
 
 	game.remaining_sim_apply_frame_input_for_kind(&sim, .Slime_Mold, {
-		camera_reset = true,
+		actions = {camera_reset = {pressed = true, owner = .Controller}},
 		delta_time = 1.0 / 60.0,
 		camera_sensitivity = 1,
 	})
@@ -1220,7 +2057,8 @@ test_keyboard_confirm_ignores_auto_repeat :: proc(t: ^testing.T) {
 @(test)
 test_particle_life_accepts_left_side_simulation_clicks :: proc(t: ^testing.T) {
 	sim: game.Particle_Life_Simulation
-	game.particle_life_init(&sim, 1920, 1080)
+	storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&sim, &storage, 1920, 1080)
 
 	game.particle_life_apply_frame_input(&sim, {
 		window_width = 1920,
@@ -1260,7 +2098,8 @@ test_voronoi_cursor_texture_y_follows_mouse_y :: proc(t: ^testing.T) {
 @(test)
 test_flow_field_input_tracks_cursor_mode_and_vulkan_y :: proc(t: ^testing.T) {
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 
 	game.remaining_sim_apply_frame_input(&sim, {
 		window_width = 100,
@@ -1288,7 +2127,8 @@ test_flow_field_input_tracks_cursor_mode_and_vulkan_y :: proc(t: ^testing.T) {
 @(test)
 test_primordial_input_tracks_vulkan_y :: proc(t: ^testing.T) {
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 
 	game.remaining_sim_apply_frame_input_for_kind(&sim, .Primordial, {
 		window_width = 100,
@@ -1306,7 +2146,8 @@ test_primordial_input_tracks_vulkan_y :: proc(t: ^testing.T) {
 @(test)
 test_pellets_input_preserves_old_mouse_y_flip :: proc(t: ^testing.T) {
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 
 	game.remaining_sim_apply_frame_input_for_kind(&sim, .Pellets, {
 		window_width = 100,
@@ -1324,7 +2165,8 @@ test_pellets_input_preserves_old_mouse_y_flip :: proc(t: ^testing.T) {
 @(test)
 test_pellets_throw_velocity_survives_release_frame :: proc(t: ^testing.T) {
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 
 	game.remaining_sim_apply_frame_input_for_kind(&sim, .Pellets, {
 		window_width = 100,
@@ -1365,7 +2207,8 @@ test_pellets_throw_velocity_survives_release_frame :: proc(t: ^testing.T) {
 @(test)
 test_slime_mold_cursor_pixel_y_matches_shader_coordinates :: proc(t: ^testing.T) {
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 
 	game.remaining_sim_apply_frame_input_for_kind(&sim, .Slime_Mold, {
 		window_width = 100,
@@ -1399,23 +2242,23 @@ test_shader_source_fallback_constants_match_manifest_keys :: proc(t: ^testing.T)
 	testing.expect_value(t, game.SLIME_COMPUTE_SHADER_SOURCE, "assets/shaders/simulations/slime_mold/shaders/compute.slang")
 	testing.expect_value(t, game.SLIME_SOURCE_ENTRY_UPDATE_SPEEDS, "update_agent_speeds")
 	testing.expect_value(t, game.SLIME_UPDATE_SPEEDS_FALLBACK_SPV, "build/shaders/simulations/slime_mold/shaders/compute_compute_update_agent_speeds")
-	testing.expect_value(t, game.MOIRE_PRESENT_FRAGMENT_SOURCE_ENTRY, "fs_main_texture")
+	testing.expect_value(t, rendervk.MOIRE_PRESENT_FRAGMENT_SOURCE_ENTRY, "fs_main_texture")
 	testing.expect_value(t, game.GRAY_SCOTT_PRESENT_FALLBACK_SPV, "build/shaders/gray_scott_present_fragment")
 }
 
 @(test)
 test_slime_speed_range_change_tracking_matches_settings :: proc(t: ^testing.T) {
-	gpu: game.Slime_Gpu_State
+	gpu: rendervk.Slime_Gpu_State
 	settings := game.slime_settings_default()
 
-	testing.expect(t, game.slime_speed_range_changed(&gpu, &settings))
+	testing.expect(t, rendervk.slime_speed_range_changed(&gpu, &settings))
 
 	gpu.agent_speed_min_uploaded = settings.agent_speed_min
 	gpu.agent_speed_max_uploaded = settings.agent_speed_max
-	testing.expect(t, !game.slime_speed_range_changed(&gpu, &settings))
+	testing.expect(t, !rendervk.slime_speed_range_changed(&gpu, &settings))
 
 	settings.agent_speed_max += 0.25
-	testing.expect(t, game.slime_speed_range_changed(&gpu, &settings))
+	testing.expect(t, rendervk.slime_speed_range_changed(&gpu, &settings))
 }
 
 @(test)
@@ -1461,7 +2304,8 @@ test_vectors_color_scheme_background_uses_active_lut :: proc(t: ^testing.T) {
 @(test)
 test_flow_shader_mouse_button_preserves_right_click_delete_mode :: proc(t: ^testing.T) {
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 
 	testing.expect_value(t, game.flow_mouse_button_down_from_cursor(&sim), u32(0))
 
@@ -1961,7 +2805,8 @@ test_remaining_builtin_presets_keep_current_color_scheme :: proc(t: ^testing.T) 
 	expected_name := "ZELDA_Aqua"
 	expected_reversed := false
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 
 	game.color_scheme_name_set(&sim.moire.color_scheme, expected_name)
 	sim.moire.color_scheme_reversed = expected_reversed
@@ -2005,6 +2850,7 @@ test_remaining_builtin_presets_keep_current_color_scheme :: proc(t: ^testing.T) 
 test_app_ui_navigation_tracks_previous_mode :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	testing.expect_value(t, ui.mode, game.App_Mode.Main_Menu)
 	game.app_ui_navigate(&ui, .Options)
 	testing.expect_value(t, ui.mode, game.App_Mode.Options)
@@ -2015,6 +2861,7 @@ test_app_ui_navigation_tracks_previous_mode :: proc(t: ^testing.T) {
 test_app_ui_scene_to_main_menu_waits_at_black_until_menu_rendered :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	game.app_ui_navigate(&ui, .Slime_Mold)
 	game.app_ui_mode_transition_update(&ui, game.APP_UI_MODE_FADE_OUT_SECONDS)
 	game.app_ui_mode_transition_notify_loaded(&ui)
@@ -2053,6 +2900,7 @@ test_app_ui_scene_to_main_menu_waits_at_black_until_menu_rendered :: proc(t: ^te
 test_app_ui_main_menu_to_scene_waits_at_black_until_scene_rendered :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 
 	game.app_ui_navigate(&ui, .Particle_Life)
 	testing.expect_value(t, ui.mode, game.App_Mode.Main_Menu)
@@ -2075,6 +2923,7 @@ test_app_ui_main_menu_to_scene_waits_at_black_until_scene_rendered :: proc(t: ^t
 test_app_ui_non_scene_returns_to_main_menu_without_fade :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	game.app_ui_navigate(&ui, .Options)
 	game.app_ui_navigate(&ui, .Main_Menu)
 
@@ -2130,13 +2979,14 @@ test_app_ui_main_menu_logo_click_requests_palette_randomize :: proc(t: ^testing.
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
 	worker: host.Render_Worker_State
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {128, 112}, mouse_pressed = true, mouse_released = true})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	testing.expect(t, ui.main_menu_palette_randomize_requested)
@@ -2153,6 +3003,7 @@ test_render_backend_consumes_main_menu_palette_randomize_request :: proc(t: ^tes
 	backend: rendervk.Render_Backend
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 
 	rendervk.render_backend_handle_main_menu_palette_requests(&backend, &ui, .Main_Menu)
 	first: game.Color_Scheme_Name
@@ -2191,28 +3042,26 @@ test_main_menu_launch_palette_helper_sets_live_sim_schemes :: proc(t: ^testing.T
 	palette := "ZELDA_Aqua"
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
-	gray_scott := game.gray_scott_default_settings()
-	particle_life := game.particle_life_default_settings()
-
-	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Slime_Mold, palette))
+	defer game.app_ui_destroy(&ui)
+	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, .Slime_Mold, palette))
 	test_expect_color_scheme(t, &ui.slime_mold.slime.color_scheme, ui.slime_mold.slime.color_scheme_reversed, palette, true)
-	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Gray_Scott, palette))
-	test_expect_color_scheme(t, &gray_scott.color_scheme, gray_scott.color_scheme_reversed, palette, true)
-	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Particle_Life, palette))
-	test_expect_color_scheme(t, &particle_life.color_scheme, particle_life.color_scheme_reversed, palette, true)
-	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Flow_Field, palette))
+	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, .Gray_Scott, palette))
+	test_expect_color_scheme(t, &ui.gray_scott.settings.color_scheme, ui.gray_scott.settings.color_scheme_reversed, palette, true)
+	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, .Particle_Life, palette))
+	test_expect_color_scheme(t, &ui.particle_life.settings.color_scheme, ui.particle_life.settings.color_scheme_reversed, palette, true)
+	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, .Flow_Field, palette))
 	test_expect_color_scheme(t, &ui.flow_field.flow.color_scheme, ui.flow_field.flow.color_scheme_reversed, palette, true)
-	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Pellets, palette))
+	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, .Pellets, palette))
 	test_expect_color_scheme(t, &ui.pellets.pellets.color_scheme, ui.pellets.pellets.color_scheme_reversed, palette, true)
-	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Voronoi_CA, palette))
+	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, .Voronoi_CA, palette))
 	test_expect_color_scheme(t, &ui.voronoi_ca.voronoi.color_scheme, ui.voronoi_ca.voronoi.color_scheme_reversed, palette, true)
-	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Moire, palette))
+	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, .Moire, palette))
 	test_expect_color_scheme(t, &ui.moire.moire.color_scheme, ui.moire.moire.color_scheme_reversed, palette, true)
-	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Vectors, palette))
+	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, .Vectors, palette))
 	test_expect_color_scheme(t, &ui.vectors.vectors.color_scheme, ui.vectors.vectors.color_scheme_reversed, palette, true)
-	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Primordial, palette))
+	testing.expect(t, rendervk.render_main_menu_apply_palette_to_mode(&ui, .Primordial, palette))
 	test_expect_color_scheme(t, &ui.primordial.primordial.color_scheme, ui.primordial.primordial.color_scheme_reversed, palette, true)
-	testing.expect(t, !rendervk.render_main_menu_apply_palette_to_mode(&ui, &gray_scott, &particle_life, .Gradient_Editor, palette))
+	testing.expect(t, !rendervk.render_main_menu_apply_palette_to_mode(&ui, .Gradient_Editor, palette))
 }
 
 @(test)
@@ -2221,6 +3070,7 @@ test_render_worker_main_menu_launch_applies_current_menu_palette_once :: proc(t:
 	runtime := new(host.Render_Worker_Runtime)
 	defer free(runtime)
 	game.app_ui_init(&runtime.app_ui, game.settings_default())
+	defer game.app_ui_destroy(&runtime.app_ui)
 	game.color_scheme_name_set(&runtime.render_backend.main_menu_backdrop.palette_name, palette)
 
 	runtime.app_ui.mode = .Flow_Field
@@ -2236,6 +3086,7 @@ test_render_worker_set_color_scheme_preserves_reversed_when_omitted :: proc(t: ^
 	runtime := new(host.Render_Worker_Runtime)
 	defer free(runtime)
 	game.app_ui_init(&runtime.app_ui, game.settings_default())
+	defer game.app_ui_destroy(&runtime.app_ui)
 
 	runtime.app_ui.slime_mold.slime.color_scheme_reversed = false
 	testing.expect(t, host.render_worker_set_color_scheme(runtime, .Slime_Mold, "MATPLOTLIB_viridis", false, false))
@@ -2361,6 +3212,8 @@ test_simulation_brush_mode_sets_match_cardinal_design :: proc(t: ^testing.T) {
 	pellets := game.canvas_tool_set_for_mode(.Pellets)
 	testing.expect_value(t, pellets.tools[0].name, "Grab")
 	testing.expect_value(t, pellets.tools[1].name, "Gravity")
+	testing.expect_value(t, pellets.tools[1].primary_label, "Attract")
+	testing.expect_value(t, pellets.tools[1].secondary_label, "Repel")
 	testing.expect_value(t, pellets.tools[2].name, "Burst")
 
 	vectors := game.canvas_tool_set_for_mode(.Vectors)
@@ -2383,18 +3236,31 @@ test_brush_mode_actions_map_to_stable_shader_pairs :: proc(t: ^testing.T) {
 	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[0], true), u32(2))
 	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[1], false), u32(3))
 	testing.expect_value(t, game.canvas_tool_interaction_mode(&set.tools[1], true), u32(4))
+
+	flow := game.canvas_tool_set_for_mode(.Flow_Field)
+	testing.expect_value(t, flow.tools[0].primary_action, game.Canvas_Tool_Action.Spawn_Particles)
+	testing.expect_value(t, game.canvas_tool_interaction_mode(&flow.tools[0], false), u32(1))
+	testing.expect_value(t, game.canvas_tool_interaction_mode(&flow.tools[0], true), u32(2))
+
+	primordial := game.canvas_tool_set_for_mode(.Primordial)
+	testing.expect_value(t, primordial.tools[0].primary_action, game.Canvas_Tool_Action.Impulse_Pull)
+	testing.expect_value(t, game.canvas_tool_interaction_mode(&primordial.tools[0], false), u32(1))
+	testing.expect_value(t, game.canvas_tool_interaction_mode(&primordial.tools[0], true), u32(2))
+
+	unknown: game.Canvas_Tool_Descriptor
+	testing.expect_value(t, game.canvas_tool_interaction_mode(&unknown, false), u32(0))
 }
 
 @(test)
 test_canvas_tool_dpad_selection_is_direct_and_ignores_empty_slots :: proc(t: ^testing.T) {
 	set := game.canvas_tool_set_for_kind(.Voronoi_CA)
 	state: game.Canvas_Tool_State
-	game.canvas_tool_update_selection(&set, &state, {nav_pressed_y = -1})
+	game.canvas_tool_update_selection(&set, &state, {actions = {navigate = {pressed = {0, -1}}}})
 	testing.expect_value(t, state.selected_slot, 1)
 	testing.expect(t, state.changed)
-	game.canvas_tool_update_selection(&set, &state, {nav_pressed_x = 1})
+	game.canvas_tool_update_selection(&set, &state, {actions = {navigate = {pressed = {1, 0}}}})
 	testing.expect_value(t, state.selected_slot, 2)
-	game.canvas_tool_update_selection(&set, &state, {nav_pressed_y = 1})
+	game.canvas_tool_update_selection(&set, &state, {actions = {navigate = {pressed = {0, 1}}}})
 	testing.expect_value(t, state.selected_slot, 2)
 	testing.expect(t, !state.changed)
 }
@@ -2446,6 +3312,8 @@ test_refactored_dispatch_families_reject_unknown_inputs :: proc(t: ^testing.T) {
 	testing.expect(t, !host.render_worker_handle_lifecycle_command(state, runtime, command))
 	testing.expect(t, !host.render_worker_handle_settings_command(state, runtime, command))
 	testing.expect(t, !host.render_worker_handle_recording_command(state, runtime, command))
-	testing.expect(t, !host.render_worker_handle_simulation_command(state, runtime, command))
-	testing.expect(t, !host.render_worker_handle_preset_command(state, runtime, command))
+	invalid_preset := host.Feature_Preset_File_Command {
+		operation = game.Feature_Preset_File_Operation(255),
+	}
+	testing.expect(t, !host.render_worker_handle_preset_file_command(state, runtime, .Gray_Scott, invalid_preset))
 }

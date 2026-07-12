@@ -5,9 +5,9 @@ import engine "../engine"
 
 import "core:fmt"
 
-app_ui_draw_gray_scott :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Gray_Scott_Simulation, vk_ctx: ^engine.Vk_Context, worker: ^Product_Context) {
-	width := f32(vk_ctx.swapchain_extent.width)
-	height := f32(vk_ctx.swapchain_extent.height)
+app_ui_draw_gray_scott :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Gray_Scott_Simulation, viewport: uifw.Vec2, worker: ^Product_Context) {
+	width := viewport.x
+	height := viewport.y
 	pause_consumed := simulation_controller_ui_update_input(ui, gui)
 
 	if gui.input.pause && !pause_consumed {
@@ -23,39 +23,30 @@ app_ui_draw_gray_scott :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^
 		tool_set := canvas_tool_set_for_mode(.Gray_Scott)
 		tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
 		name := fmt.tprintf("Gray-Scott · %s — Primary: %s · Secondary: %s", tool.name, tool.primary_label, tool.secondary_label)
-		app_ui_draw_simulation_bar(ui, gui, .Gray_Scott, sim, nil, nil, sim.settings.paused, !sim.gpu.ready, name, vk_ctx, width, worker)
+		app_ui_draw_simulation_bar(ui, gui, .Gray_Scott, sim, nil, nil, sim.settings.paused, !sim.runtime.render_ready, name, viewport, width, worker)
 	}
 	simulation_controller_ui_draw(ui, gui, gray = sim, width = width, height = height, worker = worker)
 	if sim.runtime.nutrient_image_dialog_requested {
 		sim.runtime.nutrient_image_dialog_requested = false
-		msg: Render_To_Ui_Message
-		msg.kind = .Request_Nutrient_Image_Dialog
-		_ = engine.queue_try_push(worker.render_to_ui, msg)
+		app_ui_request_image_dialog(ui, worker, .Gray_Scott_Nutrient)
 	}
-	app_ui_draw_loading_overlay(gui, width, height, !sim.gpu.ready)
+	app_ui_draw_loading_overlay(gui, width, height, !sim.runtime.render_ready)
 }
 
-app_ui_action_pressed_by_controller :: proc(action: Input_Action_Button_State, legacy_pressed: bool, legacy_device: uifw.Input_Device_Kind) -> bool {
-	if action.pressed {
-		return action.owner == .Controller
-	}
-	return legacy_pressed && legacy_device == .Controller
+app_ui_action_pressed_by_controller :: proc(action: Input_Action_Button_State) -> bool {
+	return action.pressed && action.owner == .Controller
 }
 
-app_ui_control_deck_pressed :: proc(action: Input_Action_Button_State, legacy_pressed: bool) -> bool {
-	if action.pressed {
-		return true
-	}
-	// Compatibility for callers that still construct only legacy Space fields.
-	return legacy_pressed && !action.down && !action.released
+app_ui_control_deck_pressed :: proc(action: Input_Action_Button_State) -> bool {
+	return action.pressed
 }
 
-app_ui_control_deck_active :: proc(action: Input_Action_Button_State, legacy_active: bool) -> bool {
-	return action.down || action.pressed || action.repeated || action.released || legacy_active
+app_ui_control_deck_active :: proc(action: Input_Action_Button_State) -> bool {
+	return action.down || action.pressed || action.repeated || action.released
 }
 
-app_ui_take_controller_action :: proc(action: ^Input_Action_Button_State, legacy_pressed: bool, legacy_device: uifw.Input_Device_Kind) -> bool {
-	if action == nil || !app_ui_action_pressed_by_controller(action^, legacy_pressed, legacy_device) {
+app_ui_take_controller_action :: proc(action: ^Input_Action_Button_State) -> bool {
+	if action == nil || !app_ui_action_pressed_by_controller(action^) {
 		return false
 	}
 	action.pressed = false
@@ -131,7 +122,7 @@ app_ui_simulation_shell_update :: proc(ui: ^App_Ui_State, input: Ui_Frame_Input,
 		ui.simulation_exit_hold_seconds = 0
 		ui.simulation_exit_hold_triggered = false
 	}
-	if (input.key_f1 || input.help || input.actions.help.pressed) && !ui.controls_help_open && app_ui_mode_is_simulation(ui.mode) {
+	if input.actions.help.pressed && !ui.controls_help_open && app_ui_mode_is_simulation(ui.mode) {
 		// Keyboard help is a shell-level command so it remains available when
 		// the simulation UI has auto-hidden, but never steals an active editor.
 		ui.controls_help_open = true
@@ -139,9 +130,9 @@ app_ui_simulation_shell_update :: proc(ui: ^App_Ui_State, input: Ui_Frame_Input,
 		ui.controls_help_invoker_focus = uifw.GUI_ID_NONE
 		ui.controls_help_modal_scroll = 0
 	}
-	controller_ui_action_shortcut := (slime_controller_ui_enabled(ui) || simulation_controller_ui_enabled(ui)) && (input.actions.toggle_ui.pressed || input.toggle_ui)
+	controller_ui_action_shortcut := (slime_controller_ui_enabled(ui) || simulation_controller_ui_enabled(ui)) && input.actions.toggle_ui.pressed && input.actions.toggle_ui.owner == .Controller
 	if ui.simulation_shell.force_hidden {
-		if input.key_slash || (input.toggle_ui && !controller_ui_action_shortcut) {
+		if input.actions.toggle_ui.pressed && !controller_ui_action_shortcut {
 			ui.simulation_shell.force_hidden = false
 			ui.simulation_shell.show_ui = true
 			app_ui_set_simulation_chrome_visible(ui, true)
@@ -158,14 +149,13 @@ app_ui_simulation_shell_update :: proc(ui: ^App_Ui_State, input: Ui_Frame_Input,
 		input.mouse_moved ||
 		input.wheel_delta_x != 0 ||
 		input.wheel_delta != 0 ||
-		input.help ||
-		input.toggle_ui ||
+		input.actions.help.pressed || input.actions.help.repeated ||
+		input.actions.toggle_ui.pressed || input.actions.toggle_ui.repeated ||
 		input.key_space ||
-		input.key_slash ||
-		input.nav_x != 0 ||
-		input.nav_y != 0 ||
-		input.accept ||
-		input.back
+		input.actions.navigate.value.x != 0 || input.actions.navigate.value.y != 0 ||
+		input.actions.navigate.pressed.x != 0 || input.actions.navigate.pressed.y != 0 ||
+		input.actions.accept.pressed || input.actions.accept.repeated ||
+		input.actions.back.pressed || input.actions.back.repeated
 	reveal_activity = reveal_activity ||
 		input.actions.control_deck.down ||
 		input.actions.control_deck.pressed ||
@@ -183,7 +173,7 @@ app_ui_simulation_shell_update :: proc(ui: ^App_Ui_State, input: Ui_Frame_Input,
 	   ui.simulation_shell.idle_seconds >= auto_hide_delay_seconds {
 		app_ui_hide_unfocused_simulation_ui(ui)
 	}
-	if input.key_slash || (input.toggle_ui && !controller_ui_action_shortcut) {
+	if input.actions.toggle_ui.pressed && !controller_ui_action_shortcut {
 		ui.simulation_shell.show_ui = !ui.simulation_shell.show_ui
 		app_ui_set_simulation_chrome_visible(ui, true)
 		ui.simulation_shell.idle_seconds = 0
@@ -201,14 +191,11 @@ app_ui_resolve_input_context :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, 
 	simulation_active := app_ui_mode_is_simulation(ui.mode)
 	controller_ui_active := slime_controller_ui_enabled(ui) || simulation_controller_ui_enabled(ui)
 	controller_ui_focused := (slime_controller_ui_enabled(ui) && ui.slime_controller.focus.phase != .Unfocused) || simulation_controller_ui_focused(ui)
-	controller_pause_pressed := controller_ui_active && app_ui_action_pressed_by_controller(input.actions.pause, input.pause, input.active_device)
-	controller_toggle_pressed := controller_ui_active && (input.actions.toggle_ui.pressed || input.toggle_ui)
-	control_deck_claim := controller_ui_active && app_ui_control_deck_active(
-		input.actions.control_deck,
-		input.key_space || input.key_space_down || input.key_space_pressed || input.key_space_released,
-	)
+	controller_pause_pressed := controller_ui_active && app_ui_action_pressed_by_controller(input.actions.pause)
+	controller_toggle_pressed := controller_ui_active && input.actions.toggle_ui.pressed && input.actions.toggle_ui.owner == .Controller
+	control_deck_claim := controller_ui_active && app_ui_control_deck_active(input.actions.control_deck)
 	focus_entry_claim := controller_ui_active && (
-		input.focus_next || input.focus_prev || input.key_tab ||
+		input.key_tab ||
 		input.actions.focus_next.down || input.actions.focus_next.pressed || input.actions.focus_next.repeated || input.actions.focus_next.released ||
 		input.actions.focus_prev.down || input.actions.focus_prev.pressed || input.actions.focus_prev.repeated || input.actions.focus_prev.released
 	)
@@ -291,11 +278,6 @@ app_ui_resolve_input_context :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, 
 }
 
 app_ui_clear_global_shortcuts :: proc(input: ^Ui_Frame_Input) {
-	input.pause = false
-	input.help = false
-	input.toggle_ui = false
-	input.key_slash = false
-	input.key_f1 = false
 	input.key_space = false
 	input.key_space_down = false
 	input.key_space_pressed = false
@@ -333,14 +315,6 @@ app_ui_clear_navigation_input :: proc(input: ^Ui_Frame_Input) {
 	input.key_right = false
 	input.key_up = false
 	input.key_down = false
-	input.nav_x = 0
-	input.nav_y = 0
-	input.nav_pressed_x = 0
-	input.nav_pressed_y = 0
-	input.accept = false
-	input.back = false
-	input.focus_next = false
-	input.focus_prev = false
 	input.actions.navigate = {}
 	input.actions.accept = {}
 	input.actions.back = {}
@@ -357,8 +331,6 @@ app_ui_clear_keyboard_camera_input :: proc(input: ^Ui_Frame_Input) {
 	input.key_e = false
 	input.key_x = false
 	input.key_v = false
-	input.key_c = false
-	input.camera_reset = false
 	input.actions.camera_pan = {}
 	input.actions.camera_zoom = 0
 	input.actions.camera_reset = {}
@@ -377,14 +349,13 @@ app_ui_clear_controller_camera_input :: proc(input: ^Ui_Frame_Input) {
 	if input.actions.camera_reset.owner == .Controller {
 		input.actions.camera_reset = {}
 	}
-	// The compatibility reset pulse may have come from the controller. The
-	// keyboard C field remains authoritative for an eligible keyboard reset.
-	input.camera_reset = false
+	// Keyboard-owned reset remains eligible when only controller camera input is
+	// filtered; ownership is carried by the semantic action itself.
 }
 
 app_ui_simulation_filter_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, input: Ui_Frame_Input) -> Ui_Frame_Input {
 	ui.main_menu_quit_hold_highlight = ui.mode == .Main_Menu && (input.key_escape_down || input.controller_start_down)
-	dismiss_help := ui.controls_help_open && (input.key_f1 || input.help || input.actions.help.pressed)
+	dismiss_help := ui.controls_help_open && input.actions.help.pressed
 	if dismiss_help {app_ui_close_controls_help(ui, gui)}
 	pan_chord_candidate := input.mouse_pressed &&
 		(input.mouse_button == 2 || (input.mouse_button == 1 && input.camera_pan_modifier_down))
@@ -421,8 +392,6 @@ app_ui_simulation_filter_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context
 		app_ui_clear_gui_global_shortcuts(gui)
 	}
 	if dismiss_help {
-		shell_input.key_f1 = false
-		shell_input.help = false
 		shell_input.actions.help = {}
 	}
 	if route.global_shortcut_owner != .Global_Fallback {
@@ -436,7 +405,7 @@ app_ui_simulation_filter_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context
 	}
 	ui_engaged := route.active_context >= .Focused_Ui || route.pointer_owner >= .Focused_Ui
 	app_ui_simulation_shell_update(ui, shell_input, ui_engaged)
-	if (shell_input.key_f1 || shell_input.help || shell_input.actions.help.pressed) && ui.controls_help_open {
+	if shell_input.actions.help.pressed && ui.controls_help_open {
 		ui.controls_help_invoker_focus = gui.focused
 		ui.controls_help_open_frame = gui.frame_index
 	}
@@ -490,12 +459,6 @@ app_ui_simulation_filter_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context
 		filtered.mouse_down = false
 		filtered.mouse_pressed = false
 		filtered.mouse_released = false
-		filtered.primary_down = false
-		filtered.primary_pressed = false
-		filtered.primary_released = false
-		filtered.secondary_down = false
-		filtered.secondary_pressed = false
-		filtered.secondary_released = false
 		filtered.actions.primary = {}
 		filtered.actions.secondary = {}
 	}
@@ -509,19 +472,13 @@ app_ui_simulation_filter_input :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context
 		filtered.wheel_delta = 0
 	}
 	if route.pointer_over_ui && !gesture_owned {
-		filtered.primary_down = filtered.mouse_down && filtered.mouse_button != 2 && filtered.mouse_button != 3
-		filtered.primary_pressed = filtered.mouse_pressed && filtered.mouse_button != 2 && filtered.mouse_button != 3
-		filtered.primary_released = filtered.mouse_released && filtered.mouse_button != 2 && filtered.mouse_button != 3
-		filtered.secondary_down = filtered.mouse_down && filtered.mouse_button == 3
-		filtered.secondary_pressed = filtered.mouse_pressed && filtered.mouse_button == 3
-		filtered.secondary_released = filtered.mouse_released && filtered.mouse_button == 3
-		filtered.actions.primary.down = filtered.primary_down
-		filtered.actions.primary.pressed = filtered.primary_pressed
-		filtered.actions.primary.released = filtered.primary_released
+		filtered.actions.primary.down = filtered.mouse_down && filtered.mouse_button != 2 && filtered.mouse_button != 3
+		filtered.actions.primary.pressed = filtered.mouse_pressed && filtered.mouse_button != 2 && filtered.mouse_button != 3
+		filtered.actions.primary.released = filtered.mouse_released && filtered.mouse_button != 2 && filtered.mouse_button != 3
 		filtered.actions.primary.repeated = false
-		filtered.actions.secondary.down = filtered.secondary_down
-		filtered.actions.secondary.pressed = filtered.secondary_pressed
-		filtered.actions.secondary.released = filtered.secondary_released
+		filtered.actions.secondary.down = filtered.mouse_down && filtered.mouse_button == 3
+		filtered.actions.secondary.pressed = filtered.mouse_pressed && filtered.mouse_button == 3
+		filtered.actions.secondary.released = filtered.mouse_released && filtered.mouse_button == 3
 		filtered.actions.secondary.repeated = false
 	}
 	if input.mouse_released {

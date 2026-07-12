@@ -12,10 +12,10 @@ pellets_transition_trail_image :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.
 		return
 	}
 	old_layout := image.layout
-	src_access: vk.AccessFlags
-	dst_access: vk.AccessFlags
-	src_stage := vk.PipelineStageFlags{.TOP_OF_PIPE}
-	dst_stage := vk.PipelineStageFlags{.TOP_OF_PIPE}
+	src_access: vk.AccessFlags2
+	dst_access: vk.AccessFlags2
+	src_stage := vk.PipelineStageFlags2{.TOP_OF_PIPE}
+	dst_stage := vk.PipelineStageFlags2{.TOP_OF_PIPE}
 	#partial switch old_layout {
 	case .UNDEFINED:
 		#partial switch new_layout {
@@ -40,20 +40,20 @@ pellets_transition_trail_image :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.
 			dst_stage = {.COLOR_ATTACHMENT_OUTPUT}
 		}
 	}
-	barrier := vk.ImageMemoryBarrier{sType = .IMAGE_MEMORY_BARRIER, srcAccessMask = src_access, dstAccessMask = dst_access, oldLayout = old_layout, newLayout = new_layout, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, image = image.handle, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
-	vk.CmdPipelineBarrier(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
+	barrier := vk.ImageMemoryBarrier2{sType = .IMAGE_MEMORY_BARRIER_2, srcAccessMask = src_access, dstAccessMask = dst_access, oldLayout = old_layout, newLayout = new_layout, srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED, image = image.handle, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
+	engine.vk_cmd_pipeline_barrier2(cmd, src_stage, dst_stage, {}, 0, nil, 0, nil, 1, &barrier)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 	image.layout = new_layout
 }
 
-pellets_dispatch_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, dst: vk.PipelineStageFlags) {
-	barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
-	vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, dst, {}, 1, &barrier, 0, nil, 0, nil)
+pellets_dispatch_barrier :: proc(vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, dst: vk.PipelineStageFlags2) {
+	barrier := vk.MemoryBarrier2{sType = .MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.SHADER_READ, .SHADER_WRITE}}
+	engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, dst, {}, 1, &barrier, 0, nil, 0, nil)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 }
 
 pellets_gpu_step :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, sim: ^Remaining_Sim_State, dt: f32) {
-	settings := &sim.pellets
+	settings := sim.pellets
 	if !pellets_gpu_ensure(gpu, vk_ctx, settings) || sim.paused {
 		return
 	}
@@ -70,33 +70,69 @@ pellets_gpu_step :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, cm
 	grid_populate_set := gpu.grid_populate_sets[frame_slot]
 	physics_set := gpu.physics_sets[frame_slot]
 	density_set := gpu.density_sets[frame_slot]
+	profile_frame := engine.Vk_Frame{frame_index = u32(frame_slot)}
+	engine.gpu_profiler_begin_pass(vk_ctx, cmd, profile_frame, .Pellets_Grid_Clear)
 	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_clear_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
 	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.grid_clear_pipeline.layout, 0, 1, &grid_clear_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDispatch(cmd, cell_groups, 1, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
+	engine.gpu_profiler_end_pass(vk_ctx, cmd, profile_frame, .Pellets_Grid_Clear)
 	pellets_dispatch_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
+	engine.gpu_profiler_begin_pass(vk_ctx, cmd, profile_frame, .Pellets_Grid_Build)
 	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_populate_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
 	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.grid_populate_pipeline.layout, 0, 1, &grid_populate_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDispatch(cmd, particle_groups, 1, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
+	engine.gpu_profiler_end_pass(vk_ctx, cmd, profile_frame, .Pellets_Grid_Build)
 	pellets_dispatch_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
+	grid_prefix_set := gpu.grid_prefix_sets[frame_slot]
+	block_count := max((total_cells + 255) / 256, 1)
+	engine.gpu_profiler_begin_pass(vk_ctx, cmd, profile_frame, .Pellets_Grid_Scatter)
+	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_prefix_pipeline.pipeline)
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.grid_prefix_pipeline.layout, 0, 1, &grid_prefix_set, 0, nil)
+	vk.CmdDispatch(cmd, block_count, 1, 1)
+	engine.vk_cmd_count_compute_dispatch(vk_ctx)
+	pellets_dispatch_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
+	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_prefix_blocks_pipeline.pipeline)
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.grid_prefix_blocks_pipeline.layout, 0, 1, &grid_prefix_set, 0, nil)
+	vk.CmdDispatch(cmd, 1, 1, 1)
+	engine.vk_cmd_count_compute_dispatch(vk_ctx)
+	pellets_dispatch_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
+	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_prefix_add_pipeline.pipeline)
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.grid_prefix_add_pipeline.layout, 0, 1, &grid_prefix_set, 0, nil)
+	vk.CmdDispatch(cmd, block_count, 1, 1)
+	engine.vk_cmd_count_compute_dispatch(vk_ctx)
+	pellets_dispatch_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
+	grid_scatter_set := gpu.grid_scatter_sets[frame_slot]
+	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_scatter_pipeline.pipeline)
+	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.grid_scatter_pipeline.layout, 0, 1, &grid_scatter_set, 0, nil)
+	vk.CmdDispatch(cmd, particle_groups, 1, 1)
+	engine.vk_cmd_count_compute_dispatch(vk_ctx)
+	engine.gpu_profiler_end_pass(vk_ctx, cmd, profile_frame, .Pellets_Grid_Scatter)
+	pellets_dispatch_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
+	engine.gpu_profiler_begin_pass(vk_ctx, cmd, profile_frame, .Pellets_Physics)
 	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.physics_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
 	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.physics_pipeline.layout, 0, 1, &physics_set, 0, nil)
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDispatch(cmd, particle_groups, 1, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
+	engine.gpu_profiler_end_pass(vk_ctx, cmd, profile_frame, .Pellets_Physics)
 	pellets_dispatch_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
-	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.density_pipeline.pipeline)
-	engine.vk_cmd_count_pipeline_bind(vk_ctx)
-	vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.density_pipeline.layout, 0, 1, &density_set, 0, nil)
-	engine.vk_cmd_count_descriptor_bind(vk_ctx)
-	vk.CmdDispatch(cmd, particle_groups, 1, 1)
-	engine.vk_cmd_count_compute_dispatch(vk_ctx)
+	if sim.pellets.foreground_color_mode == .Density {
+		engine.gpu_profiler_begin_pass(vk_ctx, cmd, profile_frame, .Pellets_Density)
+		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.density_pipeline.pipeline)
+		engine.vk_cmd_count_pipeline_bind(vk_ctx)
+		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.density_pipeline.layout, 0, 1, &density_set, 0, nil)
+		engine.vk_cmd_count_descriptor_bind(vk_ctx)
+		vk.CmdDispatch(cmd, particle_groups, 1, 1)
+		engine.vk_cmd_count_compute_dispatch(vk_ctx)
+		engine.gpu_profiler_end_pass(vk_ctx, cmd, profile_frame, .Pellets_Density)
+	}
 	pellets_dispatch_barrier(vk_ctx, cmd, {.VERTEX_SHADER, .FRAGMENT_SHADER})
 }
 
@@ -128,6 +164,8 @@ pellets_gpu_draw_background :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_
 }
 
 pellets_gpu_draw_particles :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, cmd: vk.CommandBuffer, frame_slot: int, particle_pipeline: ^engine.Vk_Graphics_Pipeline) {
+	profile_frame := engine.Vk_Frame{frame_index = u32(frame_slot)}
+	engine.gpu_profiler_begin_pass(vk_ctx, cmd, profile_frame, .Pellets_Particle_Draw)
 	vk.CmdBindPipeline(cmd, .GRAPHICS, particle_pipeline.pipeline)
 	engine.vk_cmd_count_pipeline_bind(vk_ctx)
 	render_set := gpu.render_sets[frame_slot]
@@ -136,6 +174,7 @@ pellets_gpu_draw_particles :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 	tile_count := max(gpu.present_tile_count, 1)
 	vk.CmdDraw(cmd, 6, gpu.particle_count * tile_count * tile_count, 0, 0)
 	engine.vk_cmd_count_draw(vk_ctx)
+	engine.gpu_profiler_end_pass(vk_ctx, cmd, profile_frame, .Pellets_Particle_Draw)
 }
 
 pellets_draw_ui_overlay :: proc(vk_ctx: ^engine.Vk_Context, frame: engine.Vk_Frame, ui: ^Ui_Render_Sink) {
@@ -182,9 +221,7 @@ pellets_gpu_present_trails :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 	}
 
 	clear_value := vk.ClearValue{color = {float32 = {0, 0, 0, 0}}}
-	begin := vk.RenderPassBeginInfo{sType = .RENDER_PASS_BEGIN_INFO, renderPass = gpu.trail_render_pass, framebuffer = gpu.trail_images[write_index].framebuffer, renderArea = {offset = {0, 0}, extent = {gpu.trail_width, gpu.trail_height}}, clearValueCount = 1, pClearValues = &clear_value}
-	vk.CmdBeginRenderPass(cmd, &begin, .INLINE)
-	vk_ctx.command_shape.render_pass_count += 1
+	engine.vk_cmd_begin_rendering(vk_ctx, cmd, gpu.trail_images[write_index].view, {gpu.trail_width, gpu.trail_height}, .COLOR_ATTACHMENT_OPTIMAL, .CLEAR, .STORE, clear_value)
 	viewport := vk.Viewport{x = 0, y = 0, width = f32(gpu.trail_width), height = f32(gpu.trail_height), minDepth = 0, maxDepth = 1}
 	scissor := vk.Rect2D{offset = {0, 0}, extent = {gpu.trail_width, gpu.trail_height}}
 	vk.CmdSetViewport(cmd, 0, 1, &viewport)
@@ -200,7 +237,7 @@ pellets_gpu_present_trails :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 		engine.vk_cmd_count_draw(vk_ctx)
 	}
 	pellets_gpu_draw_particles(gpu, vk_ctx, cmd, frame_slot, &gpu.trail_particle_pipeline)
-	vk.CmdEndRenderPass(cmd)
+	engine.vk_cmd_end_rendering(cmd)
 	gpu.trail_images[write_index].layout = .COLOR_ATTACHMENT_OPTIMAL
 	gpu.trail_initialized = true
 	pellets_transition_trail_image(gpu, vk_ctx, cmd, write_index, .SHADER_READ_ONLY_OPTIMAL)
@@ -226,7 +263,7 @@ pellets_gpu_present :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context,
 	if !gpu.ready || gpu.render_pipeline.pipeline == vk.Pipeline(0) {
 		return
 	}
-	settings := &sim.pellets
+	settings := sim.pellets
 	frame_slot := int(frame.frame_index)
 	if gpu.trail_images[0].handle != vk.Image(0) && gpu.trail_images[1].handle != vk.Image(0) {
 		pellets_update_trail_descriptors_for_slot(gpu, vk_ctx, frame_slot)
@@ -274,6 +311,10 @@ pellets_gpu_destroy :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context)
 	}
 	pellets_destroy_compute_pipeline(vk_ctx, &gpu.grid_clear_pipeline)
 	pellets_destroy_compute_pipeline(vk_ctx, &gpu.grid_populate_pipeline)
+	pellets_destroy_compute_pipeline(vk_ctx, &gpu.grid_prefix_pipeline)
+	pellets_destroy_compute_pipeline(vk_ctx, &gpu.grid_prefix_blocks_pipeline)
+	pellets_destroy_compute_pipeline(vk_ctx, &gpu.grid_prefix_add_pipeline)
+	pellets_destroy_compute_pipeline(vk_ctx, &gpu.grid_scatter_pipeline)
 	pellets_destroy_compute_pipeline(vk_ctx, &gpu.physics_pipeline)
 	pellets_destroy_compute_pipeline(vk_ctx, &gpu.density_pipeline)
 	engine.vk_destroy_graphics_pipeline(vk_ctx, &gpu.background_pipeline)
@@ -289,10 +330,11 @@ pellets_gpu_destroy :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context)
 			}
 		}
 		if gpu.trail_sampler != vk.Sampler(0) {vk.DestroySampler(vk_ctx.device, gpu.trail_sampler, nil)}
-	if gpu.trail_render_pass != vk.RenderPass(0) {vk.DestroyRenderPass(vk_ctx.device, gpu.trail_render_pass, nil)}
 	if gpu.descriptor_pool != vk.DescriptorPool(0) {vk.DestroyDescriptorPool(vk_ctx.device, gpu.descriptor_pool, nil)}
 	if gpu.grid_clear_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.grid_clear_set_layout, nil)}
 	if gpu.grid_populate_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.grid_populate_set_layout, nil)}
+	if gpu.grid_prefix_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.grid_prefix_set_layout, nil)}
+	if gpu.grid_scatter_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.grid_scatter_set_layout, nil)}
 	if gpu.physics_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.physics_set_layout, nil)}
 	if gpu.density_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.density_set_layout, nil)}
 	if gpu.background_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.background_set_layout, nil)}
@@ -302,6 +344,9 @@ pellets_gpu_destroy :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context)
 	engine.vk_destroy_buffer(vk_ctx, &gpu.particle_buffer)
 	engine.vk_destroy_buffer(vk_ctx, &gpu.grid_buffer)
 	engine.vk_destroy_buffer(vk_ctx, &gpu.grid_counts_buffer)
+	engine.vk_destroy_buffer(vk_ctx, &gpu.grid_offsets_buffer)
+	engine.vk_destroy_buffer(vk_ctx, &gpu.grid_cursors_buffer)
+	engine.vk_destroy_buffer(vk_ctx, &gpu.grid_block_sums_buffer)
 	engine.vk_destroy_buffer(vk_ctx, &gpu.lut_buffer)
 	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
 		engine.vk_destroy_buffer(vk_ctx, &gpu.physics_params_buffers[frame_slot])
@@ -314,6 +359,10 @@ pellets_gpu_destroy :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context)
 	}
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.grid_clear_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.grid_populate_shader)
+	engine.vk_destroy_shader_module(vk_ctx, &gpu.grid_prefix_shader)
+	engine.vk_destroy_shader_module(vk_ctx, &gpu.grid_prefix_blocks_shader)
+	engine.vk_destroy_shader_module(vk_ctx, &gpu.grid_prefix_add_shader)
+	engine.vk_destroy_shader_module(vk_ctx, &gpu.grid_scatter_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.physics_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.density_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.background_vertex_shader)

@@ -337,20 +337,21 @@ test_controller_guide_opens_and_closes_help_without_reopening :: proc(t: ^testin
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 	ui.simulation_shell.show_ui = false
 	ui.simulation_shell.controls_visible = false
 	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720})
 	guide := game.Input_Action_Button_State{pressed = true, owner = .Controller}
-	_ = game.app_ui_simulation_filter_input(&ui, &ctx, {window_width = 1280, window_height = 720, help = true, actions = {help = guide}})
+	_ = game.app_ui_simulation_filter_input(&ui, &ctx, {window_width = 1280, window_height = 720, actions = {help = guide}})
 	testing.expect(t, ui.controls_help_open)
 	_ = game.app_ui_simulation_filter_input(&ui, &ctx, {window_width = 1280, window_height = 720})
 	testing.expect_value(t, ui.input_route.active_context, game.App_Input_Context.Modal)
-	_ = game.app_ui_simulation_filter_input(&ui, &ctx, {window_width = 1280, window_height = 720, help = true, actions = {help = guide}})
+	_ = game.app_ui_simulation_filter_input(&ui, &ctx, {window_width = 1280, window_height = 720, actions = {help = guide}})
 	testing.expect(t, !ui.controls_help_open)
 
 	ctx.text_edit_id = 42
-	_ = game.app_ui_simulation_filter_input(&ui, &ctx, {window_width = 1280, window_height = 720, help = true, actions = {help = guide}})
+	_ = game.app_ui_simulation_filter_input(&ui, &ctx, {window_width = 1280, window_height = 720, actions = {help = guide}})
 	testing.expect(t, !ui.controls_help_open)
 }
 
@@ -644,6 +645,7 @@ test_slime_modal_owns_back_before_underlying_focus_scope :: proc(t: ^testing.T) 
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = true
 	ui.slime_controller.panel_open = true
@@ -681,15 +683,15 @@ test_preset_modal_accepts_semantic_controller_back :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_focus_driven_controller_ui_keeps_toggle_action_out_of_shell :: proc(t: ^testing.T) {
+test_toggle_action_routes_by_semantic_owner_not_prompt_device :: proc(t: ^testing.T) {
 	controller_owned: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&controller_owned, settings)
+	defer game.app_ui_destroy(&controller_owned)
 	controller_owned.mode = .Slime_Mold
 	controller_owned.simulation_shell.show_ui = false
 	game.app_ui_simulation_shell_update(&controller_owned, {
 		active_device = .Mouse_Keyboard,
-		toggle_ui = true,
 		actions = {
 			toggle_ui = {
 				pressed = true,
@@ -701,11 +703,11 @@ test_focus_driven_controller_ui_keeps_toggle_action_out_of_shell :: proc(t: ^tes
 
 	keyboard_owned: game.App_Ui_State
 	game.app_ui_init(&keyboard_owned, settings)
+	defer game.app_ui_destroy(&keyboard_owned)
 	keyboard_owned.mode = .Slime_Mold
 	keyboard_owned.simulation_shell.show_ui = false
 	game.app_ui_simulation_shell_update(&keyboard_owned, {
 		active_device = .Controller,
-		toggle_ui = true,
 		actions = {
 			toggle_ui = {
 				pressed = true,
@@ -713,7 +715,7 @@ test_focus_driven_controller_ui_keeps_toggle_action_out_of_shell :: proc(t: ^tes
 			},
 		},
 	})
-	testing.expect(t, !keyboard_owned.simulation_shell.show_ui)
+	testing.expect(t, keyboard_owned.simulation_shell.show_ui)
 }
 
 @(test)
@@ -725,6 +727,7 @@ test_focused_controller_ui_blocks_controller_camera_even_with_mouse_prompts :: p
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.focus.phase = .Region
 
@@ -734,12 +737,12 @@ test_focused_controller_ui_blocks_controller_camera_even_with_mouse_prompts :: p
 		active_device = .Mouse_Keyboard,
 		controller_left = {0.8, -0.5},
 		controller_zoom = 0.7,
-		camera_reset = true,
+		actions = {camera_reset = {pressed = true, owner = .Controller}},
 	})
 
 	testing.expect_value(t, filtered.controller_left, uifw.Vec2{})
 	testing.expect_value(t, filtered.controller_zoom, f32(0))
-	testing.expect(t, !filtered.camera_reset)
+	testing.expect(t, !filtered.actions.camera_reset.pressed)
 }
 
 @(test)
@@ -780,6 +783,10 @@ test_preset_modal_traps_focus_and_restores_invoker :: proc(t: ^testing.T) {
 	state.save_invoker_focus = invoker
 	worker := new(host.Render_Worker_State)
 	defer free(worker)
+	assets: uifw.Ui_Document_Assets
+	defer uifw.ui_document_assets_destroy(&assets)
+	testing.expect_value(t, uifw.ui_document_assets_load(&assets).error, uifw.Ui_Document_Error.None)
+	worker.documents = &assets
 	ctx.focused = invoker
 
 	uifw.gui_begin_frame(&ctx, {window_width = 900, window_height = 700})
@@ -1014,6 +1021,7 @@ test_slime_focus_memory_commits_after_end_frame_navigation :: proc(t: ^testing.T
 	settings := game.settings_default()
 	settings.remember_controller_focus = true
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.focus.phase = .Child_Region
 	ui.slime_controller.focus.remember_focus = true
@@ -1048,6 +1056,7 @@ test_simulation_tab_component_supports_keyboard_entry_and_controller_browse :: p
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 	state := game.simulation_controller_ui_state(&ui)
 	count := len(game.simulation_controller_ui_tabs(ui.mode))
@@ -1304,6 +1313,7 @@ test_editor_capture_blocks_global_shortcuts_but_button_focus_keeps_wasd_camera :
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.simulation_shell.show_ui = true
 
@@ -1321,15 +1331,13 @@ test_editor_capture_blocks_global_shortcuts_but_button_focus_keeps_wasd_camera :
 	ctx.input.key_space = true
 	ctx.input.key_slash = true
 	editor_filtered := game.app_ui_simulation_filter_input(&ui, &ctx, {
-		pause = true,
-		toggle_ui = true,
 		key_space = true,
-		key_slash = true,
 		key_w = true,
+		actions = {pause = {pressed = true, owner = .Mouse_Keyboard}, toggle_ui = {pressed = true, owner = .Mouse_Keyboard}, control_deck = {pressed = true, owner = .Mouse_Keyboard}},
 	})
 	testing.expect(t, ui.simulation_shell.show_ui)
-	testing.expect(t, !editor_filtered.pause)
-	testing.expect(t, !editor_filtered.toggle_ui)
+	testing.expect(t, !editor_filtered.actions.pause.pressed)
+	testing.expect(t, !editor_filtered.actions.toggle_ui.pressed)
 	testing.expect(t, !editor_filtered.key_w)
 	testing.expect(t, !ctx.input.pause)
 	testing.expect(t, !ctx.input.toggle_ui)
@@ -1341,8 +1349,8 @@ test_controller_action_can_only_be_taken_once :: proc(t: ^testing.T) {
 		pressed = true,
 		owner = .Controller,
 	}
-	testing.expect(t, game.app_ui_take_controller_action(&action, true, .Controller))
-	testing.expect(t, !game.app_ui_take_controller_action(&action, false, .Controller))
+	testing.expect(t, game.app_ui_take_controller_action(&action))
+	testing.expect(t, !game.app_ui_take_controller_action(&action))
 }
 
 @(test)
@@ -1418,6 +1426,7 @@ test_previous_frame_overlay_blocks_simulation_pointer_everywhere :: proc(t: ^tes
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 	ctx.overlay_input_rect_count = 1
 	ctx.overlay_input_rects[0] = {300, 200, 200, 200}
@@ -1428,8 +1437,7 @@ test_previous_frame_overlay_blocks_simulation_pointer_everywhere :: proc(t: ^tes
 		mouse_pos = {10, 650},
 		mouse_down = true,
 		mouse_pressed = true,
-		primary_down = true,
-		primary_pressed = true,
+		actions = {primary = {down = true, pressed = true, owner = .Mouse_Keyboard}},
 	})
 
 	testing.expect(t, !filtered.mouse_down)
@@ -1526,6 +1534,8 @@ test_particle_force_matrix_cell_supports_controller_editing :: proc(t: ^testing.
 	uifw.gui_init(&ctx)
 	defer uifw.gui_destroy(&ctx)
 	sim: game.Particle_Life_Simulation
+	storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&sim, &storage, 320, 240)
 	sim.settings.species_count = 1
 	id := uifw.gui_make_id(&ctx, "pl_matrix_0_0")
 	ctx.focused = id
@@ -1560,6 +1570,7 @@ test_slime_pointer_deck_selection_reconciles_controller_region :: proc(t: ^testi
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = true
 	ui.slime_controller.panel_open = true

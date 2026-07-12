@@ -88,6 +88,7 @@ test_options_input_section_exposes_all_input_preferences :: proc(t: ^testing.T) 
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	worker: host.Render_Worker_State
 
 	uifw.gui_begin_frame(&ctx, {})
@@ -120,6 +121,7 @@ test_options_camera_section_exposes_device_specific_tuning :: proc(t: ^testing.T
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	worker: host.Render_Worker_State
 	uifw.gui_begin_frame(&ctx, {})
 	uifw.gui_layout_begin(&ctx, {0, 0, 520, 240}, .Column, 8, 44)

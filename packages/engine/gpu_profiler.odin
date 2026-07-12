@@ -3,14 +3,21 @@ package engine
 import "core:os"
 import vk "vendor:vulkan"
 
-GPU_PROFILE_PASS_COUNT :: 4
-GPU_PROFILE_QUERY_COUNT :: GPU_PROFILE_PASS_COUNT * 2
+GPU_PROFILE_PASS_COUNT :: 10
+GPU_PROFILE_MAX_OCCURRENCES :: 16
+GPU_PROFILE_QUERY_COUNT :: GPU_PROFILE_PASS_COUNT * GPU_PROFILE_MAX_OCCURRENCES * 2
 
 Gpu_Profile_Pass :: enum u32 {
 	Frame,
 	Simulation_Step,
 	Simulation_Present,
 	Ui_Overlay,
+	Pellets_Grid_Clear,
+	Pellets_Grid_Build,
+	Pellets_Physics,
+	Pellets_Density,
+	Pellets_Particle_Draw,
+	Pellets_Grid_Scatter,
 }
 
 Gpu_Profile_Sample :: struct {
@@ -20,11 +27,19 @@ Gpu_Profile_Sample :: struct {
 	simulation_step_ms: f64,
 	simulation_present_ms: f64,
 	ui_overlay_ms: f64,
+	pellets_grid_clear_ms: f64,
+	pellets_grid_build_ms: f64,
+	pellets_physics_ms: f64,
+	pellets_density_ms: f64,
+	pellets_particle_draw_ms: f64,
+	pellets_grid_scatter_ms: f64,
 }
 
 Gpu_Profile_Frame_State :: struct {
 	query_pool: vk.QueryPool,
 	has_pending_results: bool,
+	pass_occurrences: [GPU_PROFILE_PASS_COUNT]u32,
+	active_occurrences: [GPU_PROFILE_PASS_COUNT]u32,
 }
 
 Gpu_Profiler :: struct {
@@ -103,26 +118,27 @@ gpu_profiler_collect_frame :: proc(ctx: ^Vk_Context, frame_slot: u32) {
 		return
 	}
 
-	values: [GPU_PROFILE_QUERY_COUNT]u64
-	result := vk.GetQueryPoolResults(
-		ctx.device,
-		frame.query_pool,
-		0,
-		GPU_PROFILE_QUERY_COUNT,
-		size_of(values),
-		raw_data(values[:]),
-		vk.DeviceSize(size_of(u64)),
-		{._64},
-	)
-	if result != .SUCCESS {
-		return
-	}
-
 	sample := Gpu_Profile_Sample{supported = true, enabled = true}
-	sample.frame_ms = gpu_profiler_delta_ms(ctx, values[0], values[1])
-	sample.simulation_step_ms = gpu_profiler_delta_ms(ctx, values[2], values[3])
-	sample.simulation_present_ms = gpu_profiler_delta_ms(ctx, values[4], values[5])
-	sample.ui_overlay_ms = gpu_profiler_delta_ms(ctx, values[6], values[7])
+	pass_values: [GPU_PROFILE_PASS_COUNT]f64
+	for pass_index in 0 ..< GPU_PROFILE_PASS_COUNT {
+		for occurrence in 0 ..< frame.pass_occurrences[pass_index] {
+			values: [2]u64
+			first_query := gpu_profiler_query_index(Gpu_Profile_Pass(pass_index), occurrence, true)
+			result := vk.GetQueryPoolResults(ctx.device, frame.query_pool, first_query, 2, size_of(values), raw_data(values[:]), vk.DeviceSize(size_of(u64)), {._64})
+			if result != .SUCCESS do return
+			pass_values[pass_index] += gpu_profiler_delta_ms(ctx, values[0], values[1])
+		}
+	}
+	sample.frame_ms = pass_values[int(Gpu_Profile_Pass.Frame)]
+	sample.simulation_step_ms = pass_values[int(Gpu_Profile_Pass.Simulation_Step)]
+	sample.simulation_present_ms = pass_values[int(Gpu_Profile_Pass.Simulation_Present)]
+	sample.ui_overlay_ms = pass_values[int(Gpu_Profile_Pass.Ui_Overlay)]
+	sample.pellets_grid_clear_ms = pass_values[int(Gpu_Profile_Pass.Pellets_Grid_Clear)]
+	sample.pellets_grid_build_ms = pass_values[int(Gpu_Profile_Pass.Pellets_Grid_Build)]
+	sample.pellets_physics_ms = pass_values[int(Gpu_Profile_Pass.Pellets_Physics)]
+	sample.pellets_density_ms = pass_values[int(Gpu_Profile_Pass.Pellets_Density)]
+	sample.pellets_particle_draw_ms = pass_values[int(Gpu_Profile_Pass.Pellets_Particle_Draw)]
+	sample.pellets_grid_scatter_ms = pass_values[int(Gpu_Profile_Pass.Pellets_Grid_Scatter)]
 	ctx.gpu_profiler.last_sample = sample
 	frame.has_pending_results = false
 }
@@ -140,6 +156,8 @@ gpu_profiler_begin_frame :: proc(ctx: ^Vk_Context, frame: Vk_Frame) {
 		return
 	}
 	vk.CmdResetQueryPool(frame.command_buffer, pool, 0, GPU_PROFILE_QUERY_COUNT)
+	ctx.gpu_profiler.frames[slot].pass_occurrences = {}
+	ctx.gpu_profiler.frames[slot].active_occurrences = {}
 	gpu_profiler_write(ctx, frame.command_buffer, slot, .Frame, true)
 }
 
@@ -178,13 +196,29 @@ gpu_profiler_write :: proc(ctx: ^Vk_Context, cmd: vk.CommandBuffer, frame_slot: 
 	if pool == vk.QueryPool(0) {
 		return
 	}
-	query := u32(pass) * 2
-	stage := vk.PipelineStageFlags{.TOP_OF_PIPE}
+	pass_index := int(pass)
+	occurrence: u32
+	if begin {
+		occurrence = ctx.gpu_profiler.frames[frame_slot].pass_occurrences[pass_index]
+		if occurrence >= GPU_PROFILE_MAX_OCCURRENCES do return
+		ctx.gpu_profiler.frames[frame_slot].active_occurrences[pass_index] = occurrence
+		ctx.gpu_profiler.frames[frame_slot].pass_occurrences[pass_index] = occurrence + 1
+	} else {
+		if ctx.gpu_profiler.frames[frame_slot].pass_occurrences[pass_index] == 0 do return
+		occurrence = ctx.gpu_profiler.frames[frame_slot].active_occurrences[pass_index]
+	}
+	query := gpu_profiler_query_index(pass, occurrence, begin)
+	stage := vk.PipelineStageFlags2{.TOP_OF_PIPE}
 	if !begin {
-		query += 1
 		stage = {.BOTTOM_OF_PIPE}
 	}
-	vk.CmdWriteTimestamp(cmd, stage, pool, query)
+	vk.CmdWriteTimestamp2(cmd, stage, pool, query)
+}
+
+gpu_profiler_query_index :: proc(pass: Gpu_Profile_Pass, occurrence: u32, begin: bool) -> u32 {
+	query := (u32(pass) * GPU_PROFILE_MAX_OCCURRENCES + occurrence) * 2
+	if !begin do query += 1
+	return query
 }
 
 gpu_profiler_delta_ms :: proc(ctx: ^Vk_Context, start, finish: u64) -> f64 {

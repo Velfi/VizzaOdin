@@ -17,16 +17,123 @@ import sdl "vendor:sdl3"
 render_worker_handle_command :: proc(state: ^Render_Worker_State, runtime: ^Render_Worker_Runtime, cmd: Ui_To_Render_Command) {
 	if render_worker_handle_lifecycle_command(state, runtime, cmd) {return}
 	if cmd.kind == .Frame_Input {render_worker_handle_frame_command(state, runtime, cmd); return}
+	if cmd.kind == .Feature {
+		feature := cmd.feature
+		render_worker_handle_feature_command(state, runtime, &feature)
+		return
+	}
 	if render_worker_handle_settings_command(state, runtime, cmd) {return}
 	if render_worker_handle_recording_command(state, runtime, cmd) {return}
-	if render_worker_handle_simulation_command(state, runtime, cmd) {return}
-	_ = render_worker_handle_preset_command(state, runtime, cmd)
+}
+
+render_worker_publish_feature_result :: proc(state: ^Render_Worker_State, result: Feature_Result) {
+	message: Render_To_Ui_Message
+	message.kind = .Feature_Result
+	message.feature_result = result
+	write_fixed_string(message.text[:], fixed_string(message.feature_result.message[:]))
+	_ = engine.queue_try_push(state.render_to_ui, message)
+}
+
+render_worker_handle_feature_command :: proc(state: ^Render_Worker_State, runtime: ^Render_Worker_Runtime, command: ^Feature_Command) {
+	result := Feature_Result {feature_id = command.feature_id, command_id = command.command_id}
+	if state == nil || state.shutdown_started {
+		result.error = .Shutting_Down
+		write_fixed_string(result.message[:], "Feature command rejected during shutdown")
+		if state != nil do render_worker_publish_feature_result(state, result)
+		return
+	}
+	if validation := feature_command_validate(command); validation != .None {
+		result.error = validation
+		write_fixed_string(result.message[:], "Feature command schema validation failed")
+		render_worker_publish_feature_result(state, result)
+		return
+	}
+	descriptor, found := feature_descriptor_by_id(command.feature_id)
+	if !found {
+		result.error = .Unknown_Feature
+		write_fixed_string(result.message[:], "Unknown feature")
+		render_worker_publish_feature_result(state, result)
+		return
+	}
+	mode_matches := runtime.app_ui.mode == descriptor.mode || (runtime.app_ui.mode_transition_phase != .Idle && runtime.app_ui.mode_transition_target == descriptor.mode)
+	if !mode_matches {
+		result.error = .Wrong_Mode
+		write_fixed_string(result.message[:], "Feature command does not target the active mode")
+		render_worker_publish_feature_result(state, result)
+		return
+	}
+
+	dispatched := false
+	if command.command_id == FEATURE_COMMAND_APPLY_PRESET {
+		payload, ok := feature_command_payload(command, Feature_Preset_Command)
+		if ok {
+			dispatched = render_worker_apply_builtin_preset(runtime, descriptor.mode, int(payload.index))
+		}
+	} else if command.command_id == FEATURE_COMMAND_SET_COLOR {
+		if payload, ok := feature_command_payload(command, Feature_Color_Command); ok {
+			name := fixed_string(payload.name[:])
+			dispatched = render_worker_set_color_scheme(runtime, descriptor.mode, name, payload.reversed, payload.reversed_set)
+		}
+	} else if command.command_id == FEATURE_COMMAND_RESET {
+		if payload, ok := feature_command_payload(command, Feature_Reset_Command); ok {
+			product_instance := feature_instance_set_get(&runtime.app_ui.feature_instances, descriptor.mode)
+			dispatched = product_instance != nil && descriptor.reset != nil && descriptor.reset(product_instance.settings, product_instance.runtime, payload)
+			if dispatched {
+				render_descriptor, render_found := render_feature_descriptor_by_mode(descriptor.mode)
+				render_instance := render_feature_instance_set_get(&runtime.feature_instances, descriptor.mode)
+				if render_found && render_instance != nil && render_descriptor.reset_runtime != nil {
+					render_descriptor.reset_runtime(render_instance.runtime, &runtime.vk_ctx)
+				}
+			}
+		}
+	} else if command.command_id == FEATURE_COMMAND_PRESET_FILE {
+		if payload, ok := feature_command_payload(command, Feature_Preset_File_Command); ok {
+			dispatched = render_worker_handle_preset_file_command(state, runtime, descriptor.mode, payload^)
+		}
+	} else if command.command_id == FEATURE_COMMAND_LOAD_IMAGE || command.command_id == FEATURE_COMMAND_CLEAR_IMAGE {
+		if payload, ok := feature_command_payload(command, Feature_Image_Command); ok {
+			if command.command_id == FEATURE_COMMAND_LOAD_IMAGE && payload.dialog_request_id != 0 && len(fixed_string(payload.path[:])) == 0 {
+				if _, valid_target := feature_image_target(command.feature_id, payload.slot); !valid_target {
+					result.error = .Dispatch_Failed
+					write_fixed_string(result.message[:], "Unsupported image dialog target")
+					render_worker_publish_feature_result(state, result)
+					return
+				}
+				result.success = true
+				result.dialog = {kind = .Open_Image, request_id = payload.dialog_request_id, feature_id = command.feature_id, slot = payload.slot}
+				write_fixed_string(result.message[:], "Image selection requested")
+				render_worker_publish_feature_result(state, result)
+				return
+			}
+			if payload.dialog_request_id != 0 {
+				target, valid_target := feature_image_target(command.feature_id, payload.slot)
+				if !valid_target || !app_ui_consume_image_dialog_request(&runtime.app_ui, target, payload.dialog_request_id) {
+					result.error = .Stale_Result
+					write_fixed_string(result.message[:], "Image dialog result is stale")
+					render_worker_publish_feature_result(state, result)
+					return
+				}
+			}
+			dispatched = render_worker_dispatch_feature_image(state, runtime, command.feature_id, payload, command.command_id == FEATURE_COMMAND_CLEAR_IMAGE)
+		}
+	} else if command.command_id == FEATURE_COMMAND_APPLY_SETTINGS {
+		instance := feature_instance_set_get(&runtime.app_ui.feature_instances, descriptor.mode)
+		if instance != nil && descriptor.apply_settings != nil {
+			dispatched = descriptor.apply_settings(instance.settings, instance.runtime, rawptr(&command.payload.bytes[0]))
+			if dispatched do render_worker_mark_mode_dirty(runtime, descriptor.mode)
+		}
+	}
+	result.success = dispatched
+	result.error = dispatched ? .None : .Dispatch_Failed
+	write_fixed_string(result.message[:], dispatched ? "Feature command applied" : "Feature command dispatch failed")
+	render_worker_publish_feature_result(state, result)
 }
 
 render_worker_handle_lifecycle_command :: proc(state: ^Render_Worker_State, runtime: ^Render_Worker_Runtime, cmd: Ui_To_Render_Command) -> bool {
 	#partial switch cmd.kind {
 	case .Close:
 		video_recorder_stop(&runtime.video_recorder)
+		state.shutdown_started = true
 		state.running = false
 	case .Resize:
 		render_worker_handle_resize(state, runtime, cmd)
@@ -37,29 +144,15 @@ render_worker_handle_lifecycle_command :: proc(state: ^Render_Worker_State, runt
 }
 
 
-
 render_worker_ensure_swapchain_for_frame :: proc(state: ^Render_Worker_State, runtime: ^Render_Worker_Runtime, cmd: Ui_To_Render_Command) {
 		if runtime.vk_ok && runtime.vk_ctx.needs_swapchain_recreate {
 			if !engine.vk_recreate_swapchain(&runtime.vk_ctx, cmd.frame_input.window_width, cmd.frame_input.window_height) {
 				render_worker_publish_error(state, "Failed to recreate Vulkan swapchain")
 			} else {
 				render_backend_destroy(&runtime.render_backend, &runtime.vk_ctx)
-				vectors_gpu_destroy(&runtime.vectors_gpu, &runtime.vk_ctx)
-				vectors_gpu_destroy(&runtime.preview_vectors_gpu, &runtime.vk_ctx)
-				moire_gpu_destroy(&runtime.moire_gpu, &runtime.vk_ctx)
-				moire_gpu_destroy(&runtime.preview_moire_gpu, &runtime.vk_ctx)
-				primordial_gpu_destroy(&runtime.primordial_gpu, &runtime.vk_ctx)
-				primordial_gpu_destroy(&runtime.preview_primordial_gpu, &runtime.vk_ctx)
-				pellets_gpu_destroy(&runtime.pellets_gpu, &runtime.vk_ctx)
-				pellets_gpu_destroy(&runtime.preview_pellets_gpu, &runtime.vk_ctx)
-				flow_gpu_destroy(&runtime.flow_gpu, &runtime.vk_ctx)
-				flow_gpu_destroy(&runtime.preview_flow_gpu, &runtime.vk_ctx)
-				slime_gpu_destroy(&runtime.slime_gpu, &runtime.vk_ctx)
-				voronoi_gpu_destroy(&runtime.voronoi_gpu, &runtime.vk_ctx)
-				slime_gpu_destroy(&runtime.preview_slime_gpu, &runtime.vk_ctx)
-				voronoi_gpu_destroy(&runtime.preview_voronoi_gpu, &runtime.vk_ctx)
-				gray_scott_resize(&runtime.preview_gray_scott, runtime.preview_gray_scott.gpu.width, runtime.preview_gray_scott.gpu.height)
-				runtime.preview_particle_life.gpu.ready = false
+				render_feature_instance_set_release_target_resources(&runtime.feature_instances, &runtime.vk_ctx)
+				gray_scott_resize(&runtime.app_ui.preview_gray_scott, runtime.app_ui.preview_gray_scott.runtime.render_width, runtime.app_ui.preview_gray_scott.runtime.render_height)
+				render_worker_particle_life_gpu(runtime, true).ready = false
 				if !render_backend_init(&runtime.render_backend, &runtime.vk_ctx) {
 					runtime.vk_ok = false
 					render_worker_publish_error(state, "Failed to recreate render backend")
@@ -69,26 +162,12 @@ render_worker_ensure_swapchain_for_frame :: proc(state: ^Render_Worker_State, ru
 }
 
 render_worker_handle_frame_command :: proc(state: ^Render_Worker_State, runtime: ^Render_Worker_Runtime, cmd: Ui_To_Render_Command) {
+		render_worker_try_recover_device(state, runtime, cmd.frame_input.window_width, cmd.frame_input.window_height, cmd.frame_input.frame_index)
 		dt, frame_dt := render_worker_begin_frame(runtime, cmd)
 		profile_sim_start := time.tick_now()
-		if runtime.app_ui.mode == .Particle_Life {
-			particle_life_step(&runtime.particle_life, dt)
-		} else if runtime.app_ui.mode == .Slime_Mold {
-			remaining_sim_step(&runtime.app_ui.slime_mold, dt)
-		} else if runtime.app_ui.mode == .Flow_Field {
-			remaining_sim_step(&runtime.app_ui.flow_field, dt)
-		} else if runtime.app_ui.mode == .Pellets {
-			remaining_sim_step(&runtime.app_ui.pellets, dt)
-		} else if runtime.app_ui.mode == .Voronoi_CA {
-			remaining_sim_step(&runtime.app_ui.voronoi_ca, dt)
-		} else if runtime.app_ui.mode == .Moire {
-			remaining_sim_step(&runtime.app_ui.moire, dt)
-		} else if runtime.app_ui.mode == .Vectors {
-			remaining_sim_step(&runtime.app_ui.vectors, dt)
-		} else if runtime.app_ui.mode == .Primordial {
-			remaining_sim_step(&runtime.app_ui.primordial, dt)
-		} else {
-			gray_scott_step(&runtime.sim, dt)
+		if descriptor, found := feature_descriptor_by_mode(runtime.app_ui.mode); found && descriptor.update != nil {
+			instance := feature_instance_set_get(&runtime.app_ui.feature_instances, runtime.app_ui.mode)
+			if instance != nil do _ = descriptor.update(instance.settings, instance.runtime, dt)
 		}
 		profile_sim_seconds := time.duration_seconds(time.tick_diff(profile_sim_start, time.tick_now()))
 
@@ -117,23 +196,22 @@ render_worker_handle_frame_command :: proc(state: ^Render_Worker_State, runtime:
 			controller_south_is_accept = app_controller_south_is_accept(runtime.app_ui.settings),
 			pointer_enabled = cmd.frame_input.pointer_enabled,
 			virtual_cursor_pos = cmd.frame_input.virtual_cursor_pos,
-			nav_x = cmd.frame_input.nav_x,
-			nav_y = cmd.frame_input.nav_y,
-			nav_pressed_x = cmd.frame_input.nav_pressed_x,
-			nav_pressed_y = cmd.frame_input.nav_pressed_y,
-			accept = cmd.frame_input.accept,
+			nav_x = cmd.frame_input.actions.navigate.value.x,
+			nav_y = cmd.frame_input.actions.navigate.value.y,
+			nav_pressed_x = cmd.frame_input.actions.navigate.pressed.x,
+			nav_pressed_y = cmd.frame_input.actions.navigate.pressed.y,
+			accept = cmd.frame_input.actions.accept.pressed || cmd.frame_input.actions.accept.repeated,
 			accept_pressed = cmd.frame_input.actions.accept.pressed,
-			back = cmd.frame_input.back,
-			pause = cmd.frame_input.pause,
-			toggle_ui = cmd.frame_input.toggle_ui,
-			focus_next = cmd.frame_input.focus_next,
-			focus_prev = cmd.frame_input.focus_prev,
-			primary_down = cmd.frame_input.primary_down,
-			primary_pressed = cmd.frame_input.primary_pressed,
-			primary_released = cmd.frame_input.primary_released,
-			secondary_down = cmd.frame_input.secondary_down,
-			secondary_pressed = cmd.frame_input.secondary_pressed,
-			secondary_released = cmd.frame_input.secondary_released,
+			back = cmd.frame_input.actions.back.pressed || cmd.frame_input.actions.back.repeated,
+			pause = cmd.frame_input.actions.pause.pressed || cmd.frame_input.actions.pause.repeated,
+			focus_next = cmd.frame_input.actions.focus_next.pressed || cmd.frame_input.actions.focus_next.repeated,
+			focus_prev = cmd.frame_input.actions.focus_prev.pressed || cmd.frame_input.actions.focus_prev.repeated,
+			primary_down = cmd.frame_input.actions.primary.down,
+			primary_pressed = cmd.frame_input.actions.primary.pressed,
+			primary_released = cmd.frame_input.actions.primary.released,
+			secondary_down = cmd.frame_input.actions.secondary.down,
+			secondary_pressed = cmd.frame_input.actions.secondary.pressed,
+			secondary_released = cmd.frame_input.actions.secondary.released,
 			controller_connected = cmd.frame_input.controller_connected,
 			controller_disconnected = cmd.frame_input.controller_disconnected,
 			canvas_tool_slot = cmd.frame_input.canvas_tool_slot,
@@ -163,38 +241,29 @@ render_worker_handle_frame_command :: proc(state: ^Render_Worker_State, runtime:
 			key_e = cmd.frame_input.key_e,
 			key_x = cmd.frame_input.key_x,
 			key_v = cmd.frame_input.key_v,
-			key_c = cmd.frame_input.key_c,
-			key_f1 = cmd.frame_input.key_f1,
-			key_slash = cmd.frame_input.key_slash,
 			key_space = cmd.frame_input.key_space,
 			key_space_down = cmd.frame_input.key_space_down,
 			key_space_pressed = cmd.frame_input.key_space_pressed,
 			key_space_released = cmd.frame_input.key_space_released,
 			controller_left = cmd.frame_input.controller_left,
-			controller_right = cmd.frame_input.controller_right,
 			controller_zoom = cmd.frame_input.controller_zoom,
 		})
 		simulation_input := app_ui_simulation_filter_input(&runtime.app_ui, &runtime.gui, cmd.frame_input)
 		simulation_input.camera_sensitivity = runtime.app_ui.settings.default_camera_sensitivity
 		simulation_input.controller_camera_sensitivity = runtime.app_ui.settings.controller_camera_sensitivity
 		simulation_input.controller_camera_invert_y = runtime.app_ui.settings.controller_camera_invert_y
-		if runtime.app_ui.mode == .Particle_Life {
-			particle_life_apply_frame_input(&runtime.particle_life, simulation_input)
-		} else if runtime.app_ui.mode == .Gray_Scott {
-			gray_scott_apply_frame_input(&runtime.sim, simulation_input)
-		} else if runtime.app_ui.mode == .Slime_Mold {
-			remaining_sim_apply_frame_input_for_kind(&runtime.app_ui.slime_mold, .Slime_Mold, simulation_input)
-		} else if runtime.app_ui.mode == .Flow_Field {
-			remaining_sim_apply_frame_input_for_kind(&runtime.app_ui.flow_field, .Flow_Field, simulation_input)
-		} else if runtime.app_ui.mode == .Pellets {
-			remaining_sim_apply_frame_input_for_kind(&runtime.app_ui.pellets, .Pellets, simulation_input)
-		} else if runtime.app_ui.mode == .Primordial {
-			remaining_sim_apply_frame_input_for_kind(&runtime.app_ui.primordial, .Primordial, simulation_input)
-		} else if runtime.app_ui.mode == .Voronoi_CA {
-			remaining_sim_apply_frame_input_for_kind(&runtime.app_ui.voronoi_ca, .Voronoi_CA, simulation_input)
+		if descriptor, found := feature_descriptor_by_mode(runtime.app_ui.mode); found && descriptor.apply_input != nil {
+			instance := feature_instance_set_get(&runtime.app_ui.feature_instances, runtime.app_ui.mode)
+			if instance != nil do _ = descriptor.apply_input(instance.settings, instance.runtime, simulation_input)
 		}
 		mode_before_ui := runtime.app_ui.mode
-		app_ui_draw(&runtime.app_ui, &runtime.gui, &runtime.sim, &runtime.particle_life, &runtime.vk_ctx, &state.product)
+		app_ui_draw(
+			&runtime.app_ui,
+			&runtime.gui,
+			&runtime.ui_documents,
+			{f32(runtime.vk_ctx.swapchain_extent.width), f32(runtime.vk_ctx.swapchain_extent.height)},
+			&state.product,
+		)
 		render_worker_apply_main_menu_palette_after_navigation(runtime, mode_before_ui)
 		uifw.gui_end_frame(&runtime.gui)
 		slime_controller_ui_end_frame(&runtime.app_ui, &runtime.gui)
@@ -210,7 +279,7 @@ render_worker_handle_frame_command :: proc(state: ^Render_Worker_State, runtime:
 		}
 		profile_ui_seconds := time.duration_seconds(time.tick_diff(profile_ui_start, time.tick_now()))
 
-		gray_scott_render(&runtime.sim, &runtime.vk_ctx)
+		gray_scott_render(&runtime.app_ui.gray_scott, &runtime.vk_ctx)
 		if runtime.debug_frame_log_count < engine.VK_DEBUG_FRAME_LOG_LIMIT {
 			engine.log_debug(
 				"render_worker: frame=",
@@ -226,7 +295,7 @@ render_worker_handle_frame_command :: proc(state: ^Render_Worker_State, runtime:
 				"x",
 				runtime.vk_ctx.swapchain_extent.height,
 				" gui_commands=",
-				len(runtime.gui.commands),
+				len(runtime.gui.paint_commands),
 				" mpos=",
 				cmd.frame_input.mouse_pos.x,
 				",",
@@ -238,10 +307,20 @@ render_worker_handle_frame_command :: proc(state: ^Render_Worker_State, runtime:
 		if runtime.vk_ok {
 			profile_render_start := time.tick_now()
 			video_capture := video_recorder_capture_sink(&runtime.video_recorder)
-			frame_rendered := render_backend_draw_frame(&runtime.render_backend, &runtime.vk_ctx, &runtime.sim, &runtime.preview_gray_scott, &runtime.particle_life, &runtime.preview_particle_life, &runtime.vectors_gpu, &runtime.preview_vectors_gpu, &runtime.moire_gpu, &runtime.preview_moire_gpu, &runtime.primordial_gpu, &runtime.preview_primordial_gpu, &runtime.pellets_gpu, &runtime.preview_pellets_gpu, &runtime.flow_gpu, &runtime.preview_flow_gpu, &runtime.slime_gpu, &runtime.voronoi_gpu, &runtime.preview_slime_gpu, &runtime.preview_voronoi_gpu, &runtime.app_ui, &runtime.gui, dt, runtime.app_ui.mode, cmd.frame_input.frame_index, state.screenshot, &video_capture)
+			frame_rendered := render_backend_draw_frame(&runtime.render_backend, &runtime.vk_ctx, &runtime.feature_instances, &runtime.app_ui, &runtime.gui, dt, runtime.app_ui.mode, cmd.frame_input.frame_index, state.screenshot, &video_capture)
 			if !frame_rendered {
-				engine.log_error("render_worker: render_backend_draw_frame failed frame=", cmd.frame_input.frame_index)
-				render_worker_publish_error(state, "Failed to execute Vulkan render graph")
+				if runtime.vk_ctx.device_lost {
+					loss_stage := fixed_string(runtime.vk_ctx.device_loss_stage[:])
+					loss_detail := fixed_string(runtime.vk_ctx.device_loss_detail[:])
+					runtime.vk_ok = false
+					runtime.device_recovery_pending = true
+					runtime.last_device_recovery_frame = 0
+					engine.log_error("render_worker: Vulkan device lost; scheduling adapter recovery")
+					render_worker_publish_error(state, fmt.tprintf("Vulkan adapter lost while %s. Driver report: %s. Attempting recovery.", loss_stage, loss_detail))
+				} else {
+					engine.log_error("render_worker: render_backend_draw_frame failed frame=", cmd.frame_input.frame_index)
+					render_worker_publish_error(state, "Failed to execute Vulkan render graph")
+				}
 			} else {
 				// Menu previews and simulation GPU resources are initialized during
 				// their first successful render. Keep the transition black through
@@ -258,7 +337,7 @@ render_worker_handle_frame_command :: proc(state: ^Render_Worker_State, runtime:
 			profile_render_seconds = time.duration_seconds(time.tick_diff(profile_render_start, time.tick_now()))
 		}
 			render_worker_profile_record(runtime, cmd.frame_input.frame_index, profile_sim_seconds, profile_ui_seconds, profile_render_seconds)
-			render_worker_publish_stats(state, cmd.frame_input.frame_index, frame_dt, runtime.app_ui.mode, &runtime.sim, &runtime.particle_life, &runtime.app_ui, &runtime.render_backend, &runtime.gui, profile_sim_seconds, profile_ui_seconds, profile_render_seconds)
+			render_worker_publish_stats(state, cmd.frame_input.frame_index, frame_dt, runtime.app_ui.mode, &runtime.app_ui.gray_scott, &runtime.app_ui.particle_life, &runtime.app_ui, &runtime.render_backend, &runtime.gui, profile_sim_seconds, profile_ui_seconds, profile_render_seconds)
 }
 
 render_worker_begin_frame :: proc(runtime: ^Render_Worker_Runtime, cmd: Ui_To_Render_Command) -> (f32, f32) {
@@ -275,8 +354,6 @@ render_worker_begin_frame :: proc(runtime: ^Render_Worker_Runtime, cmd: Ui_To_Re
 
 render_worker_handle_settings_command :: proc(state: ^Render_Worker_State, runtime: ^Render_Worker_Runtime, cmd: Ui_To_Render_Command) -> bool {
 	#partial switch cmd.kind {
-	case .Apply_Gray_Scott_Settings:
-		gray_scott_load_settings(&runtime.sim, cmd.gray_scott_settings)
 	case .Set_App_Mode:
 		if video_recorder_is_recording(&runtime.video_recorder) && app_ui_mode_is_simulation(runtime.app_ui.mode) && !app_ui_mode_is_simulation(cmd.app_mode) {
 			video_recorder_stop(&runtime.video_recorder)
@@ -291,102 +368,19 @@ render_worker_handle_settings_command :: proc(state: ^Render_Worker_State, runti
 		runtime.app_ui.component_fixture_value = cmd.component_fixture_value
 		app_ui_navigate_immediate(&runtime.app_ui, .Theme_Preview)
 		app_ui_mode_transition_cancel(&runtime.app_ui)
-	case .Apply_Builtin_Preset:
-		if render_worker_apply_builtin_preset(runtime, cmd.app_mode, cmd.builtin_preset_index) {
-			render_worker_publish_preset_result(state, true, fmt.tprintf("Applied built-in preset %d for %v", cmd.builtin_preset_index, cmd.app_mode))
-		} else {
-			render_worker_publish_preset_result(state, false, fmt.tprintf("Failed to apply built-in preset %d for %v", cmd.builtin_preset_index, cmd.app_mode))
-		}
-	case .Apply_Particle_Life_Settings:
-		particle_life_load_settings(&runtime.particle_life, cmd.particle_life_settings)
-		if cmd.particle_life_randomize_forces {
-			particle_life_randomize_forces(&runtime.particle_life)
-		}
-		if cmd.particle_life_reset {
-			particle_life_reset_runtime(&runtime.particle_life)
-		}
-		render_worker_publish_preset_result(state, true, "Configured Particle Life")
-	case .Apply_Flow_Settings:
-		runtime.app_ui.flow_field.flow = cmd.flow_settings
-		image_path := fixed_string(runtime.app_ui.flow_field.flow.image_path[:])
-		if len(image_path) > 0 && runtime.app_ui.flow_field.flow.vector_field_type == .Image {
-			_ = flow_gpu_load_vector_field_image_path(&runtime.flow_gpu, &runtime.vk_ctx, image_path, &runtime.app_ui.flow_field.flow)
-		}
-		if cmd.flow_reset {
-			flow_gpu_destroy(&runtime.flow_gpu, &runtime.vk_ctx)
-		}
-		render_worker_publish_preset_result(state, true, "Configured Flow Field")
-	case .Apply_Remaining_Settings:
-		switch cmd.remaining_kind {
-		case .Flow_Field:
-			runtime.app_ui.flow_field.flow = cmd.flow_settings
-			image_path := fixed_string(runtime.app_ui.flow_field.flow.image_path[:])
-			if len(image_path) > 0 && runtime.app_ui.flow_field.flow.vector_field_type == .Image {
-				_ = flow_gpu_load_vector_field_image_path(&runtime.flow_gpu, &runtime.vk_ctx, image_path, &runtime.app_ui.flow_field.flow)
-			}
-			if cmd.remaining_reset {
-				flow_gpu_destroy(&runtime.flow_gpu, &runtime.vk_ctx)
-			}
-		case .Pellets:
-			runtime.app_ui.pellets.pellets = cmd.pellets_settings
-			if cmd.remaining_reset {
-				runtime.pellets_gpu.ready = false
-			}
-		case .Voronoi_CA:
-			runtime.app_ui.voronoi_ca.voronoi = cmd.voronoi_settings
-			if cmd.remaining_reset {
-				runtime.voronoi_gpu.needs_rebuild = true
-			}
-		case .Moire:
-			runtime.app_ui.moire.moire = cmd.moire_settings
-			image_path := fixed_string(runtime.app_ui.moire.moire.image_path[:])
-			if len(image_path) > 0 && runtime.app_ui.moire.moire.image_mode_enabled {
-				_ = moire_gpu_load_image_path(&runtime.moire_gpu, &runtime.vk_ctx, image_path, &runtime.app_ui.moire.moire)
-			}
-			if cmd.remaining_reset {
-				moire_gpu_destroy(&runtime.moire_gpu, &runtime.vk_ctx)
-			}
-		case .Vectors:
-			runtime.app_ui.vectors.vectors = cmd.vectors_settings
-			image_path := fixed_string(runtime.app_ui.vectors.vectors.image_path[:])
-			if len(image_path) > 0 && runtime.app_ui.vectors.vectors.vector_field_type == .Image {
-				_ = vectors_gpu_load_image_path(&runtime.vectors_gpu, image_path, &runtime.app_ui.vectors.vectors)
-			}
-			if cmd.remaining_reset {
-				vectors_gpu_destroy(&runtime.vectors_gpu, &runtime.vk_ctx)
-			}
-		case .Primordial:
-			runtime.app_ui.primordial.primordial = cmd.primordial_settings
-			if cmd.remaining_reset {
-				runtime.primordial_gpu.ready = false
-			}
-		case .Slime_Mold:
-			runtime.app_ui.slime_mold.slime = cmd.slime_settings
-			if slime_gpu_ensure(&runtime.slime_gpu, &runtime.vk_ctx, &runtime.app_ui.slime_mold.slime) {
-				mask_path := fixed_string(runtime.app_ui.slime_mold.slime.mask_image_path[:])
-				if len(mask_path) > 0 && runtime.app_ui.slime_mold.slime.mask_pattern == .Image {
-					_ = slime_gpu_load_mask_image_path(&runtime.slime_gpu, mask_path, &runtime.app_ui.slime_mold.slime)
-				}
-				position_path := fixed_string(runtime.app_ui.slime_mold.slime.position_image_path[:])
-				if len(position_path) > 0 && runtime.app_ui.slime_mold.slime.position_generator == 7 {
-					_ = slime_gpu_load_position_image_path(&runtime.slime_gpu, position_path, &runtime.app_ui.slime_mold.slime)
-				}
-			}
-			if cmd.remaining_reset {
-				runtime.slime_gpu.needs_reset = true
-			}
-		}
-		render_worker_publish_preset_result(state, true, fmt.tprintf("Configured %v", cmd.remaining_kind))
-	case .Set_Color_Scheme:
-		color_scheme_name := cmd.color_scheme_name
-		name := fixed_string(color_scheme_name[:])
-		if render_worker_set_color_scheme(runtime, cmd.app_mode, name, cmd.color_scheme_reversed, cmd.color_scheme_reversed_set) {
-			render_worker_publish_preset_result(state, true, fmt.tprintf("Set color scheme %s for %v", name, cmd.app_mode))
-		} else {
-			render_worker_publish_preset_result(state, false, fmt.tprintf("Failed to set color scheme %s for %v", name, cmd.app_mode))
-		}
 	case .Hide_Ui:
 		render_worker_hide_ui(runtime)
+	case .Debug_Reload_Ui_Document:
+		document_id_value := cmd.document_id
+		path_value := cmd.file_path
+		document_id := fixed_string(document_id_value[:])
+		path := fixed_string(path_value[:])
+		result := uifw.ui_document_assets_reload(&runtime.ui_documents, document_id, path)
+		if result.error == .None {
+			render_worker_publish_preset_result(state, true, fmt.tprintf("Reloaded UI document %s", document_id))
+		} else {
+			render_worker_publish_preset_result(state, false, fmt.tprintf("UI document reload failed: id=%s error=%v index=%d message=%s", document_id, result.error, result.index, result.message))
+		}
 	case:
 		return false
 	}
@@ -431,139 +425,6 @@ render_worker_handle_recording_command :: proc(state: ^Render_Worker_State, runt
 		err := fixed_string(file_path[:])
 		app_ui_video_recording_apply_command_state(&runtime.app_ui, .Failed, err)
 		render_worker_publish_error(state, err)
-	case:
-		return false
-	}
-	return true
-}
-
-render_worker_handle_simulation_command :: proc(state: ^Render_Worker_State, runtime: ^Render_Worker_Runtime, cmd: Ui_To_Render_Command) -> bool {
-	#partial switch cmd.kind {
-	case .Reset_Gray_Scott:
-		gray_scott_reset_runtime(&runtime.sim)
-	case .Randomize_Gray_Scott:
-		gray_scott_randomize_settings(&runtime.sim)
-	case .Seed_Noise_Gray_Scott:
-		gray_scott_seed_noise(&runtime.sim)
-	case .Load_Gray_Scott_Nutrient_Image:
-		file_path := cmd.file_path
-		path := fixed_string(file_path[:])
-		if len(path) > 0 {
-			write_fixed_string(runtime.sim.settings.nutrient_image_path[:], path)
-			runtime.sim.settings.mask_pattern = .Nutrient_Map
-			gray_scott_upload_nutrient_map(&runtime.sim)
-			if runtime.sim.runtime.nutrient_image_loaded {
-				render_worker_publish_preset_result(state, true, "Loaded Gray-Scott nutrient image")
-			} else {
-				render_worker_publish_preset_result(state, false, "Failed to load Gray-Scott nutrient image")
-			}
-		}
-	case .Load_Vectors_Image:
-		file_path := cmd.file_path
-		path := fixed_string(file_path[:])
-		if len(path) > 0 {
-			runtime.app_ui.vectors.vectors.vector_field_type = .Image
-			runtime.app_ui.vectors.vectors.vector_field_index = int(Vector_Field_Type.Image)
-			write_fixed_string(runtime.app_ui.vectors.vectors.image_path[:], path)
-			if vectors_gpu_load_image_path(&runtime.vectors_gpu, path, &runtime.app_ui.vectors.vectors) {
-				render_worker_publish_preset_result(state, true, "Loaded Vectors image")
-			} else {
-				render_worker_publish_preset_result(state, false, "Failed to load Vectors image")
-			}
-		}
-	case .Load_Moire_Image:
-		file_path := cmd.file_path
-		path := fixed_string(file_path[:])
-		if len(path) > 0 {
-			runtime.app_ui.moire.moire.image_mode_enabled = true
-			write_fixed_string(runtime.app_ui.moire.moire.image_path[:], path)
-			if moire_gpu_load_image_path(&runtime.moire_gpu, &runtime.vk_ctx, path, &runtime.app_ui.moire.moire) {
-				render_worker_publish_preset_result(state, true, "Loaded Moire image")
-			} else {
-				render_worker_publish_preset_result(state, false, "Failed to load Moire image")
-			}
-		}
-	case .Load_Flow_Image:
-		file_path := cmd.file_path
-		path := fixed_string(file_path[:])
-		if len(path) > 0 {
-			runtime.app_ui.flow_field.flow.vector_field_type = .Image
-			runtime.app_ui.flow_field.flow.vector_field_index = int(Vector_Field_Type.Image)
-			write_fixed_string(runtime.app_ui.flow_field.flow.image_path[:], path)
-			if flow_gpu_load_vector_field_image_path(&runtime.flow_gpu, &runtime.vk_ctx, path, &runtime.app_ui.flow_field.flow) {
-				render_worker_publish_preset_result(state, true, "Loaded Flow image")
-			} else {
-				render_worker_publish_preset_result(state, false, "Failed to load Flow image")
-			}
-		}
-	case .Load_Slime_Mask_Image:
-		file_path := cmd.file_path
-		path := fixed_string(file_path[:])
-		if len(path) > 0 {
-			if !slime_gpu_ensure(&runtime.slime_gpu, &runtime.vk_ctx, &runtime.app_ui.slime_mold.slime) {
-				render_worker_publish_preset_result(state, false, fmt.tprintf("Failed to load Slime mask image: path=\"%s\"; reason=Slime GPU initialization failed; target=%dx%d", path, runtime.slime_gpu.width, runtime.slime_gpu.height))
-			} else {
-				ok, reason := slime_gpu_load_mask_image_path_diagnostic(&runtime.slime_gpu, path, &runtime.app_ui.slime_mold.slime)
-				if ok {
-					render_worker_publish_preset_result(state, true, "Loaded Slime mask image")
-				} else {
-					render_worker_publish_preset_result(state, false, fmt.tprintf("Failed to load Slime mask image: path=\"%s\"; target=%dx%d; fit=%v; reason=%s", path, runtime.slime_gpu.width, runtime.slime_gpu.height, runtime.app_ui.slime_mold.slime.mask_image_fit_mode, reason))
-				}
-			}
-		}
-	case .Load_Slime_Position_Image:
-		file_path := cmd.file_path
-		path := fixed_string(file_path[:])
-		if len(path) > 0 {
-			if slime_gpu_ensure(&runtime.slime_gpu, &runtime.vk_ctx, &runtime.app_ui.slime_mold.slime) &&
-			   slime_gpu_load_position_image_path(&runtime.slime_gpu, path, &runtime.app_ui.slime_mold.slime) {
-				render_worker_publish_preset_result(state, true, "Loaded Slime position image")
-			} else {
-				render_worker_publish_preset_result(state, false, "Failed to load Slime position image")
-			}
-		}
-	case .Clear_Gray_Scott_Nutrient_Image:
-		write_fixed_string(runtime.sim.settings.nutrient_image_path[:], "")
-		runtime.sim.runtime.nutrient_image_loaded = false
-		gray_scott_upload_nutrient_map(&runtime.sim)
-		render_worker_publish_preset_result(state, true, "Cleared Gray-Scott nutrient image")
-	case .Clear_Vectors_Image:
-		write_fixed_string(runtime.app_ui.vectors.vectors.image_path[:], "")
-		write_fixed_string(runtime.vectors_gpu.image_path[:], "")
-		runtime.vectors_gpu.image_loaded = false
-		runtime.app_ui.vectors.vectors.vector_field_type = .Noise
-		runtime.app_ui.vectors.vectors.vector_field_index = int(Vector_Field_Type.Noise)
-		render_worker_publish_preset_result(state, true, "Cleared Vectors image")
-	case .Clear_Moire_Image:
-		write_fixed_string(runtime.app_ui.moire.moire.image_path[:], "")
-		write_fixed_string(runtime.moire_gpu.image_path[:], "")
-		runtime.moire_gpu.image_loaded = false
-		runtime.app_ui.moire.moire.image_mode_enabled = false
-		render_worker_publish_preset_result(state, true, "Cleared Moire image")
-	case .Clear_Flow_Image:
-		write_fixed_string(runtime.app_ui.flow_field.flow.image_path[:], "")
-		write_fixed_string(runtime.flow_gpu.vector_field_image_path[:], "")
-		runtime.flow_gpu.vector_field_image_loaded = false
-		runtime.app_ui.flow_field.flow.vector_field_type = .Noise
-		runtime.app_ui.flow_field.flow.vector_field_index = int(Vector_Field_Type.Noise)
-		render_worker_publish_preset_result(state, true, "Cleared Flow image")
-	case .Clear_Slime_Mask_Image:
-		write_fixed_string(runtime.app_ui.slime_mold.slime.mask_image_path[:], "")
-		runtime.app_ui.slime_mold.slime.mask_pattern = .Disabled
-		runtime.app_ui.slime_mold.slime.mask_pattern_index = int(Slime_Mask_Pattern.Disabled)
-		if runtime.slime_gpu.mask_buffer.mapped != nil {
-			data := (cast([^]f32)runtime.slime_gpu.mask_buffer.mapped)[:int(runtime.slime_gpu.width * runtime.slime_gpu.height)]
-			for i in 0 ..< len(data) {
-				data[i] = 0
-			}
-		}
-		render_worker_publish_preset_result(state, true, "Cleared Slime mask image")
-	case .Clear_Slime_Position_Image:
-		write_fixed_string(runtime.app_ui.slime_mold.slime.position_image_path[:], "")
-		runtime.app_ui.slime_mold.slime.position_generator = 0
-		runtime.app_ui.slime_mold.slime.position_generator_index = 0
-		runtime.slime_gpu.needs_reset = true
-		render_worker_publish_preset_result(state, true, "Cleared Slime position image")
 	case:
 		return false
 	}

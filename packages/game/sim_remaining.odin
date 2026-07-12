@@ -18,6 +18,39 @@ Remaining_Sim_Kind :: enum {
 }
 
 Remaining_Sim_State :: struct {
+	using runtime: ^Remaining_Sim_Runtime_State,
+	moire: ^Moire_Settings,
+	vectors: ^Vectors_Settings,
+	primordial: ^Primordial_Settings,
+	voronoi: ^Voronoi_Settings,
+	pellets: ^Pellets_Settings,
+	flow: ^Flow_Settings,
+	slime: ^Slime_Settings,
+}
+
+remaining_sim_bind_product_instance :: proc(sim: ^Remaining_Sim_State, instance: ^Feature_Instance, kind: Remaining_Sim_Kind) -> bool {
+	if sim == nil || instance == nil do return false
+	runtime, ok := feature_instance_runtime(instance, Remaining_Sim_Runtime_State)
+	if !ok do return false
+	sim^ = {runtime = runtime}
+	runtime.kind = kind
+	#partial switch kind {
+	case .Slime_Mold: sim.slime, ok = feature_instance_settings(instance, Slime_Settings)
+	case .Flow_Field: sim.flow, ok = feature_instance_settings(instance, Flow_Settings)
+	case .Pellets: sim.pellets, ok = feature_instance_settings(instance, Pellets_Settings)
+	case .Voronoi_CA: sim.voronoi, ok = feature_instance_settings(instance, Voronoi_Settings)
+	case .Moire: sim.moire, ok = feature_instance_settings(instance, Moire_Settings)
+	case .Vectors: sim.vectors, ok = feature_instance_settings(instance, Vectors_Settings)
+	case .Primordial: sim.primordial, ok = feature_instance_settings(instance, Primordial_Settings)
+	}
+	return ok
+}
+
+// Transient product state shared by the remaining simulation implementations.
+// This structure is never serialized; only the typed settings fields above are
+// eligible for preset persistence.
+Remaining_Sim_Runtime_State :: struct {
+	kind: Remaining_Sim_Kind,
 	paused: bool,
 	time: f32,
 	intensity: f32,
@@ -48,20 +81,18 @@ Remaining_Sim_State :: struct {
 	slime_mask_image_dialog_requested: bool,
 	slime_position_image_dialog_requested: bool,
 	webcam_capture: ^sdl.Camera,
-	webcam_capture_command: Ui_To_Render_Command_Kind,
+	webcam_capture_target: Feature_Image_Target,
 	webcam_capture_status: [128]u8,
 	webcam_capture_frames: u64,
 	slime_reset_requested: bool,
 	slime_clear_trails_requested: bool,
+	flow_clear_trails_requested: bool,
 	slime_randomize_undo: Slime_Randomize_Undo,
 	slime_randomize_undo_available: bool,
-	moire: Moire_Settings,
-	vectors: Vectors_Settings,
-	primordial: Primordial_Settings,
-	voronoi: Voronoi_Settings,
-	pellets: Pellets_Settings,
-	flow: Flow_Settings,
-	slime: Slime_Settings,
+	primordial_randomize_undo: Primordial_Randomize_Undo,
+	primordial_randomize_undo_available: bool,
+	voronoi_randomize_undo: Voronoi_Randomize_Undo,
+	voronoi_randomize_undo_available: bool,
 	reset_undo: Remaining_Sim_Reset_Undo,
 }
 
@@ -301,6 +332,13 @@ Primordial_Settings :: struct {
 	position_generator_index: int,
 }
 
+// Transient experimentation history. This deliberately does not belong to
+// Primordial_Settings, so it never leaks into presets.
+Primordial_Randomize_Undo :: struct {
+	alpha, beta, velocity, radius: f32,
+	random_seed: u32,
+}
+
 Primordial_Foreground_Mode :: enum int {
 	Random,
 	Density,
@@ -321,6 +359,12 @@ Voronoi_Settings :: struct {
 	border_width: f32,
 	color_mode: u32,
 	color_mode_index: int,
+}
+
+Voronoi_Randomize_Undo :: struct {
+	point_count: u32,
+	time_scale, drift, brownian_speed: f32,
+	random_seed: u32,
 }
 
 Pellets_Foreground_Mode :: enum int {

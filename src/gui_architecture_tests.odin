@@ -2232,6 +2232,7 @@ test_app_ui_controller_trigger_mouse_state_reaches_simulation_filter :: proc(t: 
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Flow_Field
 	ui.simulation_shell.show_ui = false
 	ui.simulation_shell.controls_visible = false
@@ -2245,14 +2246,13 @@ test_app_ui_controller_trigger_mouse_state_reaches_simulation_filter :: proc(t: 
 		mouse_down = true,
 		mouse_pressed = true,
 		mouse_button = 3,
-		secondary_down = true,
-		secondary_pressed = true,
+		actions = {secondary = {down = true, pressed = true, owner = .Controller}},
 	})
 
 	testing.expect(t, filtered.mouse_down)
 	testing.expect(t, filtered.mouse_pressed)
 	testing.expect_value(t, filtered.mouse_button, u32(3))
-	testing.expect(t, filtered.secondary_down)
+	testing.expect(t, filtered.actions.secondary.down)
 }
 
 @(test)
@@ -2263,6 +2263,7 @@ test_app_ui_active_controller_disconnect_pauses_simulation :: proc(t: ^testing.T
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Flow_Field
 	ui.flow_field.paused = false
 	ui.simulation_shell.show_ui = false
@@ -2272,9 +2273,113 @@ test_app_ui_active_controller_disconnect_pauses_simulation :: proc(t: ^testing.T
 		active_device = .Controller,
 		controller_disconnected = true,
 	})
-	game.app_ui_handle_controller_disconnect(&ui, &ctx, nil, nil)
+	game.app_ui_handle_controller_disconnect(&ui, &ctx)
 
 	testing.expect(t, ui.flow_field.paused)
 	testing.expect(t, ui.simulation_shell.show_ui)
 	testing.expect(t, ui.simulation_shell.controls_visible)
+}
+
+@(test)
+test_gui_pointer_uses_previous_completed_geometry :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	id := uifw.gui_make_id(&ctx, "moving")
+	uifw.gui_begin_frame(&ctx, {window_width = 400, window_height = 300})
+	_ = uifw.gui_button_at(&ctx, id, {10, 10, 100, 40}, "Moving", true)
+	uifw.gui_end_frame(&ctx)
+
+	uifw.gui_begin_frame(&ctx, {window_width = 400, window_height = 300, mouse_pos = {12, 20}, mouse_moved = true})
+	_ = uifw.gui_button_at(&ctx, id, {14, 10, 100, 40}, "Moving", true)
+	testing.expect_value(t, ctx.hot, id)
+	uifw.gui_end_frame(&ctx)
+}
+
+@(test)
+test_gui_discontinuous_control_transition_suppresses_pointer_interaction :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	id := uifw.Gui_Id(91)
+	uifw.gui_begin_frame(&ctx, {window_width = 400, window_height = 300})
+	_ = uifw.gui_control(&ctx, id, {10, 10, 100, 40})
+	uifw.gui_end_frame(&ctx)
+	uifw.gui_begin_frame(&ctx, {window_width = 400, window_height = 300, mouse_pos = {20, 20}, mouse_moved = true})
+	_ = uifw.gui_control(&ctx, id, {200, 10, 100, 40})
+	testing.expect(t, ctx.hot != id)
+	uifw.gui_end_frame(&ctx)
+}
+
+@(test)
+test_gui_new_widget_waits_for_stable_geometry_after_bootstrap :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	uifw.gui_begin_frame(&ctx, {window_width = 400, window_height = 300})
+	_ = uifw.gui_button_at(&ctx, uifw.gui_make_id(&ctx, "existing"), {10, 10, 100, 40}, "Existing", true)
+	uifw.gui_end_frame(&ctx)
+
+	new_id := uifw.gui_make_id(&ctx, "new")
+	uifw.gui_begin_frame(&ctx, {window_width = 400, window_height = 300, mouse_pos = {220, 20}, mouse_moved = true})
+	_ = uifw.gui_button_at(&ctx, new_id, {200, 10, 100, 40}, "New", true)
+	testing.expect(t, ctx.hot != new_id)
+	uifw.gui_end_frame(&ctx)
+}
+
+@(test)
+test_gui_semantic_tree_tracks_layout_hierarchy_without_retaining_tree_pointers :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	uifw.gui_begin_frame(&ctx, {window_width = 400, window_height = 300})
+	uifw.gui_layout_begin(&ctx, {0, 0, 300, 200}, .Column, 8, 40)
+	id := uifw.gui_make_id(&ctx, "semantic_child")
+	_ = uifw.gui_button_at(&ctx, id, {10, 10, 100, 40}, "Child", true)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	diagnostics := uifw.gui_semantic_diagnostics(&ctx)
+	testing.expect_value(t, diagnostics.node_count, 2)
+	testing.expect_value(t, diagnostics.layout_passes, 1)
+	testing.expect_value(t, ctx.semantic_nodes[0].kind, uifw.Gui_Semantic_Node_Kind.Stack)
+	testing.expect_value(t, ctx.semantic_nodes[1].parent, 0)
+	testing.expect_value(t, ctx.semantic_nodes[1].id, id)
+}
+
+@(test)
+test_gui_semantic_unstable_layout_suppresses_next_pointer_snapshot :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	id := uifw.Gui_Id(77)
+	uifw.gui_begin_frame(&ctx, {window_width = 400, window_height = 300})
+	_ = uifw.gui_control(&ctx, id, {10, 10, -1, 40})
+	uifw.gui_end_frame(&ctx)
+	diagnostics := uifw.gui_semantic_diagnostics(&ctx)
+	testing.expect_value(t, diagnostics.layout_passes, 2)
+	testing.expect_value(t, diagnostics.unstable_node_count, 1)
+	testing.expect_value(t, ctx.interaction_rect_count, 1)
+	testing.expect(t, !ctx.interaction_rects[0].enabled)
+}
+
+@(test)
+test_gui_focus_ownership_restores_layers_and_deduplicates_modal_claims :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	canvas := uifw.Gui_Id(1)
+	deck := uifw.Gui_Id(2)
+	control := uifw.Gui_Id(3)
+	modal := uifw.Gui_Id(4)
+	uifw.gui_focus_owner_claim(&ctx, .Canvas, canvas)
+	uifw.gui_focus_owner_claim(&ctx, .Control_Deck, deck)
+	uifw.gui_focus_owner_claim(&ctx, .Active_Control, control)
+	uifw.gui_focus_owner_release(&ctx, .Active_Control, control)
+	testing.expect_value(t, ctx.focus_ownership.active_layer, uifw.Gui_Focus_Layer.Control_Deck)
+	testing.expect_value(t, ctx.focus_ownership.active_owner, deck)
+	uifw.gui_focus_owner_push_modal(&ctx, modal)
+	uifw.gui_focus_owner_push_modal(&ctx, modal)
+	testing.expect_value(t, ctx.focus_ownership.stack_count, 1)
+	testing.expect_value(t, ctx.focus_ownership.active_layer, uifw.Gui_Focus_Layer.Modal)
+	uifw.gui_focus_owner_pop_modal(&ctx)
+	testing.expect_value(t, ctx.focus_ownership.active_layer, uifw.Gui_Focus_Layer.Control_Deck)
+	testing.expect_value(t, ctx.focus_ownership.active_owner, deck)
 }

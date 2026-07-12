@@ -88,7 +88,7 @@ slime_controller_ui_draw_play :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context,
 }
 
 slime_controller_ui_draw_look :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State) {
-	settings := &sim.slime
+	settings := sim.slime
 	_ = color_scheme_editor_draw_selector(gui, &ui.color_scheme_editor, "slime_controller_palette", &settings.color_scheme, &settings.color_scheme_reversed)
 	if desc, ok := slime_control_descriptor_by_id(.Render_Background_Mode); ok {
 		if uifw.gui_selector(gui, fmt.tprintf("%s: %s", desc.label, SLIME_BACKGROUND_MODE_NAMES[settings.background_index]), desc.stable_id, &settings.background_index, SLIME_BACKGROUND_MODE_NAMES[:]) {
@@ -122,7 +122,7 @@ slime_controller_ui_draw_brush :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_S
 }
 
 slime_controller_ui_draw_motion :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State) {
-	settings := &sim.slime
+	settings := sim.slime
 	uifw.gui_label(gui, "Population")
 	if desc, ok := slime_control_descriptor_by_id(.Agents_Count); ok {
 		if uifw.gui_numeric_u32(gui, desc.label, desc.stable_id, &settings.agent_count, SLIME_MIN_AGENT_COUNT, SLIME_MAX_AGENT_COUNT) {
@@ -272,7 +272,7 @@ slime_controller_ui_draw_behavior_diagram :: proc(gui: ^uifw.Gui_Context, turn_d
 }
 
 slime_controller_ui_draw_awareness :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State) {
-	settings := &sim.slime
+	settings := sim.slime
 	_ = slime_controller_ui_draw_sensor_cone(gui, &settings.agent_sensor_angle, &settings.agent_sensor_distance)
 }
 
@@ -356,7 +356,7 @@ slime_controller_ui_draw_sensor_cone :: proc(gui: ^uifw.Gui_Context, angle, dist
 }
 
 slime_controller_ui_draw_field :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State) {
-	settings := &sim.slime
+	settings := sim.slime
 	uifw.gui_label(gui, "Ink")
 	if desc, ok := slime_control_descriptor_by_id(.Field_Deposit); ok {
 		_ = slime_controller_ui_float_slider(gui, desc, &settings.pheromone_deposition_rate)
@@ -373,7 +373,7 @@ slime_controller_ui_draw_field :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_S
 }
 
 slime_controller_ui_draw_birth :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, worker: ^Product_Context) {
-	settings := &sim.slime
+	settings := sim.slime
 	if desc, ok := slime_control_descriptor_by_id(.Initialization_Position_Distribution); ok {
 		if uifw.gui_selector(gui, fmt.tprintf("%s: %s", desc.label, SLIME_POSITION_GENERATOR_NAMES[settings.position_generator_index]), desc.stable_id, &settings.position_generator_index, SLIME_POSITION_GENERATOR_NAMES[:]) {
 			settings.position_generator = u32(settings.position_generator_index)
@@ -414,18 +414,18 @@ slime_controller_ui_draw_birth :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_S
 			sim.slime_position_image_dialog_requested = true
 		}
 		if position_result.load_requested || reload_position_image {
-			remaining_sim_enqueue_image_command(worker, .Load_Slime_Position_Image, fixed_string(settings.position_image_path[:]))
+			remaining_sim_enqueue_image_command(worker, .Slime_Position, fixed_string(settings.position_image_path[:]))
 			slime_request_reset(sim)
 		}
 		if position_result.clear_requested {
-			remaining_sim_enqueue_image_command(worker, .Clear_Slime_Position_Image)
+			remaining_sim_enqueue_image_command(worker, .Slime_Position, clear = true)
 			slime_request_reset(sim)
 		}
 	}
 }
 
 slime_controller_ui_draw_world :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_Sim_State, worker: ^Product_Context) {
-	settings := &sim.slime
+	settings := sim.slime
 	if desc, ok := slime_control_descriptor_by_id(.Mask_Source); ok {
 		if uifw.gui_selector(gui, fmt.tprintf("%s: %s", desc.label, SLIME_MASK_PATTERN_NAMES[settings.mask_pattern_index]), desc.stable_id, &settings.mask_pattern_index, SLIME_MASK_PATTERN_NAMES[:]) {
 			settings.mask_pattern = Slime_Mask_Pattern(settings.mask_pattern_index)
@@ -462,10 +462,10 @@ slime_controller_ui_draw_world :: proc(gui: ^uifw.Gui_Context, sim: ^Remaining_S
 			sim.slime_mask_image_dialog_requested = true
 		}
 		if mask_result.load_requested || reload_mask_image {
-			remaining_sim_enqueue_image_command(worker, .Load_Slime_Mask_Image, fixed_string(settings.mask_image_path[:]))
+			remaining_sim_enqueue_image_command(worker, .Slime_Mask, fixed_string(settings.mask_image_path[:]))
 		}
 		if mask_result.clear_requested {
-			remaining_sim_enqueue_image_command(worker, .Clear_Slime_Mask_Image)
+			remaining_sim_enqueue_image_command(worker, .Slime_Mask, clear = true)
 		}
 	}
 	if desc, ok := slime_control_descriptor_by_id(.Mask_Mirror_X); ok {

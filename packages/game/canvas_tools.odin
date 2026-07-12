@@ -10,6 +10,8 @@ Canvas_Tool_Gesture :: enum u8 {
 
 Canvas_Tool_Action :: enum u8 {
 	None,
+	Seed_Reaction,
+	Erase_Reaction,
 	Attract,
 	Repel,
 	Pluck,
@@ -26,8 +28,12 @@ Canvas_Tool_Action :: enum u8 {
 	Vortex_Counterclockwise,
 	Spawn_Particles,
 	Remove_Particles,
+	Grab,
+	Release,
 	Pull,
 	Push,
+	Impulse_Pull,
+	Impulse_Push,
 	Implode,
 	Explode,
 	Probe,
@@ -64,12 +70,12 @@ canvas_tool_set_for_kind :: proc(kind: Remaining_Sim_Kind) -> Canvas_Tool_Set {
 		set.tools[1] = {true, "Pheromone", "Deposit", "Erase", .Deposit_Pheromone, .Erase_Pheromone, .Brush}
 		set.tools[2] = {true, "Agents", "Gather", "Disperse", .Spawn_Agents, .Remove_Agents, .Brush}
 	case .Flow_Field:
-		set.tools[0] = {true, "Particles", "Spawn", "Remove", .None, .None, .Brush}
+		set.tools[0] = {true, "Particles", "Spawn", "Remove", .Spawn_Particles, .Remove_Particles, .Brush}
 		set.tools[1] = {true, "Force", "Attract", "Repel", .Attract, .Repel, .Brush}
 		set.tools[2] = {true, "Flow", "Clockwise", "Counterclockwise", .Vortex_Clockwise, .Vortex_Counterclockwise, .Brush}
 	case .Pellets:
-		set.tools[0] = {true, "Grab", "Grab", "Release", .None, .None, .Manipulator}
-		set.tools[1] = {true, "Gravity", "Pull", "Push", .Pull, .Push, .Brush}
+		set.tools[0] = {true, "Grab", "Grab", "Release", .Grab, .Release, .Manipulator}
+		set.tools[1] = {true, "Gravity", "Attract", "Repel", .Pull, .Push, .Brush}
 		set.tools[2] = {true, "Burst", "Implode", "Explode", .Implode, .Explode, .Stamp}
 	case .Voronoi_CA:
 		// Cardinal layout: left Magnet, up Sites, right Sculpt.
@@ -77,7 +83,7 @@ canvas_tool_set_for_kind :: proc(kind: Remaining_Sim_Kind) -> Canvas_Tool_Set {
 		set.tools[1] = {true, "Sites", "Paint", "Erase", .Paint_Sites, .Erase_Sites, .Brush}
 		set.tools[2] = {true, "Sculpt", "Pluck", "Shockwave", .Pluck, .Shockwave, .Manipulator}
 	case .Primordial:
-		set.tools[0] = {true, "Impulse", "Pull", "Push", .None, .None, .Manipulator}
+		set.tools[0] = {true, "Impulse", "Pull", "Push", .Impulse_Pull, .Impulse_Push, .Manipulator}
 		set.tools[1] = {true, "Vortex", "Clockwise", "Counterclockwise", .Vortex_Clockwise, .Vortex_Counterclockwise, .Brush}
 	case .Vectors:
 		set.tools[0] = {true, "Probe", "Inspect", "Pin", .Probe, .Pin_Probe, .Probe}
@@ -91,7 +97,7 @@ canvas_tool_set_for_mode :: proc(mode: App_Mode) -> Canvas_Tool_Set {
 	set: Canvas_Tool_Set
 	#partial switch mode {
 	case .Gray_Scott:
-		set.tools[0] = {true, "Reaction", "Seed", "Erase", .None, .None, .Brush}
+		set.tools[0] = {true, "Reaction", "Seed", "Erase", .Seed_Reaction, .Erase_Reaction, .Brush}
 		set.tools[1] = {true, "Nutrient", "Add", "Drain", .Add_Nutrient, .Drain_Nutrient, .Brush}
 	case .Particle_Life:
 		set.tools[0] = {true, "Gravity", "Attract", "Repel", .Attract, .Repel, .Brush}
@@ -123,10 +129,10 @@ canvas_tool_update_selection :: proc(set: ^Canvas_Tool_Set, state: ^Canvas_Tool_
 	if input.canvas_tool_slot >= 1 && input.canvas_tool_slot <= 4 {
 		target = int(input.canvas_tool_slot - 1)
 	}
-	if input.nav_pressed_x < -0.5 {target = 0}
-	if input.nav_pressed_y < -0.5 {target = 1}
-	if input.nav_pressed_x > 0.5 {target = 2}
-	if input.nav_pressed_y > 0.5 {target = 3}
+	if input.actions.navigate.pressed.x < -0.5 {target = 0}
+	if input.actions.navigate.pressed.y < -0.5 {target = 1}
+	if input.actions.navigate.pressed.x > 0.5 {target = 2}
+	if input.actions.navigate.pressed.y > 0.5 {target = 3}
 	if target >= 0 && set.tools[target].valid && target != state.selected_slot {
 		state.previous_slot = state.selected_slot
 		state.selected_slot = target
@@ -138,19 +144,17 @@ canvas_tool_action_for_input :: proc(tool: ^Canvas_Tool_Descriptor, secondary: b
 	return secondary ? tool.secondary_action : tool.primary_action
 }
 
-// Interaction modes 1 and 2 retain the legacy primary/secondary behavior.
-// Higher pairs identify the selected instrument without leaking tool enums into shaders.
 canvas_tool_interaction_mode :: proc(tool: ^Canvas_Tool_Descriptor, secondary: bool) -> u32 {
 	if tool == nil {return 0}
-	return u32(1 + tool_index_action_pair(tool, secondary))
-}
-
-tool_index_action_pair :: proc(tool: ^Canvas_Tool_Descriptor, secondary: bool) -> int {
-	if tool == nil {return 0}
-	#partial switch tool.primary_action {
-	case .Add_Nutrient, .Deposit_Pheromone, .Vortex_Clockwise, .Pull, .Probe: return secondary ? 3 : 2
-	case .Spawn_Agents, .Spawn_Particles, .Implode, .Deflect_Clockwise: return secondary ? 5 : 4
+	action := canvas_tool_action_for_input(tool, secondary)
+	#partial switch action {
+	case .Attract, .Spawn_Particles, .Grab, .Impulse_Pull: return 1
+	case .Repel, .Remove_Particles, .Release, .Impulse_Push: return 2
+	case .Add_Nutrient, .Deposit_Pheromone, .Vortex_Clockwise, .Pull, .Probe: return 3
+	case .Drain_Nutrient, .Erase_Pheromone, .Vortex_Counterclockwise, .Push, .Pin_Probe: return 4
+	case .Spawn_Agents, .Implode, .Deflect_Clockwise: return 5
+	case .Remove_Agents, .Explode, .Deflect_Counterclockwise: return 6
 	case:
 	}
-	return secondary ? 1 : 0
+	return 0
 }

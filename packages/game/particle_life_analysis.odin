@@ -262,28 +262,6 @@ particle_life_analyze_particles :: proc(
 	return workspace.summaries[:out_count]
 }
 
-particle_life_maybe_run_blob_analysis :: proc(sim: ^Particle_Life_Simulation) {
-	if !sim.settings.analysis_enabled || sim.gpu.particle_buffer.mapped == nil || sim.gpu.uploaded_particle_count == 0 {
-		return
-	}
-	interval := u64(max(sim.settings.analysis_interval_frames, 1))
-	if sim.runtime.frame_index == sim.runtime.last_analysis_frame || (sim.runtime.frame_index % interval) != 0 {
-		return
-	}
-	particles := (cast([^]Particle_Life_Particle)sim.gpu.particle_buffer.mapped)[:sim.gpu.uploaded_particle_count]
-	summaries := particle_life_analyze_particles(
-		&sim.runtime.analysis,
-		particles,
-		sim.gpu.uploaded_species_count,
-		sim.settings.analysis_grid_size,
-		sim.settings.min_blob_area_cells,
-		sim.settings.coherence_threshold,
-		particle_life_world_size(sim),
-	)
-	particle_life_blob_tracker_update(&sim.blob_tracker, summaries)
-	sim.runtime.last_analysis_frame = sim.runtime.frame_index
-}
-
 particle_life_blob_distance_sq :: proc(a, b: [2]f32) -> f32 {
 	dx := a[0] - b[0]
 	dy := a[1] - b[1]
@@ -430,9 +408,9 @@ particle_life_undo_randomize_forces :: proc(sim: ^Particle_Life_Simulation) -> b
 }
 
 particle_life_load_settings :: proc(sim: ^Particle_Life_Simulation, settings: Particle_Life_Settings) {
-	particle_count_changed := sim.gpu.uploaded_particle_count != 0 && sim.gpu.uploaded_particle_count != particle_life_target_particle_count(settings)
-	species_count_changed := sim.gpu.uploaded_species_count != 0 && sim.gpu.uploaded_species_count != particle_life_target_species_count(settings)
-	sim.settings = settings
+	particle_count_changed := sim.runtime.rendered_particle_count != 0 && sim.runtime.rendered_particle_count != particle_life_target_particle_count(settings)
+	species_count_changed := sim.runtime.rendered_species_count != 0 && sim.runtime.rendered_species_count != particle_life_target_species_count(settings)
+	sim.settings^ = settings
 	sim.runtime.force_randomize_undo_available = false
 	sim.settings.infinite_tiles_enabled = true
 	sim.runtime.camera_x = settings.camera_x
@@ -449,14 +427,15 @@ particle_life_load_settings :: proc(sim: ^Particle_Life_Simulation, settings: Pa
 	}
 	sim.runtime.needs_reset = true
 	if particle_count_changed || species_count_changed {
-		sim.gpu.ready = false
+		sim.runtime.render_rebuild_requested = true
+		sim.runtime.render_ready = false
 	} else {
 		sim.runtime.force_matrix_dirty = true
 	}
 }
 
 particle_life_save_settings :: proc(sim: ^Particle_Life_Simulation) -> Particle_Life_Settings {
-	settings := sim.settings
+	settings := sim.settings^
 	settings.camera_x = sim.runtime.camera_x
 	settings.camera_y = sim.runtime.camera_y
 	settings.camera_zoom = max(sim.runtime.camera_zoom, 0.25)
@@ -469,7 +448,7 @@ particle_life_save_settings :: proc(sim: ^Particle_Life_Simulation) -> Particle_
 }
 
 particle_life_clear_color :: proc(sim: ^Particle_Life_Simulation) -> uifw.Color {
-	color := particle_life_background_color(&sim.settings)
+	color := particle_life_background_color(sim.settings)
 	return {color[0], color[1], color[2], color[3]}
 }
 

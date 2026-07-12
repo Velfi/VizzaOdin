@@ -52,18 +52,23 @@ gray_scott_ensure_gpu_paths :: proc(sim: ^Gray_Scott_Simulation) -> bool {
 	if !os.exists(step_path) || !os.exists(vertex_path) || !os.exists(present_path) {
 		return false
 	}
-	sim.gpu.step_shader_spirv_path = step_path
-	sim.gpu.vertex_shader_spirv_path = vertex_path
-	sim.gpu.present_shader_spirv_path = present_path
+	gray_scott_gpu(sim).step_shader_spirv_path = step_path
+	gray_scott_gpu(sim).vertex_shader_spirv_path = vertex_path
+	gray_scott_gpu(sim).present_shader_spirv_path = present_path
 	return true
 }
 
 gray_scott_ensure_gpu_runtime :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^engine.Vk_Context) -> bool {
-	if sim.gpu.ready {
+	if gray_scott_gpu(sim).ready && (!sim.runtime.render_ready || gray_scott_gpu(sim).width != sim.runtime.render_width || gray_scott_gpu(sim).height != sim.runtime.render_height) {
+		gray_scott_destroy(sim, vk_ctx)
+	}
+	if gray_scott_gpu(sim).ready {
 		return true
 	}
+	gray_scott_gpu(sim).width = sim.runtime.render_width
+	gray_scott_gpu(sim).height = sim.runtime.render_height
 
-	if sim.gpu.step_shader_module.handle != 0 || sim.gpu.present_shader_module.handle != 0 {
+	if gray_scott_gpu(sim).step_shader_module.handle != 0 || gray_scott_gpu(sim).present_shader_module.handle != 0 {
 		gray_scott_destroy(sim, vk_ctx)
 	}
 	if !gray_scott_ensure_gpu_paths(sim) {
@@ -71,31 +76,32 @@ gray_scott_ensure_gpu_runtime :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^engi
 	}
 
 	step_module := engine.Vk_Shader_Module{}
-	if !engine.vk_load_shader_module(vk_ctx, sim.gpu.step_shader_spirv_path, &step_module) {
+	if !engine.vk_load_shader_module(vk_ctx, gray_scott_gpu(sim).step_shader_spirv_path, &step_module) {
 		return false
 	}
 	present_module := engine.Vk_Shader_Module{}
-	if !engine.vk_load_shader_module(vk_ctx, sim.gpu.present_shader_spirv_path, &present_module) {
+	if !engine.vk_load_shader_module(vk_ctx, gray_scott_gpu(sim).present_shader_spirv_path, &present_module) {
 		engine.vk_destroy_shader_module(vk_ctx, &step_module)
 		return false
 	}
 	vertex_module := engine.Vk_Shader_Module{}
-	if !engine.vk_load_shader_module(vk_ctx, sim.gpu.vertex_shader_spirv_path, &vertex_module) {
+	if !engine.vk_load_shader_module(vk_ctx, gray_scott_gpu(sim).vertex_shader_spirv_path, &vertex_module) {
 		engine.vk_destroy_shader_module(vk_ctx, &step_module)
 		engine.vk_destroy_shader_module(vk_ctx, &present_module)
 		return false
 	}
 
-	sim.gpu.step_shader_module = step_module
-	sim.gpu.present_shader_module = present_module
-	sim.gpu.vertex_shader_module = vertex_module
+	gray_scott_gpu(sim).step_shader_module = step_module
+	gray_scott_gpu(sim).present_shader_module = present_module
+	gray_scott_gpu(sim).vertex_shader_module = vertex_module
 
 	if !gray_scott_create_render_state(sim, vk_ctx) {
 		gray_scott_destroy(sim, vk_ctx)
 		return false
 	}
 
-	sim.gpu.ready = true
+	gray_scott_gpu(sim).ready = true
+	sim.runtime.render_ready = true
 	return true
 }
 
@@ -111,8 +117,8 @@ gray_scott_create_render_state :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^eng
 }
 
 gray_scott_create_image_resource :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^engine.Vk_Context, index: int) -> bool {
-	width := cast(int)max(sim.gpu.width, 1)
-	height := cast(int)max(sim.gpu.height, 1)
+	width := cast(int)max(gray_scott_gpu(sim).width, 1)
+	height := cast(int)max(gray_scott_gpu(sim).height, 1)
 	if width <= 0 || height <= 0 {
 		return false
 	}
@@ -130,16 +136,16 @@ gray_scott_create_image_resource :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^e
 		sharingMode = .EXCLUSIVE,
 		initialLayout = .UNDEFINED,
 	}
-	if vk.CreateImage(vk_ctx.device, &image_info, nil, &sim.gpu.storage[index].handle) != .SUCCESS {
+	if vk.CreateImage(vk_ctx.device, &image_info, nil, &gray_scott_gpu(sim).storage[index].handle) != .SUCCESS {
 		return false
 	}
 
 	req: vk.MemoryRequirements
-	vk.GetImageMemoryRequirements(vk_ctx.device, sim.gpu.storage[index].handle, &req)
+	vk.GetImageMemoryRequirements(vk_ctx.device, gray_scott_gpu(sim).storage[index].handle, &req)
 	memory_type, ok := engine.vk_find_memory_type(vk_ctx, req.memoryTypeBits, {.DEVICE_LOCAL})
 	if !ok {
-		vk.DestroyImage(vk_ctx.device, sim.gpu.storage[index].handle, nil)
-		sim.gpu.storage[index].handle = vk.Image(0)
+		vk.DestroyImage(vk_ctx.device, gray_scott_gpu(sim).storage[index].handle, nil)
+		gray_scott_gpu(sim).storage[index].handle = vk.Image(0)
 		return false
 	}
 
@@ -148,21 +154,21 @@ gray_scott_create_image_resource :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^e
 		allocationSize = req.size,
 		memoryTypeIndex = memory_type,
 	}
-	if vk.AllocateMemory(vk_ctx.device, &alloc_info, nil, &sim.gpu.storage[index].memory) != .SUCCESS {
-		vk.DestroyImage(vk_ctx.device, sim.gpu.storage[index].handle, nil)
-		sim.gpu.storage[index].handle = vk.Image(0)
+	if vk.AllocateMemory(vk_ctx.device, &alloc_info, nil, &gray_scott_gpu(sim).storage[index].memory) != .SUCCESS {
+		vk.DestroyImage(vk_ctx.device, gray_scott_gpu(sim).storage[index].handle, nil)
+		gray_scott_gpu(sim).storage[index].handle = vk.Image(0)
 		return false
 	}
-	if vk.BindImageMemory(vk_ctx.device, sim.gpu.storage[index].handle, sim.gpu.storage[index].memory, 0) != .SUCCESS {
-		vk.FreeMemory(vk_ctx.device, sim.gpu.storage[index].memory, nil)
-		vk.DestroyImage(vk_ctx.device, sim.gpu.storage[index].handle, nil)
-		sim.gpu.storage[index] = {}
+	if vk.BindImageMemory(vk_ctx.device, gray_scott_gpu(sim).storage[index].handle, gray_scott_gpu(sim).storage[index].memory, 0) != .SUCCESS {
+		vk.FreeMemory(vk_ctx.device, gray_scott_gpu(sim).storage[index].memory, nil)
+		vk.DestroyImage(vk_ctx.device, gray_scott_gpu(sim).storage[index].handle, nil)
+		gray_scott_gpu(sim).storage[index] = {}
 		return false
 	}
 
 	view_info := vk.ImageViewCreateInfo {
 		sType = .IMAGE_VIEW_CREATE_INFO,
-		image = sim.gpu.storage[index].handle,
+		image = gray_scott_gpu(sim).storage[index].handle,
 		viewType = .D2,
 		format = GRAY_SCOTT_IMAGE_FORMAT,
 		components = {r = .IDENTITY, g = .IDENTITY, b = .IDENTITY, a = .IDENTITY},
@@ -174,19 +180,19 @@ gray_scott_create_image_resource :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^e
 			layerCount = 1,
 		},
 	}
-	if vk.CreateImageView(vk_ctx.device, &view_info, nil, &sim.gpu.storage[index].view) != .SUCCESS {
-		vk.FreeMemory(vk_ctx.device, sim.gpu.storage[index].memory, nil)
-		vk.DestroyImage(vk_ctx.device, sim.gpu.storage[index].handle, nil)
-		sim.gpu.storage[index] = {}
+	if vk.CreateImageView(vk_ctx.device, &view_info, nil, &gray_scott_gpu(sim).storage[index].view) != .SUCCESS {
+		vk.FreeMemory(vk_ctx.device, gray_scott_gpu(sim).storage[index].memory, nil)
+		vk.DestroyImage(vk_ctx.device, gray_scott_gpu(sim).storage[index].handle, nil)
+		gray_scott_gpu(sim).storage[index] = {}
 		return false
 	}
 
-	sim.gpu.storage[index].layout = .UNDEFINED
+	gray_scott_gpu(sim).storage[index].layout = .UNDEFINED
 	return true
 }
 
 gray_scott_upload_lut :: proc(sim: ^Gray_Scott_Simulation) {
-	if sim.gpu.lut_buffer.mapped == nil {
+	if gray_scott_gpu(sim).lut_buffer.mapped == nil {
 		return
 	}
 	name := color_scheme_name_get(&sim.settings.color_scheme)
@@ -197,15 +203,15 @@ gray_scott_upload_lut :: proc(sim: ^Gray_Scott_Simulation) {
 	if sim.settings.color_scheme_reversed {
 		color_scheme_reverse(&scheme)
 	}
-	out := cast([^]u32)sim.gpu.lut_buffer.mapped
+	out := cast([^]u32)gray_scott_gpu(sim).lut_buffer.mapped
 	_ = color_scheme_write_u32_buffer(scheme, out[:GRAY_SCOTT_LUT_SIZE])
-	sim.gpu.lut_uploaded_scheme = sim.settings.color_scheme
-	sim.gpu.lut_uploaded_reversed = sim.settings.color_scheme_reversed
+	gray_scott_gpu(sim).lut_uploaded_scheme = sim.settings.color_scheme
+	gray_scott_gpu(sim).lut_uploaded_reversed = sim.settings.color_scheme_reversed
 }
 
 gray_scott_upload_present_params :: proc(sim: ^Gray_Scott_Simulation, frame_slot: u32) {
 	slot := min(frame_slot, u32(engine.MAX_FRAMES_IN_FLIGHT - 1))
-	present_params_buffer := &sim.gpu.present_params_buffers[slot]
+	present_params_buffer := &gray_scott_gpu(sim).present_params_buffers[slot]
 	if present_params_buffer.mapped == nil {
 		return
 	}
@@ -215,10 +221,10 @@ gray_scott_upload_present_params :: proc(sim: ^Gray_Scott_Simulation, frame_slot
 		blur_enabled = sim.settings.blur_enabled ? 1 : 0,
 		blur_radius = sim.settings.blur_radius,
 		blur_sigma = sim.settings.blur_sigma,
-		width = u32(max(sim.gpu.width, 1)),
-		height = u32(max(sim.gpu.height, 1)),
-		viewport_width = u32(max(sim.gpu.width, 1)),
-		viewport_height = u32(max(sim.gpu.height, 1)),
+		width = u32(max(gray_scott_gpu(sim).width, 1)),
+		height = u32(max(gray_scott_gpu(sim).height, 1)),
+		viewport_width = u32(max(gray_scott_gpu(sim).width, 1)),
+		viewport_height = u32(max(gray_scott_gpu(sim).height, 1)),
 		camera_x = sim.runtime.camera_x,
 		camera_y = sim.runtime.camera_y,
 		camera_zoom = max(sim.runtime.camera_zoom, 0.05),
@@ -228,12 +234,12 @@ gray_scott_upload_present_params :: proc(sim: ^Gray_Scott_Simulation, frame_slot
 
 gray_scott_upload_camera :: proc(sim: ^Gray_Scott_Simulation, frame_slot: u32) {
 	slot := min(frame_slot, u32(engine.MAX_FRAMES_IN_FLIGHT - 1))
-	camera_buffer := &sim.gpu.camera_buffers[slot]
+	camera_buffer := &gray_scott_gpu(sim).camera_buffers[slot]
 	if camera_buffer.mapped == nil {
 		return
 	}
 	zoom := max(sim.runtime.camera_zoom, CAMERA_MIN_ZOOM)
-	aspect := f32(max(sim.gpu.width, 1)) / f32(max(sim.gpu.height, 1))
+	aspect := f32(max(gray_scott_gpu(sim).width, 1)) / f32(max(gray_scott_gpu(sim).height, 1))
 	camera := cast(^Gray_Scott_Camera)camera_buffer.mapped
 	camera^ = {
 		transform_matrix = {
@@ -255,7 +261,7 @@ gray_scott_sync_present_resources :: proc(sim: ^Gray_Scott_Simulation) {
 }
 
 gray_scott_sync_present_resources_for_slot :: proc(sim: ^Gray_Scott_Simulation, frame_slot: u32) {
-	if sim.gpu.lut_uploaded_scheme != sim.settings.color_scheme || sim.gpu.lut_uploaded_reversed != sim.settings.color_scheme_reversed {
+	if gray_scott_gpu(sim).lut_uploaded_scheme != sim.settings.color_scheme || gray_scott_gpu(sim).lut_uploaded_reversed != sim.settings.color_scheme_reversed {
 		gray_scott_upload_lut(sim)
 	}
 	gray_scott_upload_present_params(sim, frame_slot)
@@ -263,7 +269,7 @@ gray_scott_sync_present_resources_for_slot :: proc(sim: ^Gray_Scott_Simulation, 
 }
 
 gray_scott_load_nutrient_image :: proc(sim: ^Gray_Scott_Simulation) -> bool {
-	if sim.gpu.nutrient_buffer.mapped == nil {
+	if gray_scott_gpu(sim).nutrient_buffer.mapped == nil {
 		sim.runtime.nutrient_image_loaded = false
 		return false
 	}
@@ -279,9 +285,9 @@ gray_scott_load_nutrient_image :: proc(sim: ^Gray_Scott_Simulation) -> bool {
 	}
 	defer shared_image_destroy(img)
 
-	target_width := int(max(sim.gpu.width, 1))
-	target_height := int(max(sim.gpu.height, 1))
-	values := cast([^]f32)sim.gpu.nutrient_buffer.mapped
+	target_width := int(max(gray_scott_gpu(sim).width, 1))
+	target_height := int(max(gray_scott_gpu(sim).height, 1))
+	values := cast([^]f32)gray_scott_gpu(sim).nutrient_buffer.mapped
 	source := raw_data(img.pixels.buf[:])
 	for y := 0; y < target_height; y += 1 {
 		for x := 0; x < target_width; x += 1 {
@@ -293,7 +299,7 @@ gray_scott_load_nutrient_image :: proc(sim: ^Gray_Scott_Simulation) -> bool {
 }
 
 gray_scott_update_webcam_nutrient_map :: proc(sim: ^Gray_Scott_Simulation) -> bool {
-	if !sim.runtime.webcam_active || sim.runtime.webcam == nil || sim.gpu.nutrient_buffer.mapped == nil {
+	if !sim.runtime.webcam_active || sim.runtime.webcam == nil || gray_scott_gpu(sim).nutrient_buffer.mapped == nil {
 		return false
 	}
 	permission := sdl.GetCameraPermissionState(sim.runtime.webcam)
@@ -330,9 +336,9 @@ gray_scott_update_webcam_nutrient_map :: proc(sim: ^Gray_Scott_Simulation) -> bo
 		sdl.UnlockSurface(converted)
 	}
 
-	target_width := int(max(sim.gpu.width, 1))
-	target_height := int(max(sim.gpu.height, 1))
-	values := cast([^]f32)sim.gpu.nutrient_buffer.mapped
+	target_width := int(max(gray_scott_gpu(sim).width, 1))
+	target_height := int(max(gray_scott_gpu(sim).height, 1))
+	values := cast([^]f32)gray_scott_gpu(sim).nutrient_buffer.mapped
 	source := cast([^]u8)converted.pixels
 	for y := 0; y < target_height; y += 1 {
 		for x := 0; x < target_width; x += 1 {
@@ -346,15 +352,15 @@ gray_scott_update_webcam_nutrient_map :: proc(sim: ^Gray_Scott_Simulation) -> bo
 
 gray_scott_upload_nutrient_map :: proc(sim: ^Gray_Scott_Simulation) {
 	sim.runtime.nutrient_upload_pending = false
-	if sim.gpu.nutrient_buffer.mapped == nil {
+	if gray_scott_gpu(sim).nutrient_buffer.mapped == nil {
 		return
 	}
 	if gray_scott_load_nutrient_image(sim) {
 		return
 	}
-	width := int(max(sim.gpu.width, 1))
-	height := int(max(sim.gpu.height, 1))
-	values := cast([^]f32)sim.gpu.nutrient_buffer.mapped
+	width := int(max(gray_scott_gpu(sim).width, 1))
+	height := int(max(gray_scott_gpu(sim).height, 1))
+	values := cast([^]f32)gray_scott_gpu(sim).nutrient_buffer.mapped
 	seed := sim.runtime.seed
 	for y := 0; y < height; y += 1 {
 		ny := f32(y) / f32(max(height - 1, 1))
@@ -376,31 +382,31 @@ gray_scott_create_compute_resources :: proc(sim: ^Gray_Scott_Simulation, vk_ctx:
 	for i := 0; i < 2; i += 1 {
 		if !gray_scott_create_image_resource(sim, vk_ctx, i) {
 			for j := 0; j < i; j += 1 {
-				if sim.gpu.storage[j].view != vk.ImageView(0) {
-					vk.DestroyImageView(vk_ctx.device, sim.gpu.storage[j].view, nil)
+				if gray_scott_gpu(sim).storage[j].view != vk.ImageView(0) {
+					vk.DestroyImageView(vk_ctx.device, gray_scott_gpu(sim).storage[j].view, nil)
 				}
-				if sim.gpu.storage[j].handle != vk.Image(0) {
-					vk.DestroyImage(vk_ctx.device, sim.gpu.storage[j].handle, nil)
+				if gray_scott_gpu(sim).storage[j].handle != vk.Image(0) {
+					vk.DestroyImage(vk_ctx.device, gray_scott_gpu(sim).storage[j].handle, nil)
 				}
-				if sim.gpu.storage[j].memory != vk.DeviceMemory(0) {
-					vk.FreeMemory(vk_ctx.device, sim.gpu.storage[j].memory, nil)
+				if gray_scott_gpu(sim).storage[j].memory != vk.DeviceMemory(0) {
+					vk.FreeMemory(vk_ctx.device, gray_scott_gpu(sim).storage[j].memory, nil)
 				}
-				sim.gpu.storage[j] = {}
+				gray_scott_gpu(sim).storage[j] = {}
 			}
 			return false
 		}
 	}
 
 	buffer_size := vk.DeviceSize(size_of(Gray_Scott_Params))
-	for i := 0; i < len(sim.gpu.params_buffers); i += 1 {
-		if !engine.vk_create_host_buffer(vk_ctx, buffer_size, {.UNIFORM_BUFFER}, &sim.gpu.params_buffers[i]) {
+	for i := 0; i < len(gray_scott_gpu(sim).params_buffers); i += 1 {
+		if !engine.vk_create_host_buffer(vk_ctx, buffer_size, {.UNIFORM_BUFFER}, &gray_scott_gpu(sim).params_buffers[i]) {
 			gray_scott_destroy(sim, vk_ctx)
 			return false
 		}
 	}
 
-	nutrient_size := vk.DeviceSize(size_of(f32) * max(sim.gpu.width, 1) * max(sim.gpu.height, 1))
-	if !engine.vk_create_host_buffer(vk_ctx, nutrient_size, {.STORAGE_BUFFER}, &sim.gpu.nutrient_buffer) {
+	nutrient_size := vk.DeviceSize(size_of(f32) * max(gray_scott_gpu(sim).width, 1) * max(gray_scott_gpu(sim).height, 1))
+	if !engine.vk_create_host_buffer(vk_ctx, nutrient_size, {.STORAGE_BUFFER}, &gray_scott_gpu(sim).nutrient_buffer) {
 		gray_scott_destroy(sim, vk_ctx)
 		return false
 	}
@@ -417,7 +423,7 @@ gray_scott_create_compute_resources :: proc(sim: ^Gray_Scott_Simulation, vk_ctx:
 		bindingCount = u32(len(compute_set_bindings)),
 		pBindings = raw_data(compute_set_bindings[:]),
 	}
-	if vk.CreateDescriptorSetLayout(vk_ctx.device, &compute_set_layout_info, nil, &sim.gpu.compute_set_layout) != .SUCCESS {
+	if vk.CreateDescriptorSetLayout(vk_ctx.device, &compute_set_layout_info, nil, &gray_scott_gpu(sim).compute_set_layout) != .SUCCESS {
 		gray_scott_destroy(sim, vk_ctx)
 		return false
 	}
@@ -433,22 +439,22 @@ gray_scott_create_compute_resources :: proc(sim: ^Gray_Scott_Simulation, vk_ctx:
 		pPoolSizes = raw_data(pool_sizes[:]),
 		maxSets = u32(GRAY_SCOTT_COMPUTE_DISPATCH_SLOTS),
 	}
-	if vk.CreateDescriptorPool(vk_ctx.device, &compute_pool_info, nil, &sim.gpu.compute_pool) != .SUCCESS {
+	if vk.CreateDescriptorPool(vk_ctx.device, &compute_pool_info, nil, &gray_scott_gpu(sim).compute_pool) != .SUCCESS {
 		gray_scott_destroy(sim, vk_ctx)
 		return false
 	}
 
 	compute_set_layouts: [GRAY_SCOTT_COMPUTE_DISPATCH_SLOTS]vk.DescriptorSetLayout
 	for i := 0; i < len(compute_set_layouts); i += 1 {
-		compute_set_layouts[i] = sim.gpu.compute_set_layout
+		compute_set_layouts[i] = gray_scott_gpu(sim).compute_set_layout
 	}
 	set_alloc := vk.DescriptorSetAllocateInfo {
 		sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
-		descriptorPool = sim.gpu.compute_pool,
-		descriptorSetCount = u32(len(sim.gpu.compute_sets)),
+		descriptorPool = gray_scott_gpu(sim).compute_pool,
+		descriptorSetCount = u32(len(gray_scott_gpu(sim).compute_sets)),
 		pSetLayouts = raw_data(compute_set_layouts[:]),
 	}
-	if vk.AllocateDescriptorSets(vk_ctx.device, &set_alloc, raw_data(sim.gpu.compute_sets[:])) != .SUCCESS {
+	if vk.AllocateDescriptorSets(vk_ctx.device, &set_alloc, raw_data(gray_scott_gpu(sim).compute_sets[:])) != .SUCCESS {
 		gray_scott_destroy(sim, vk_ctx)
 		return false
 	}
@@ -456,9 +462,9 @@ gray_scott_create_compute_resources :: proc(sim: ^Gray_Scott_Simulation, vk_ctx:
 	compute_layout_info := vk.PipelineLayoutCreateInfo {
 		sType = .PIPELINE_LAYOUT_CREATE_INFO,
 		setLayoutCount = 1,
-		pSetLayouts = &sim.gpu.compute_set_layout,
+		pSetLayouts = &gray_scott_gpu(sim).compute_set_layout,
 	}
-	if vk.CreatePipelineLayout(vk_ctx.device, &compute_layout_info, nil, &sim.gpu.compute_pipeline.layout) != .SUCCESS {
+	if vk.CreatePipelineLayout(vk_ctx.device, &compute_layout_info, nil, &gray_scott_gpu(sim).compute_pipeline.layout) != .SUCCESS {
 		gray_scott_destroy(sim, vk_ctx)
 		return false
 	}
@@ -466,15 +472,15 @@ gray_scott_create_compute_resources :: proc(sim: ^Gray_Scott_Simulation, vk_ctx:
 	compute_stage := vk.PipelineShaderStageCreateInfo {
 		sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
 		stage = {.COMPUTE},
-		module = sim.gpu.step_shader_module.handle,
+		module = gray_scott_gpu(sim).step_shader_module.handle,
 		pName = GRAY_SCOTT_STEP_SPIRV_ENTRY,
 	}
 	compute_pipeline_info := vk.ComputePipelineCreateInfo {
 		sType = .COMPUTE_PIPELINE_CREATE_INFO,
 		stage = compute_stage,
-		layout = sim.gpu.compute_pipeline.layout,
+		layout = gray_scott_gpu(sim).compute_pipeline.layout,
 	}
-	if vk.CreateComputePipelines(vk_ctx.device, vk.PipelineCache(0), 1, &compute_pipeline_info, nil, &sim.gpu.compute_pipeline.pipeline) != .SUCCESS {
+	if vk.CreateComputePipelines(vk_ctx.device, vk.PipelineCache(0), 1, &compute_pipeline_info, nil, &gray_scott_gpu(sim).compute_pipeline.pipeline) != .SUCCESS {
 		gray_scott_destroy(sim, vk_ctx)
 		return false
 	}
@@ -484,13 +490,13 @@ gray_scott_create_compute_resources :: proc(sim: ^Gray_Scott_Simulation, vk_ctx:
 
 gray_scott_create_fullscreen_vertex_buffer :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^engine.Vk_Context) -> bool {
 	buffer_size := vk.DeviceSize(size_of(Gray_Scott_Fullscreen_Vertex) * 6)
-	if !engine.vk_create_host_buffer(vk_ctx, buffer_size, {.VERTEX_BUFFER}, &sim.gpu.fullscreen_vertices) {
+	if !engine.vk_create_host_buffer(vk_ctx, buffer_size, {.VERTEX_BUFFER}, &gray_scott_gpu(sim).fullscreen_vertices) {
 		return false
 	}
 
 	white := uifw.Color{1, 1, 1, 1}
 	zero := uifw.Color{0, 0, 0, 0}
-	verts := cast([^]Gray_Scott_Fullscreen_Vertex)sim.gpu.fullscreen_vertices.mapped
+	verts := cast([^]Gray_Scott_Fullscreen_Vertex)gray_scott_gpu(sim).fullscreen_vertices.mapped
 	verts[0] = {pos = {-1, -1}, color = white, uv = {0, 1}, glyph = 0, effect = zero}
 	verts[1] = {pos = { 1, -1}, color = white, uv = {1, 1}, glyph = 0, effect = zero}
 	verts[2] = {pos = {-1,  1}, color = white, uv = {0, 0}, glyph = 0, effect = zero}

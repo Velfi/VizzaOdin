@@ -158,6 +158,7 @@ gui_scroll_begin_internal :: proc(ctx: ^Gui_Context, viewport: Rect, content_hei
 	gui_input_clip_begin(ctx, viewport)
 	content_w := gui_scrollbar_content_width(ctx, viewport, content_height)
 	content := Rect{viewport.x, viewport.y - visible_scroll, content_w, max(content_height, viewport.h)}
+	ctx.semantic_next_container_kind = .Scroll_Area
 	gui_layout_begin(ctx, content, .Column, ctx.style.spacing, ctx.style.row_height)
 }
 
@@ -518,12 +519,27 @@ gui_reveal_focused_item :: proc(ctx: ^Gui_Context) {
 	}
 }
 
-gui_control :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, enabled := true, focusable := true, pointer_focus := true) -> Gui_Control {
+gui_control :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, enabled := true, focusable := true, pointer_focus := true, interact_during_transition := false) -> Gui_Control {
+	_ = gui_semantic_emit(ctx, .Control, id, bounds, enabled, focusable)
 	if enabled && focusable {
 		gui_register_focusable(ctx, id, bounds)
 	}
 
-	hovered := enabled && gui_mouse_contains(ctx, bounds)
+	interaction_bounds, snapshot_found := gui_interaction_snapshot_bounds(ctx, id)
+	if !snapshot_found {
+		ctx.interaction_snapshot_misses += 1
+		// Bootstrap frames have no completed geometry to consult. Current
+		// geometry is already final for explicit immediate rectangles, so retain
+		// the long-standing first-frame behavior. Once a snapshot exists, a new
+		// ID is suppressed until it has completed layout once.
+		if ctx.interaction_rect_count == 0 {
+			interaction_bounds = bounds
+			snapshot_found = true
+		}
+	}
+	gui_interaction_snapshot_record(ctx, id, bounds, enabled)
+	discontinuous := snapshot_found && gui_interaction_rect_discontinuous(interaction_bounds, bounds)
+	hovered := enabled && snapshot_found && (!discontinuous || interact_during_transition) && !gui_semantic_id_was_unstable(ctx, id) && gui_mouse_contains(ctx, interaction_bounds)
 	if hovered {
 		ctx.hot = id
 		if ctx.input.mouse_pressed {
@@ -551,6 +567,32 @@ gui_control :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, enabled := true
 		nav_x = nav_x,
 		nav_y = nav_y,
 	}
+}
+
+gui_interaction_rect_discontinuous :: proc(previous, current: Rect) -> bool {
+	position_delta := max(abs(previous.x - current.x), abs(previous.y - current.y))
+	size_delta := max(abs(previous.w - current.w), abs(previous.h - current.h))
+	position_limit := max(min(max(previous.w, 0), max(previous.h, 0)) * 0.25, f32(8))
+	size_limit := max(max(previous.w, previous.h) * 0.25, f32(8))
+	return position_delta > position_limit || size_delta > size_limit
+}
+
+gui_interaction_snapshot_bounds :: proc(ctx: ^Gui_Context, id: Gui_Id) -> (Rect, bool) {
+	for i in 0 ..< ctx.interaction_rect_count {
+		record := ctx.interaction_rects[i]
+		if record.id == id && record.enabled {
+			return record.bounds, true
+		}
+	}
+	return {}, false
+}
+
+gui_interaction_snapshot_record :: proc(ctx: ^Gui_Context, id: Gui_Id, bounds: Rect, enabled: bool) {
+	if ctx.next_interaction_rect_count >= len(ctx.next_interaction_rects) {
+		return
+	}
+	ctx.next_interaction_rects[ctx.next_interaction_rect_count] = {id, bounds, enabled}
+	ctx.next_interaction_rect_count += 1
 }
 
 gui_focused_nav :: proc(ctx: ^Gui_Context, id: Gui_Id) -> (nav_x, nav_y: f32) {

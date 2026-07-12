@@ -190,7 +190,7 @@ camera_controls_pan_screen_delta :: proc(camera: ^Camera_Control_State, mouse_de
 
 camera_controls_apply_input :: proc(camera: ^Camera_Control_State, input: Ui_Frame_Input) {
 	camera_controls_sync(camera)
-	if input.key_c || input.camera_reset {
+	if input.actions.camera_reset.pressed {
 		camera_controls_reset(camera)
 		return
 	}

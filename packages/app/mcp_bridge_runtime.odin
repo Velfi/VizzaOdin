@@ -5,6 +5,18 @@ import engine "../engine"
 import "core:fmt"
 import "core:strings"
 import "core:sync"
+import sdl "vendor:sdl3"
+
+mcp_enqueue_feature_command :: proc(app: ^App_State, mode: App_Mode, command_id: Feature_Command_Id, value: ^$T) -> bool {
+	descriptor, ok := feature_descriptor_by_mode(mode)
+	if !ok do return false
+	feature, made := feature_command_make(descriptor.id, command_id, value)
+	if !made do return false
+	command: Ui_To_Render_Command
+	command.kind = .Feature
+	command.feature = feature
+	return engine.queue_try_push(&app.ui_to_render, command)
+}
 
 mcp_bridge_drain_commands :: proc(bridge: ^Mcp_Bridge, app: ^App_State) {
 	if bridge.close_requested {
@@ -39,6 +51,8 @@ mcp_bridge_drain_commands :: proc(bridge: ^Mcp_Bridge, app: ^App_State) {
 			app.input.mouse_pos = {cmd.x, cmd.y}
 		case .Wheel:
 			app.input.wheel_delta += cmd.wheel_delta
+		case .Resize_Window:
+			if app.window != nil do _ = sdl.SetWindowSize(app.window, i32(cmd.x), i32(cmd.y))
 		case .Set_Mode:
 			render_cmd: Ui_To_Render_Command
 			render_cmd.kind = .Set_App_Mode
@@ -52,19 +66,11 @@ mcp_bridge_drain_commands :: proc(bridge: ^Mcp_Bridge, app: ^App_State) {
 			render_cmd.component_fixture_value = cmd.component_fixture_value
 			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
 		case .Apply_Builtin_Preset:
-			render_cmd: Ui_To_Render_Command
-			render_cmd.kind = .Apply_Builtin_Preset
-			render_cmd.app_mode = cmd.mode
-			render_cmd.builtin_preset_index = cmd.preset_index
-			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+			payload := Feature_Preset_Command{index = i32(cmd.preset_index)}
+			_ = mcp_enqueue_feature_command(app, cmd.mode, FEATURE_COMMAND_APPLY_PRESET, &payload)
 		case .Set_Color_Scheme:
-			render_cmd: Ui_To_Render_Command
-			render_cmd.kind = .Set_Color_Scheme
-			render_cmd.app_mode = cmd.mode
-			render_cmd.color_scheme_name = cmd.color_scheme_name
-			render_cmd.color_scheme_reversed = cmd.color_scheme_reversed
-			render_cmd.color_scheme_reversed_set = cmd.color_scheme_reversed_set
-			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+			payload := Feature_Color_Command{name = cmd.color_scheme_name, reversed = cmd.color_scheme_reversed, reversed_set = cmd.color_scheme_reversed_set}
+			_ = mcp_enqueue_feature_command(app, cmd.mode, FEATURE_COMMAND_SET_COLOR, &payload)
 		case .Configure_Particle_Life:
 			if cmd.particle_life_set_mode {
 				mode_cmd: Ui_To_Render_Command
@@ -72,12 +78,11 @@ mcp_bridge_drain_commands :: proc(bridge: ^Mcp_Bridge, app: ^App_State) {
 				mode_cmd.app_mode = .Particle_Life
 				_ = engine.queue_try_push(&app.ui_to_render, mode_cmd)
 			}
-			render_cmd: Ui_To_Render_Command
-			render_cmd.kind = .Apply_Particle_Life_Settings
-			render_cmd.particle_life_settings = cmd.particle_life_settings
-			render_cmd.particle_life_randomize_forces = cmd.particle_life_randomize_forces
-			render_cmd.particle_life_reset = cmd.particle_life_reset
-			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+			_ = mcp_enqueue_feature_command(app, .Particle_Life, FEATURE_COMMAND_APPLY_SETTINGS, &cmd.particle_life_settings)
+			if cmd.particle_life_randomize_forces || cmd.particle_life_reset {
+				reset := Feature_Reset_Command{randomize = cmd.particle_life_randomize_forces}
+				_ = mcp_enqueue_feature_command(app, .Particle_Life, FEATURE_COMMAND_RESET, &reset)
+			}
 			if cmd.particle_life_hide_ui {
 				hide_cmd: Ui_To_Render_Command
 				hide_cmd.kind = .Hide_Ui
@@ -90,11 +95,11 @@ mcp_bridge_drain_commands :: proc(bridge: ^Mcp_Bridge, app: ^App_State) {
 				mode_cmd.app_mode = .Flow_Field
 				_ = engine.queue_try_push(&app.ui_to_render, mode_cmd)
 			}
-			render_cmd: Ui_To_Render_Command
-			render_cmd.kind = .Apply_Flow_Settings
-			render_cmd.flow_settings = cmd.flow_settings
-			render_cmd.flow_reset = cmd.flow_reset
-			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+			_ = mcp_enqueue_feature_command(app, .Flow_Field, FEATURE_COMMAND_APPLY_SETTINGS, &cmd.flow_settings)
+			if cmd.flow_reset {
+				reset: Feature_Reset_Command
+				_ = mcp_enqueue_feature_command(app, .Flow_Field, FEATURE_COMMAND_RESET, &reset)
+			}
 			if cmd.flow_hide_ui {
 				hide_cmd: Ui_To_Render_Command
 				hide_cmd.kind = .Hide_Ui
@@ -107,19 +112,14 @@ mcp_bridge_drain_commands :: proc(bridge: ^Mcp_Bridge, app: ^App_State) {
 				mode_cmd.app_mode = .Gray_Scott
 				_ = engine.queue_try_push(&app.ui_to_render, mode_cmd)
 			}
-			render_cmd: Ui_To_Render_Command
-			render_cmd.kind = .Apply_Gray_Scott_Settings
-			render_cmd.gray_scott_settings = cmd.gray_scott_settings
-			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+			_ = mcp_enqueue_feature_command(app, .Gray_Scott, FEATURE_COMMAND_APPLY_SETTINGS, &cmd.gray_scott_settings)
 			if cmd.gray_scott_reset {
-				reset_cmd: Ui_To_Render_Command
-				reset_cmd.kind = .Reset_Gray_Scott
-				_ = engine.queue_try_push(&app.ui_to_render, reset_cmd)
+				reset: Feature_Reset_Command
+				_ = mcp_enqueue_feature_command(app, .Gray_Scott, FEATURE_COMMAND_RESET, &reset)
 			}
 			if cmd.gray_scott_seed_noise {
-				seed_cmd: Ui_To_Render_Command
-				seed_cmd.kind = .Seed_Noise_Gray_Scott
-				_ = engine.queue_try_push(&app.ui_to_render, seed_cmd)
+				reset := Feature_Reset_Command{seed_noise = true}
+				_ = mcp_enqueue_feature_command(app, .Gray_Scott, FEATURE_COMMAND_RESET, &reset)
 			}
 			if cmd.gray_scott_hide_ui {
 				hide_cmd: Ui_To_Render_Command
@@ -148,18 +148,20 @@ mcp_bridge_drain_commands :: proc(bridge: ^Mcp_Bridge, app: ^App_State) {
 				}
 				_ = engine.queue_try_push(&app.ui_to_render, mode_cmd)
 			}
-			render_cmd: Ui_To_Render_Command
-			render_cmd.kind = .Apply_Remaining_Settings
-			render_cmd.remaining_kind = cmd.remaining_kind
-			render_cmd.remaining_reset = cmd.remaining_reset
-			render_cmd.flow_settings = cmd.flow_settings
-			render_cmd.moire_settings = cmd.moire_settings
-			render_cmd.vectors_settings = cmd.vectors_settings
-			render_cmd.primordial_settings = cmd.primordial_settings
-			render_cmd.voronoi_settings = cmd.voronoi_settings
-			render_cmd.pellets_settings = cmd.pellets_settings
-			render_cmd.slime_settings = cmd.slime_settings
-			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+			switch cmd.remaining_kind {
+			case .Slime_Mold: _ = mcp_enqueue_feature_command(app, .Slime_Mold, FEATURE_COMMAND_APPLY_SETTINGS, &cmd.slime_settings)
+			case .Flow_Field: _ = mcp_enqueue_feature_command(app, .Flow_Field, FEATURE_COMMAND_APPLY_SETTINGS, &cmd.flow_settings)
+			case .Pellets: _ = mcp_enqueue_feature_command(app, .Pellets, FEATURE_COMMAND_APPLY_SETTINGS, &cmd.pellets_settings)
+			case .Voronoi_CA: _ = mcp_enqueue_feature_command(app, .Voronoi_CA, FEATURE_COMMAND_APPLY_SETTINGS, &cmd.voronoi_settings)
+			case .Moire: _ = mcp_enqueue_feature_command(app, .Moire, FEATURE_COMMAND_APPLY_SETTINGS, &cmd.moire_settings)
+			case .Vectors: _ = mcp_enqueue_feature_command(app, .Vectors, FEATURE_COMMAND_APPLY_SETTINGS, &cmd.vectors_settings)
+			case .Primordial: _ = mcp_enqueue_feature_command(app, .Primordial, FEATURE_COMMAND_APPLY_SETTINGS, &cmd.primordial_settings)
+			}
+			if cmd.remaining_reset {
+				mode := app_mode_from_remaining_sim_kind(cmd.remaining_kind)
+				reset: Feature_Reset_Command
+				_ = mcp_enqueue_feature_command(app, mode, FEATURE_COMMAND_RESET, &reset)
+			}
 			if cmd.remaining_hide_ui {
 				hide_cmd: Ui_To_Render_Command
 				hide_cmd.kind = .Hide_Ui
@@ -170,36 +172,25 @@ mcp_bridge_drain_commands :: proc(bridge: ^Mcp_Bridge, app: ^App_State) {
 			render_cmd.kind = .Hide_Ui
 			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
 		case .Seed_Noise_Gray_Scott:
-			render_cmd: Ui_To_Render_Command
-			render_cmd.kind = .Seed_Noise_Gray_Scott
-			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+			reset := Feature_Reset_Command{seed_noise = true}
+			_ = mcp_enqueue_feature_command(app, .Gray_Scott, FEATURE_COMMAND_RESET, &reset)
 		case .Close:
 			app.running = false
 		case .Load_Vectors_Image:
-			render_cmd: Ui_To_Render_Command
-			render_cmd.kind = .Load_Vectors_Image
-			render_cmd.file_path = cmd.file_path
-			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+			image := Feature_Image_Command{path = cmd.file_path}
+			_ = mcp_enqueue_feature_command(app, .Vectors, FEATURE_COMMAND_LOAD_IMAGE, &image)
 		case .Load_Moire_Image:
-			render_cmd: Ui_To_Render_Command
-			render_cmd.kind = .Load_Moire_Image
-			render_cmd.file_path = cmd.file_path
-			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+			image := Feature_Image_Command{path = cmd.file_path}
+			_ = mcp_enqueue_feature_command(app, .Moire, FEATURE_COMMAND_LOAD_IMAGE, &image)
 		case .Load_Flow_Image:
-			render_cmd: Ui_To_Render_Command
-			render_cmd.kind = .Load_Flow_Image
-			render_cmd.file_path = cmd.file_path
-			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+			image := Feature_Image_Command{path = cmd.file_path}
+			_ = mcp_enqueue_feature_command(app, .Flow_Field, FEATURE_COMMAND_LOAD_IMAGE, &image)
 		case .Load_Slime_Mask_Image:
-			render_cmd: Ui_To_Render_Command
-			render_cmd.kind = .Load_Slime_Mask_Image
-			render_cmd.file_path = cmd.file_path
-			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+			image := Feature_Image_Command{path = cmd.file_path, slot = 0}
+			_ = mcp_enqueue_feature_command(app, .Slime_Mold, FEATURE_COMMAND_LOAD_IMAGE, &image)
 		case .Load_Slime_Position_Image:
-			render_cmd: Ui_To_Render_Command
-			render_cmd.kind = .Load_Slime_Position_Image
-			render_cmd.file_path = cmd.file_path
-			_ = engine.queue_try_push(&app.ui_to_render, render_cmd)
+			image := Feature_Image_Command{path = cmd.file_path, slot = 1}
+			_ = mcp_enqueue_feature_command(app, .Slime_Mold, FEATURE_COMMAND_LOAD_IMAGE, &image)
 		}
 	}
 	bridge.pending_command_count = 0
@@ -248,6 +239,12 @@ mcp_bridge_publish_render_message :: proc(bridge: ^Mcp_Bridge, msg: Render_To_Ui
 		bridge.status.gpu_simulation_present_ms = msg.gpu_simulation_present_ms
 		bridge.status.gpu_ui_overlay_ms = msg.gpu_ui_overlay_ms
 		bridge.status.gpu_frame_total_ms = msg.gpu_frame_total_ms
+		bridge.status.gpu_pellets_grid_clear_ms = msg.gpu_pellets_grid_clear_ms
+		bridge.status.gpu_pellets_grid_build_ms = msg.gpu_pellets_grid_build_ms
+		bridge.status.gpu_pellets_grid_scatter_ms = msg.gpu_pellets_grid_scatter_ms
+		bridge.status.gpu_pellets_physics_ms = msg.gpu_pellets_physics_ms
+		bridge.status.gpu_pellets_density_ms = msg.gpu_pellets_density_ms
+		bridge.status.gpu_pellets_particle_draw_ms = msg.gpu_pellets_particle_draw_ms
 		bridge.status.sim_ms = msg.sim_ms
 		bridge.status.ui_ms = msg.ui_ms
 		bridge.status.render_ms = msg.render_ms
@@ -343,13 +340,19 @@ mcp_bridge_status_json :: proc(bridge: ^Mcp_Bridge) -> string {
 		status.particle_life_infinite_tiles_enabled,
 	))
 	strings.write_string(&builder, fmt.tprintf(
-		",\"gpu_profiling_supported\":%v,\"gpu_profiling_enabled\":%v,\"gpu_simulation_step_ms\":%.4f,\"gpu_simulation_present_ms\":%.4f,\"gpu_ui_overlay_ms\":%.4f,\"gpu_frame_total_ms\":%.4f,\"sim_ms\":%.4f,\"ui_ms\":%.4f,\"render_ms\":%.4f,\"submit_ms\":%.4f,\"screenshot_ms\":%.4f,\"screenshot_captured\":%v,\"ui_build_ms\":%.4f,\"ui_overlay_ms\":%.4f",
+		",\"gpu_profiling_supported\":%v,\"gpu_profiling_enabled\":%v,\"gpu_simulation_step_ms\":%.4f,\"gpu_simulation_present_ms\":%.4f,\"gpu_ui_overlay_ms\":%.4f,\"gpu_frame_total_ms\":%.4f,\"gpu_pellets_grid_clear_ms\":%.4f,\"gpu_pellets_grid_build_ms\":%.4f,\"gpu_pellets_grid_scatter_ms\":%.4f,\"gpu_pellets_physics_ms\":%.4f,\"gpu_pellets_density_ms\":%.4f,\"gpu_pellets_particle_draw_ms\":%.4f,\"sim_ms\":%.4f,\"ui_ms\":%.4f,\"render_ms\":%.4f,\"submit_ms\":%.4f,\"screenshot_ms\":%.4f,\"screenshot_captured\":%v,\"ui_build_ms\":%.4f,\"ui_overlay_ms\":%.4f",
 		status.gpu_profiling_supported,
 		status.gpu_profiling_enabled,
 		status.gpu_simulation_step_ms,
 		status.gpu_simulation_present_ms,
 		status.gpu_ui_overlay_ms,
 		status.gpu_frame_total_ms,
+		status.gpu_pellets_grid_clear_ms,
+		status.gpu_pellets_grid_build_ms,
+		status.gpu_pellets_grid_scatter_ms,
+		status.gpu_pellets_physics_ms,
+		status.gpu_pellets_density_ms,
+		status.gpu_pellets_particle_draw_ms,
 		status.sim_ms,
 		status.ui_ms,
 		status.render_ms,

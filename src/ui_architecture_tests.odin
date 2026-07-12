@@ -7,10 +7,251 @@ import rendervk "../packages/render_vk"
 import uifw "../packages/ui"
 
 import "core:math"
+import "core:fmt"
 import "core:os"
 import "core:testing"
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
+
+test_ui_document_slot_draw :: proc(data: rawptr, ctx: ^uifw.Gui_Context, bounds: uifw.Rect) {
+	invoked := cast(^bool)data
+	if invoked != nil do invoked^ = bounds.w > 0 && ctx != nil
+}
+
+test_ui_document_slot_count :: proc(data: rawptr, ctx: ^uifw.Gui_Context, bounds: uifw.Rect) {
+	_ = ctx
+	_ = bounds
+	if data != nil do (cast(^int)data)^ += 1
+}
+
+@(test)
+test_ui_document_parses_valid_v1_and_preserves_active_on_failure :: proc(t: ^testing.T) {
+	document: uifw.Ui_Document
+	defer uifw.ui_document_destroy(&document)
+	valid := `{
+		"schema_version":1,
+		"document_id":"options",
+		"nodes":[
+			{"id":"root","kind":"panel"},
+			{"id":"save","parent":"root","kind":"button","action":"save"}
+		],
+		"bindings":[{"id":"save","kind":"action","required":true}],
+		"constraints":[{"left":"root.width","relation":"greater_equal","right":"viewport.width","constant":-32,"strength":"strong"}]
+	}`
+	result := uifw.ui_document_parse(transmute([]byte)valid, &document)
+	testing.expect_value(t, result.error, uifw.Ui_Document_Error.None)
+	testing.expect(t, document.valid)
+	testing.expect_value(t, len(document.nodes), 2)
+	testing.expect_value(t, document.nodes[1].parent_index, 0)
+	testing.expect_value(t, len(document.constraints), 1)
+	testing.expect(t, document.constraints[0].right_is_viewport)
+
+	invalid := `{"schema_version":99,"document_id":"replacement","nodes":[]}`
+	result = uifw.ui_document_parse(transmute([]byte)invalid, &document)
+	testing.expect_value(t, result.error, uifw.Ui_Document_Error.Unsupported_Version)
+	testing.expect(t, document.valid)
+	testing.expect_value(t, document.source.document_id, "options")
+}
+
+@(test)
+test_ui_document_rejects_unknown_constraint_properties_and_required_styles :: proc(t: ^testing.T) {
+	document: uifw.Ui_Document
+	defer uifw.ui_document_destroy(&document)
+	bad_constraint := `{"schema_version":1,"document_id":"bad_constraint","nodes":[{"id":"root","kind":"panel"}],"constraints":[{"left":"root.opacity","relation":"equal","right":"viewport.width","strength":"required"}]}`
+	result := uifw.ui_document_parse(transmute([]byte)bad_constraint, &document)
+	testing.expect_value(t, result.error, uifw.Ui_Document_Error.Invalid_Constraint)
+	bad_style := `{"schema_version":1,"document_id":"bad_style","nodes":[{"id":"root","kind":"panel"}],"required_style_tokens":["unknown_token"]}`
+	result = uifw.ui_document_parse(transmute([]byte)bad_style, &document)
+	testing.expect_value(t, result.error, uifw.Ui_Document_Error.Unknown_Required_Style_Token)
+}
+
+@(test)
+test_ui_document_linear_constraints_resolve_root_bounds :: proc(t: ^testing.T) {
+	document: uifw.Ui_Document
+	defer uifw.ui_document_destroy(&document)
+	source := `{
+		"schema_version":1,
+		"document_id":"constrained",
+		"nodes":[{"id":"root","kind":"panel"}],
+		"constraints":[
+			{"left":"root.width","relation":"equal","right":"viewport.width","constant":-32,"strength":"required"},
+			{"left":"root.height","relation":"less_equal","right":"viewport.height","constant":-20,"strength":"strong"},
+			{"left":"root.center_x","relation":"equal","right":"viewport.center_x","constant":0,"strength":"required"}
+		]
+	}`
+	testing.expect_value(t, uifw.ui_document_parse(transmute([]byte)source, &document).error, uifw.Ui_Document_Error.None)
+	resolved := uifw.ui_document_solve_root_bounds(&document, {0, 0, 800, 600})
+	testing.expect_value(t, resolved.w, f32(768))
+	testing.expect_value(t, resolved.h, f32(580))
+	testing.expect_value(t, resolved.x, f32(16))
+}
+
+@(test)
+test_ui_document_rejects_duplicate_ids_and_cycles :: proc(t: ^testing.T) {
+	document: uifw.Ui_Document
+	defer uifw.ui_document_destroy(&document)
+	duplicate := `{"schema_version":1,"document_id":"bad","nodes":[{"id":"same","kind":"panel"},{"id":"same","kind":"text"}]}`
+	result := uifw.ui_document_parse(transmute([]byte)duplicate, &document)
+	testing.expect_value(t, result.error, uifw.Ui_Document_Error.Duplicate_Node_Id)
+
+	cycle := `{"schema_version":1,"document_id":"cycle","nodes":[{"id":"a","parent":"b","kind":"panel"},{"id":"b","parent":"a","kind":"panel"}]}`
+	result = uifw.ui_document_parse(transmute([]byte)cycle, &document)
+	testing.expect_value(t, result.error, uifw.Ui_Document_Error.Parent_Cycle)
+}
+
+@(test)
+test_ui_document_instantiates_immutable_template_subtrees :: proc(t: ^testing.T) {
+	document: uifw.Ui_Document
+	defer uifw.ui_document_destroy(&document)
+	source := `{"schema_version":1,"document_id":"templates","bindings":[{"id":"content","kind":"slot","required":true}],"nodes":[{"id":"root","kind":"stack"},{"id":"card","kind":"template"},{"id":"content_node","parent":"card","kind":"slot","binding":"content"},{"id":"first","parent":"root","kind":"stack","template":"card"},{"id":"second","parent":"root","kind":"stack","template":"card"}]}`
+	testing.expect_value(t, uifw.ui_document_parse(transmute([]byte)source, &document).error, uifw.Ui_Document_Error.None)
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	uifw.gui_begin_frame(&ctx, {window_width = 800, window_height = 600})
+	count := 0
+	bindings := [?]uifw.Ui_Document_Runtime_Binding{{id = "content", kind = .Slot, userdata = &count, draw_slot = test_ui_document_slot_count, slot_content_height = 30}}
+	testing.expect_value(t, uifw.ui_document_draw(&document, &ctx, {0, 0, 800, 600}, bindings[:], nil).error, uifw.Ui_Document_Error.None)
+	testing.expect_value(t, count, 2)
+}
+
+@(test)
+test_packaged_ui_documents_load_and_validate_atomically :: proc(t: ^testing.T) {
+	assets := uifw.Ui_Document_Assets{}
+	defer uifw.ui_document_assets_destroy(&assets)
+	result := uifw.ui_document_assets_load(&assets)
+	testing.expect_value(t, result.error, uifw.Ui_Document_Error.None)
+	testing.expect(t, assets.loaded)
+	for &document in assets.documents {
+		testing.expect(t, document.valid)
+	}
+	main_menu, found := uifw.ui_document_assets_find(&assets, "main_menu")
+	testing.expect(t, found)
+	testing.expect(t, main_menu != nil)
+	_, missing := uifw.ui_document_assets_find(&assets, "not_packaged")
+	testing.expect(t, !missing)
+}
+
+@(test)
+test_controls_help_document_renders_typed_dynamic_slot :: proc(t: ^testing.T) {
+	assets: uifw.Ui_Document_Assets
+	defer uifw.ui_document_assets_destroy(&assets)
+	testing.expect_value(t, uifw.ui_document_assets_load(&assets).error, uifw.Ui_Document_Error.None)
+	document, found := uifw.ui_document_assets_find(&assets, "controls_help")
+	testing.expect(t, found)
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	uifw.gui_begin_frame(&ctx, {window_width = 800, window_height = 600})
+	invoked := false
+	bindings := [?]uifw.Ui_Document_Runtime_Binding {
+		{id = "content_slot", kind = .Slot, userdata = &invoked, draw_slot = test_ui_document_slot_draw, slot_content_height = 900},
+		{id = "close", kind = .Action},
+	}
+	actions: uifw.Ui_Document_Action_State
+	result := uifw.ui_document_draw(document, &ctx, {0, 0, 800, 600}, bindings[:], &actions)
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, result.error, uifw.Ui_Document_Error.None)
+	testing.expect(t, invoked)
+}
+
+@(test)
+test_ui_document_resolves_compact_and_wide_breakpoint_alternatives :: proc(t: ^testing.T) {
+	document: uifw.Ui_Document
+	defer uifw.ui_document_destroy(&document)
+	source := `{
+		"schema_version":1,
+		"document_id":"responsive",
+		"nodes":[
+			{"id":"root","kind":"overlay"},
+			{"id":"compact","parent":"root","kind":"slot","binding":"compact","layout":{"breakpoint":"compact"}},
+			{"id":"wide","parent":"root","kind":"slot","binding":"wide","layout":{"breakpoint":"wide"}}
+		],
+		"bindings":[
+			{"id":"compact","kind":"slot","required":true},
+			{"id":"wide","kind":"slot","required":true}
+		],
+		"constraints":[]
+	}`
+	testing.expect_value(t, uifw.ui_document_parse(transmute([]byte)source, &document).error, uifw.Ui_Document_Error.None)
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	compact, wide := false, false
+	bindings := [?]uifw.Ui_Document_Runtime_Binding {
+		{id = "compact", kind = .Slot, userdata = &compact, draw_slot = test_ui_document_slot_draw, slot_content_height = 40},
+		{id = "wide", kind = .Slot, userdata = &wide, draw_slot = test_ui_document_slot_draw, slot_content_height = 40},
+	}
+	uifw.gui_begin_frame(&ctx, {window_width = 800, window_height = 700})
+	testing.expect_value(t, uifw.ui_document_draw(&document, &ctx, {0, 0, 800, 700}, bindings[:], nil).error, uifw.Ui_Document_Error.None)
+	uifw.gui_end_frame(&ctx)
+	testing.expect(t, compact && !wide)
+	compact, wide = false, false
+	uifw.gui_begin_frame(&ctx, {window_width = 1200, window_height = 700})
+	testing.expect_value(t, uifw.ui_document_draw(&document, &ctx, {0, 0, 1200, 700}, bindings[:], nil).error, uifw.Ui_Document_Error.None)
+	uifw.gui_end_frame(&ctx)
+	testing.expect(t, !compact && wide)
+
+	invalid: uifw.Ui_Document
+	defer uifw.ui_document_destroy(&invalid)
+	bad := `{"schema_version":1,"document_id":"bad","nodes":[{"id":"root","kind":"panel","layout":{"breakpoint":"cinema"}}]}`
+	testing.expect_value(t, uifw.ui_document_parse(transmute([]byte)bad, &invalid).error, uifw.Ui_Document_Error.Invalid_Breakpoint)
+}
+
+@(test)
+test_ui_completed_paint_stream_is_published_only_at_frame_end :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	uifw.gui_begin_frame(&ctx, {window_width = 320, window_height = 200})
+	uifw.gui_rect(&ctx, {0, 0, 20, 20}, {1, 0, 0, 1})
+	testing.expect_value(t, len(ctx.paint_commands), 0)
+	uifw.gui_end_frame(&ctx)
+	testing.expect(t, len(ctx.paint_commands) > 0)
+	completed_count := len(ctx.paint_commands)
+	uifw.gui_begin_frame(&ctx, {window_width = 320, window_height = 200})
+	testing.expect_value(t, len(ctx.commands), 0)
+	testing.expect_value(t, len(ctx.paint_commands), completed_count)
+	uifw.gui_rect(&ctx, {0, 0, 40, 40}, {0, 1, 0, 1})
+	testing.expect_value(t, len(ctx.paint_commands), completed_count)
+	uifw.gui_end_frame(&ctx)
+	testing.expect(t, len(ctx.paint_commands) > 0)
+}
+
+@(test)
+test_ui_document_scroll_state_is_stable_by_document_and_element :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	first := uifw.ui_document_scroll_value(&ctx, "options", "content")
+	first^ = 42
+	second := uifw.ui_document_scroll_value(&ctx, "options", "content")
+	other := uifw.ui_document_scroll_value(&ctx, "controls_help", "content")
+	testing.expect(t, first == second)
+	testing.expect_value(t, second^, f32(42))
+	testing.expect(t, other != first)
+}
+
+@(test)
+test_ui_document_asset_debug_reload_swaps_atomically_and_rolls_back_failure :: proc(t: ^testing.T) {
+	assets: uifw.Ui_Document_Assets
+	defer uifw.ui_document_assets_destroy(&assets)
+	testing.expect_value(t, uifw.ui_document_assets_load(&assets).error, uifw.Ui_Document_Error.None)
+	path := "/tmp/vizza_ui_document_reload.vui.json"
+	defer os.remove(path)
+	replacement := `{"schema_version":1,"document_id":"main_menu","nodes":[{"id":"replacement_root","kind":"stack"}],"bindings":[],"constraints":[]}`
+	testing.expect(t, os.write_entire_file(path, transmute([]byte)replacement) == nil)
+	testing.expect_value(t, uifw.ui_document_assets_reload(&assets, "main_menu", path).error, uifw.Ui_Document_Error.None)
+	active, found := uifw.ui_document_assets_find(&assets, "main_menu")
+	testing.expect(t, found)
+	if found do testing.expect_value(t, active.nodes[0].source.id, "replacement_root")
+	invalid := `{"schema_version":99,"document_id":"main_menu","nodes":[]}`
+	testing.expect(t, os.write_entire_file(path, transmute([]byte)invalid) == nil)
+	testing.expect_value(t, uifw.ui_document_assets_reload(&assets, "main_menu", path).error, uifw.Ui_Document_Error.Unsupported_Version)
+	active, found = uifw.ui_document_assets_find(&assets, "main_menu")
+	testing.expect(t, found)
+	if found do testing.expect_value(t, active.nodes[0].source.id, "replacement_root")
+}
 
 @(test)
 test_controller_focus_regions_restore_memory_and_return_to_parent :: proc(t: ^testing.T) {
@@ -93,6 +334,7 @@ test_slime_controller_deck_draw_does_not_steal_panel_focus :: proc(t: ^testing.T
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = true
 	ui.slime_controller.panel_open = true
@@ -117,6 +359,7 @@ test_slime_controller_deck_accept_ignores_non_deck_panel_focus :: proc(t: ^testi
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = true
 	ui.slime_controller.panel_open = true
@@ -138,6 +381,7 @@ test_slime_controller_long_world_panel_scrolls :: proc(t: ^testing.T) {
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_mold.slime.mask_pattern = .Image
 	ui.slime_mold.slime.mask_pattern_index = int(game.Slime_Mask_Pattern.Image)
@@ -163,6 +407,7 @@ test_slime_controller_ui_replaces_old_slime_panel_when_enabled :: proc(t: ^testi
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.simulation_shell.show_ui = true
 	ui.slime_controller.deck_visible = true
@@ -172,7 +417,7 @@ test_slime_controller_ui_replaces_old_slime_panel_when_enabled :: proc(t: ^testi
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1200, 800, ui.settings.ui_scale)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1200, window_height = 800})
-	game.app_ui_draw_remaining_sim(&ui, &ctx, .Slime_Mold, &ui.slime_mold, &vk_ctx, &worker)
+	game.app_ui_draw_remaining_sim(&ui, &ctx, .Slime_Mold, &ui.slime_mold, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	testing.expect(t, test_first_text_command_index(ctx.commands[:], "About this simulation") < 0)
@@ -189,6 +434,7 @@ test_slime_controller_ui_disables_hidden_old_panel_hit_test :: proc(t: ^testing.
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.simulation_shell.show_ui = true
 	ui.simulation_shell.controls_visible = true
@@ -220,6 +466,7 @@ test_slime_controller_preset_save_dialog_consumes_simulation_input :: proc(t: ^t
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = true
 	ui.slime_controller.panel_open = true
@@ -248,6 +495,7 @@ test_slime_controller_deck_tabs_bound_key_and_label_text :: proc(t: ^testing.T) 
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = true
 	ui.slime_controller.panel_open = false
@@ -327,6 +575,7 @@ test_slime_controller_presets_panel_exposes_selector_and_save :: proc(t: ^testin
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = true
 	ui.slime_controller.panel_open = true
@@ -354,6 +603,7 @@ test_slime_controller_deck_tab_focus_moves_between_tabs :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = true
 	ui.slime_controller.panel_open = false
@@ -392,6 +642,7 @@ test_slime_controller_deck_arrow_focus_moves_once :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = true
 	ui.slime_controller.panel_open = false
@@ -427,6 +678,7 @@ test_slime_controller_deck_tab_opens_hidden_deck_without_skipping_tab :: proc(t:
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = false
 	ui.slime_controller.panel_open = false
@@ -456,6 +708,7 @@ test_slime_controller_unfocused_filter_preserves_camera_controls :: proc(t: ^tes
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = true
 	ui.slime_controller.panel_open = false
@@ -488,14 +741,14 @@ test_slime_controller_unfocused_filter_preserves_camera_controls :: proc(t: ^tes
 		window_height = 720,
 		key_w = true,
 		key_e = true,
-		camera_reset = true,
+		actions = {camera_reset = {pressed = true, owner = .Controller}},
 		controller_left = {1, -1},
 		controller_zoom = 1,
 	})
 
 	testing.expect(t, filtered.key_w)
 	testing.expect(t, filtered.key_e)
-	testing.expect(t, filtered.camera_reset)
+	testing.expect(t, filtered.actions.camera_reset.pressed)
 	testing.expect_value(t, filtered.controller_left.x, f32(1))
 	testing.expect_value(t, filtered.controller_left.y, f32(-1))
 	testing.expect_value(t, filtered.controller_zoom, f32(1))
@@ -510,6 +763,7 @@ test_slime_controller_deck_click_selects_tab_with_panel_focus :: proc(t: ^testin
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = true
 	ui.slime_controller.panel_open = true
@@ -554,10 +808,12 @@ test_slime_controller_space_focuses_bottom_bar :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = false
 	ui.slime_controller.panel_open = false
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1024, 768, ui.settings.ui_scale)
+	ui.frame_actions.control_deck = {pressed = true, owner = .Mouse_Keyboard}
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1024, window_height = 768, key_space = true})
 	consumed := game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1024, 768)
@@ -577,14 +833,16 @@ test_slime_controller_select_focuses_bottom_bar_without_toggling_shell :: proc(t
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.simulation_shell.show_ui = true
 	ui.slime_controller.deck_visible = false
 	ui.slime_controller.panel_open = false
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1024, 768, ui.settings.ui_scale)
 
-	game_input := game.Ui_Frame_Input{window_width = 1024, window_height = 768, active_device = .Controller, toggle_ui = true}
+	game_input := game.Ui_Frame_Input{window_width = 1024, window_height = 768, active_device = .Controller, actions = {toggle_ui = {pressed = true, owner = .Controller}}}
 	game.app_ui_simulation_shell_update(&ui, game_input)
+	ui.frame_actions = game_input.actions
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1024, window_height = 768, active_device = .Controller, toggle_ui = true})
 	consumed := game.slime_controller_ui_update_input(&ui, &ctx, &ui.slime_mold, 1024, 768)
@@ -604,6 +862,7 @@ test_slime_controller_pause_focuses_utility_rail :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_mold.paused = false
 	ui.slime_controller.deck_visible = true
@@ -613,9 +872,10 @@ test_slime_controller_pause_focuses_utility_rail :: proc(t: ^testing.T) {
 	vk_ctx.swapchain_extent = {width = 1024, height = 768}
 	worker: host.Render_Worker_State
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1024, 768, ui.settings.ui_scale)
+	ui.frame_actions.pause = {pressed = true, owner = .Controller}
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1024, window_height = 768, active_device = .Controller, pause = true})
-	game.app_ui_draw_remaining_sim(&ui, &ctx, .Slime_Mold, &ui.slime_mold, &vk_ctx, &worker)
+	game.app_ui_draw_remaining_sim(&ui, &ctx, .Slime_Mold, &ui.slime_mold, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 
 	uifw.gui_push_id(&ctx, "simulation_bar")
 	pause_id := uifw.gui_make_id(&ctx, "pause")
@@ -636,6 +896,7 @@ test_simulation_utility_focus_relinquishes_deck_navigation :: proc(t: ^testing.T
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Flow_Field
 	state := game.simulation_controller_ui_state(&ui)
 	state.deck_visible = true
@@ -647,10 +908,13 @@ test_simulation_utility_focus_relinquishes_deck_navigation :: proc(t: ^testing.T
 	vk_ctx.swapchain_extent = {width = 1024, height = 768}
 	worker: host.Render_Worker_State
 	sim: game.Remaining_Sim_State
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1024, 768, ui.settings.ui_scale)
+	ui.frame_actions.pause = {pressed = true, owner = .Controller}
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1024, window_height = 768, active_device = .Controller, pause = true})
-	game.app_ui_draw_remaining_sim(&ui, &ctx, .Flow_Field, &sim, &vk_ctx, &worker)
+	game.app_ui_draw_remaining_sim(&ui, &ctx, .Flow_Field, &sim, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	testing.expect_value(t, state.focus.phase, uifw.Controller_Focus_Phase.Unfocused)
@@ -658,7 +922,7 @@ test_simulation_utility_focus_relinquishes_deck_navigation :: proc(t: ^testing.T
 	testing.expect(t, state.deck_visible)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1024, window_height = 768, active_device = .Controller, key_right = true})
-	game.app_ui_draw_remaining_sim(&ui, &ctx, .Flow_Field, &sim, &vk_ctx, &worker)
+	game.app_ui_draw_remaining_sim(&ui, &ctx, .Flow_Field, &sim, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	testing.expect_value(t, state.focused_index, 0)
@@ -673,14 +937,16 @@ test_slime_controller_ui_action_focuses_deck :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1024, height = 768}
 	worker: host.Render_Worker_State
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1024, 768, ui.settings.ui_scale)
+	ui.frame_actions.toggle_ui = {pressed = true, owner = .Controller}
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1024, window_height = 768, active_device = .Controller, toggle_ui = true})
-	game.app_ui_draw_remaining_sim(&ui, &ctx, .Slime_Mold, &ui.slime_mold, &vk_ctx, &worker)
+	game.app_ui_draw_remaining_sim(&ui, &ctx, .Slime_Mold, &ui.slime_mold, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 
 	testing.expect_value(t, ctx.focused, uifw.gui_make_id(&ctx, "slime_deck_0"))
 }
@@ -693,13 +959,17 @@ test_app_options_screen_uses_plain_toggle_labels_and_sticky_footer :: proc(t: ^t
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
+	assets := uifw.Ui_Document_Assets{}
+	defer uifw.ui_document_assets_destroy(&assets)
+	testing.expect_value(t, uifw.ui_document_assets_load(&assets).error, uifw.Ui_Document_Error.None)
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1200, height = 800}
 	worker: host.Render_Worker_State
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1200, 800, ui.settings.ui_scale)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1200, window_height = 800, mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_options(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_options_document(&ui, &ctx, &assets, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	testing.expect(t, test_first_text_command_index(ctx.commands[:], "Options") >= 0)
@@ -735,13 +1005,14 @@ test_app_options_section_rail_switches_active_group :: proc(t: ^testing.T) {
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1200, height = 800}
 	worker: host.Render_Worker_State
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1200, 800, ui.settings.ui_scale)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1200, window_height = 800, mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_options(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_options(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	interface_index := test_first_text_command_index(ctx.commands[:], "Interface")
@@ -750,11 +1021,11 @@ test_app_options_section_rail_switches_active_group :: proc(t: ^testing.T) {
 	click := uifw.Vec2{interface_rect.x + interface_rect.w * 0.5, interface_rect.y + interface_rect.h * 0.5}
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1200, window_height = 800, mouse_pos = click, mouse_pressed = true, mouse_down = true})
-	game.app_ui_draw_options(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_options(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1200, window_height = 800, mouse_pos = click, mouse_released = true})
-	game.app_ui_draw_options(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_options(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	testing.expect_value(t, ui.options_section_index, 2)
@@ -773,13 +1044,14 @@ test_app_options_screen_mutes_disabled_fps_field_but_keeps_focus_hide_delay_avai
 	settings.default_fps_limit_enabled = false
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1200, height = 800}
 	worker: host.Render_Worker_State
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1200, 800, ui.settings.ui_scale)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1200, window_height = 800, mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_options(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_options(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	saw_muted_fps_limit := false
@@ -792,7 +1064,7 @@ test_app_options_screen_mutes_disabled_fps_field_but_keeps_focus_hide_delay_avai
 
 	ui.options_section_index = 2
 	uifw.gui_begin_frame(&ctx, {window_width = 1200, window_height = 800, mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_options(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_options(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	saw_enabled_hide_delay := false
@@ -817,6 +1089,7 @@ test_app_options_reset_defaults_stays_unsaved_and_publishes_change :: proc(t: ^t
 	settings.menu_position = "right"
 	settings.texture_filtering = "Nearest"
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.settings_dirty = false
 
 	game.app_ui_reset_settings_to_defaults(&ui, &worker)
@@ -961,6 +1234,7 @@ test_app_ui_auto_hide_hides_unfocused_ui_after_grace_period :: proc(t: ^testing.
 	settings := game.settings_default()
 	settings.auto_hide_delay = 1000
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 
 	game.app_ui_simulation_shell_update(&ui, {delta_time = 1.25})
@@ -974,6 +1248,7 @@ test_holding_escape_or_start_exits_a_simulation :: proc(t: ^testing.T) {
 	for use_start in inputs {
 		ui: game.App_Ui_State
 		game.app_ui_init(&ui, game.settings_default())
+		defer game.app_ui_destroy(&ui)
 		ui.mode = .Gray_Scott
 
 		for _ in 0 ..< 2 {
@@ -1003,6 +1278,7 @@ test_holding_escape_or_start_highlights_main_menu_quit :: proc(t: ^testing.T) {
 	for input in inputs {
 		ui: game.App_Ui_State
 		game.app_ui_init(&ui, game.settings_default())
+		defer game.app_ui_destroy(&ui)
 		ctx: uifw.Gui_Context
 		uifw.gui_init(&ctx)
 
@@ -1018,6 +1294,7 @@ test_app_ui_auto_hide_keeps_engaged_ui_visible :: proc(t: ^testing.T) {
 	settings := game.settings_default()
 	settings.auto_hide_delay = 1000
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 
 	game.app_ui_simulation_shell_update(&ui, {delta_time = 2}, true)
@@ -1032,6 +1309,7 @@ test_app_ui_auto_hide_closes_unfocused_controller_surfaces :: proc(t: ^testing.T
 	settings := game.settings_default()
 	settings.auto_hide_delay = 1000
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Particle_Life
 	ui.simulation_controllers[1].deck_visible = true
 	ui.simulation_controllers[1].panel_open = true
@@ -1046,6 +1324,7 @@ test_app_ui_hide_releases_controller_focus_but_preserves_memory :: proc(t: ^test
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	state := &ui.simulation_controllers[1]
 	region := uifw.Gui_Id(101)
 	control := uifw.Gui_Id(202)
@@ -1069,6 +1348,7 @@ test_app_ui_hide_releases_controller_focus_but_preserves_memory :: proc(t: ^test
 test_app_ui_navigation_enters_simulation_hidden_and_unfocused :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.slime_controller.deck_visible = true
 	ui.slime_controller.focus.phase = .Region
 
@@ -1086,6 +1366,7 @@ test_app_ui_auto_hide_mouse_motion_reveals_hidden_controls :: proc(t: ^testing.T
 	settings := game.settings_default()
 	settings.auto_hide_delay = 1000
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 	ui.simulation_shell.show_ui = false
 	ui.simulation_shell.controls_visible = false
@@ -1102,11 +1383,12 @@ test_app_ui_system_cursor_hides_with_hidden_simulation_controls :: proc(t: ^test
 	settings := game.settings_default()
 	settings.auto_hide_delay = 1000
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 
 	testing.expect(t, !game.app_ui_system_cursor_hidden(&ui))
 
-	game.app_ui_simulation_shell_update(&ui, {key_slash = true})
+	game.app_ui_simulation_shell_update(&ui, {actions = {toggle_ui = {pressed = true, owner = .Mouse_Keyboard}}})
 	testing.expect(t, !ui.simulation_shell.show_ui)
 	testing.expect(t, ui.simulation_shell.controls_visible)
 	testing.expect(t, !game.app_ui_system_cursor_hidden(&ui))
@@ -1129,6 +1411,7 @@ test_app_ui_system_cursor_hides_with_hidden_simulation_controls :: proc(t: ^test
 test_app_ui_virtual_controller_cursor_follows_system_cursor_hide_rules :: proc(t: ^testing.T) {
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 	ui.simulation_shell.show_ui = false
 	ui.simulation_shell.controls_visible = false
@@ -1161,13 +1444,14 @@ test_app_ui_camera_pan_gestures_never_reach_simulation_interaction :: proc(t: ^t
 		uifw.gui_init(&ctx)
 		ui: game.App_Ui_State
 		game.app_ui_init(&ui, game.settings_default())
+		defer game.app_ui_destroy(&ui)
 		ui.mode = .Gray_Scott
 
 		filtered := game.app_ui_simulation_filter_input(&ui, &ctx, input)
 		testing.expect(t, filtered.camera_pan_down)
 		testing.expect(t, !filtered.mouse_down)
-		testing.expect(t, !filtered.primary_down)
-		testing.expect(t, !filtered.secondary_down)
+		testing.expect(t, !filtered.actions.primary.down)
+		testing.expect(t, !filtered.actions.secondary.down)
 		uifw.gui_destroy(&ctx)
 	}
 }
@@ -1179,6 +1463,7 @@ test_app_ui_primary_drag_stays_interaction_when_space_is_pressed_mid_gesture :: 
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 
 	first := game.app_ui_simulation_filter_input(&ui, &ctx, {
@@ -1268,6 +1553,7 @@ test_app_ui_simulation_filter_blocks_controller_deck_clicks :: proc(t: ^testing.
 	settings := game.settings_default()
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Particle_Life
 
 	ui.simulation_controllers[1].deck_visible = true
@@ -1294,36 +1580,35 @@ test_app_ui_simulation_filter_preserves_camera_arrows_without_ui_focus :: proc(t
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 
 	filtered := game.app_ui_simulation_filter_input(&ui, &ctx, {
 		window_width = 1920,
 		window_height = 1080,
 		key_right = true,
-		camera_reset = true,
-		nav_x = 1,
-		nav_pressed_x = 1,
+		actions = {camera_reset = {pressed = true, owner = .Mouse_Keyboard}, navigate = {value = {1, 0}, pressed = {1, 0}}},
 	})
 
 	testing.expect(t, filtered.key_right)
-	testing.expect(t, filtered.camera_reset)
-	testing.expect_value(t, filtered.nav_x, f32(1))
-	testing.expect_value(t, filtered.nav_pressed_x, f32(1))
+	testing.expect(t, filtered.actions.camera_reset.pressed)
+	testing.expect_value(t, filtered.actions.navigate.value.x, f32(1))
+	testing.expect_value(t, filtered.actions.navigate.pressed.x, f32(1))
 
 	ctx.focused = uifw.gui_make_id(&ctx, "focused_control")
 	filtered = game.app_ui_simulation_filter_input(&ui, &ctx, {
 		window_width = 1920,
 		window_height = 1080,
 		key_right = true,
-		camera_reset = true,
-		nav_x = 1,
-		nav_pressed_x = 1,
+		actions = {camera_reset = {pressed = true, owner = .Mouse_Keyboard}, navigate = {value = {1, 0}, pressed = {1, 0}}},
 	})
 
 	testing.expect(t, !filtered.key_right)
-	testing.expect(t, !filtered.camera_reset)
-	testing.expect_value(t, filtered.nav_x, f32(0))
-	testing.expect_value(t, filtered.nav_pressed_x, f32(0))
+	// Keyboard camera reset remains eligible alongside focused navigation;
+	// controller-owned reset is filtered with controller camera input.
+	testing.expect(t, filtered.actions.camera_reset.pressed)
+	testing.expect_value(t, filtered.actions.navigate.value.x, f32(0))
+	testing.expect_value(t, filtered.actions.navigate.pressed.x, f32(0))
 }
 
 @(test)
@@ -1336,6 +1621,7 @@ test_app_ui_simulation_filter_keeps_canvas_drag_owned_across_utility_rail :: pro
 	settings.menu_position = "right"
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Particle_Life
 
 	first := game.app_ui_simulation_filter_input(&ui, &ctx, {
@@ -1409,6 +1695,7 @@ test_app_ui_main_menu_arrows_move_once_per_press :: proc(t: ^testing.T) {
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.main_menu_selected = 0
 
 	vk_ctx: engine.Vk_Context
@@ -1416,21 +1703,21 @@ test_app_ui_main_menu_arrows_move_once_per_press :: proc(t: ^testing.T) {
 	worker: host.Render_Worker_State
 
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {-1000, -1000}, key_down = true})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.main_menu_selected, 1)
 
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {-1000, -1000}, key_down = true})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.main_menu_selected, 1)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {-1000, -1000}, key_down = true})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.main_menu_selected, 2)
 }
@@ -1443,6 +1730,7 @@ test_app_ui_main_menu_keyboard_scrolls_all_sims_into_view :: proc(t: ^testing.T)
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.main_menu_selected = 0
 	ui.main_menu_focus_slot = game.app_ui_main_menu_slot_for_simulation_index(0)
 
@@ -1453,11 +1741,11 @@ test_app_ui_main_menu_keyboard_scrolls_all_sims_into_view :: proc(t: ^testing.T)
 
 	for _ in 0 ..< 9 {
 		uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, key_down = true})
-		game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+		game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 		uifw.gui_end_frame(&ctx)
 
 		uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}})
-		game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+		game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 		uifw.gui_end_frame(&ctx)
 	}
 
@@ -1500,6 +1788,7 @@ test_app_ui_main_menu_keyboard_reaches_title_options_and_quit :: proc(t: ^testin
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.main_menu_selected = 0
 	ui.main_menu_focus_slot = game.app_ui_main_menu_slot_for_simulation_index(0)
 
@@ -1511,31 +1800,32 @@ test_app_ui_main_menu_keyboard_reaches_title_options_and_quit :: proc(t: ^testin
 	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, key_up = true})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.main_menu_focus_slot, game.MAIN_MENU_TITLE_SLOT)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, key_enter = true})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect(t, ui.main_menu_palette_randomize_requested)
 
 	ui.main_menu_palette_randomize_requested = false
-	ui.main_menu_selected = 9
-	ui.main_menu_focus_slot = game.app_ui_main_menu_slot_for_simulation_index(9)
+	last_simulation := len(game.APP_SIMULATION_NAMES) - 1
+	ui.main_menu_selected = last_simulation
+	ui.main_menu_focus_slot = game.app_ui_main_menu_slot_for_simulation_index(last_simulation)
 	ui.main_menu_focus_navigation_active = true
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, nav_pressed_y = 1, active_device = .Controller})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.main_menu_focus_slot, game.app_ui_main_menu_options_slot())
 
 	ctx.focused = uifw.gui_make_id(&ctx, "options")
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, accept = true, active_device = .Controller})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.mode, game.App_Mode.Options)
 
@@ -1543,13 +1833,13 @@ test_app_ui_main_menu_keyboard_reaches_title_options_and_quit :: proc(t: ^testin
 	ui.main_menu_focus_slot = game.app_ui_main_menu_options_slot()
 	ui.main_menu_focus_navigation_active = true
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, nav_pressed_y = 1, active_device = .Controller})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.main_menu_focus_slot, game.app_ui_main_menu_quit_slot())
 
 	ctx.focused = uifw.gui_make_id(&ctx, "quit")
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, accept = true, active_device = .Controller})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	msg: game.Render_To_Ui_Message
@@ -1565,6 +1855,7 @@ test_app_ui_main_menu_keyboard_selection_ignores_stationary_hover :: proc(t: ^te
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.main_menu_selected = 0
 
 	vk_ctx: engine.Vk_Context
@@ -1573,28 +1864,28 @@ test_app_ui_main_menu_keyboard_selection_ignores_stationary_hover :: proc(t: ^te
 	mouse := uifw.Vec2{200, 760}
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = mouse})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.main_menu_selected, 1)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = mouse, key_down = true})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.main_menu_selected, 2)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = mouse})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.main_menu_selected, 2)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = mouse, mouse_moved = true})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.main_menu_selected, 2)
 
 	ui.main_menu_scroll = 0
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = mouse, mouse_pressed = true, mouse_down = true})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 	testing.expect_value(t, ui.main_menu_selected, 1)
 }
@@ -1607,6 +1898,7 @@ test_app_ui_main_menu_hover_selection_draws_same_frame :: proc(t: ^testing.T) {
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.main_menu_selected = 0
 
 	vk_ctx: engine.Vk_Context
@@ -1615,7 +1907,7 @@ test_app_ui_main_menu_hover_selection_draws_same_frame :: proc(t: ^testing.T) {
 	mouse := uifw.Vec2{200, 760}
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = mouse})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	testing.expect_value(t, ui.main_menu_selected, 1)
@@ -1639,13 +1931,14 @@ test_app_ui_main_menu_idle_selection_has_no_hover_highlight :: proc(t: ^testing.
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	testing.expect_value(t, ui.main_menu_selected, 0)
 
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
 	worker: host.Render_Worker_State
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	for command in ctx.commands {
@@ -1668,6 +1961,7 @@ test_app_ui_main_menu_hover_selection_respects_scroll_clip :: proc(t: ^testing.T
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.main_menu_selected = 0
 
 	vk_ctx: engine.Vk_Context
@@ -1675,7 +1969,7 @@ test_app_ui_main_menu_hover_selection_respects_scroll_clip :: proc(t: ^testing.T
 	worker: host.Render_Worker_State
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {200, 1070}})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	testing.expect_value(t, ui.main_menu_selected, 0)
@@ -1689,6 +1983,7 @@ test_app_ui_main_menu_preview_slots_skip_gradient_editor :: proc(t: ^testing.T) 
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.main_menu_scroll = 900
 
 	vk_ctx: engine.Vk_Context
@@ -1696,7 +1991,7 @@ test_app_ui_main_menu_preview_slots_skip_gradient_editor :: proc(t: ^testing.T) 
 	worker: host.Render_Worker_State
 
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	saw_gradient_label := false
@@ -1723,6 +2018,7 @@ test_app_ui_main_menu_preview_slots_keep_unclipped_rect_when_scrolled :: proc(t:
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.main_menu_scroll = 42
 
 	vk_ctx: engine.Vk_Context
@@ -1730,7 +2026,7 @@ test_app_ui_main_menu_preview_slots_keep_unclipped_rect_when_scrolled :: proc(t:
 	worker: host.Render_Worker_State
 
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	found_partially_clipped := false
@@ -1763,13 +2059,14 @@ test_app_ui_main_menu_preview_slots_record_fallback_color :: proc(t: ^testing.T)
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
 	worker: host.Render_Worker_State
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	theme := game.app_ui_menu_theme(&ctx, 1920, 1080)
@@ -1791,13 +2088,14 @@ test_app_ui_main_menu_preview_overlay_starts_fully_dark :: proc(t: ^testing.T) {
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
 	worker: host.Render_Worker_State
 
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	found := false
@@ -1851,13 +2149,14 @@ test_app_ui_main_menu_simulation_list_draws_scroll_edge_fades :: proc(t: ^testin
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
 	worker: host.Render_Worker_State
 
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	top, bottom := test_count_scroll_fades(ctx.commands[:], viewport)
@@ -1866,7 +2165,7 @@ test_app_ui_main_menu_simulation_list_draws_scroll_edge_fades :: proc(t: ^testin
 
 	ui.main_menu_scroll = 42
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	top, bottom = test_count_scroll_fades(ctx.commands[:], viewport)
@@ -1882,21 +2181,23 @@ test_app_ui_main_menu_discovery_chrome_is_visible :: proc(t: ^testing.T) {
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
 	worker: host.Render_Worker_State
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1920, 1080, 1)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
-	testing.expect_value(t, game.app_ui_main_menu_catalog_eyebrow_label(), "10 SIMULATIONS")
+	eyebrow := fmt.tprintf("%d SIMULATIONS", len(game.APP_SIMULATION_NAMES))
+	testing.expect_value(t, game.app_ui_main_menu_catalog_eyebrow_label(), eyebrow)
 	saw_eyebrow := false
 	saw_keyboard_hint := false
 	saw_wide_scrollbar := false
 	for command in ctx.commands {
-		if command.kind == .Text && command.text == "10 SIMULATIONS" {
+		if command.kind == .Text && command.text == eyebrow {
 			saw_eyebrow = true
 		}
 		if command.kind == .Text && command.text == "Scroll / \u2191\u2193  Browse   \u2022   Enter / Click  Start" {
@@ -1921,13 +2222,14 @@ test_app_ui_main_menu_controller_hint_uses_accept_preference :: proc(t: ^testing
 	settings.controller_face_layout = "East Accept"
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
 	worker: host.Render_Worker_State
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1920, 1080, 1)
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1920, window_height = 1080, mouse_pos = {-1000, -1000}, active_device = .Controller, controller_prompt_style = .Xbox})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	expected_accept_uv := game.controller_prompt_icon_uv(.East, .Xbox)
@@ -1980,6 +2282,7 @@ test_app_ui_main_menu_bottom_scroll_registers_primordial_live_preview :: proc(t:
 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.main_menu_scroll = 1900
 
 	vk_ctx: engine.Vk_Context
@@ -1987,7 +2290,7 @@ test_app_ui_main_menu_bottom_scroll_registers_primordial_live_preview :: proc(t:
 	worker: host.Render_Worker_State
 
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {-1000, -1000}})
-	game.app_ui_draw_main_menu(&ui, &ctx, &vk_ctx, &worker)
+	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
 	saw_primordial := false
@@ -2186,6 +2489,7 @@ test_app_ui_simulation_menu_panel_stays_inside_viewport_at_common_sizes :: proc(
 	settings.menu_position = "right"
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1280, 720, 1)
@@ -2252,7 +2556,8 @@ test_remaining_sim_pellets_sidebar_scroll_extent_tracks_ui_scale :: proc(t: ^tes
 	defer uifw.gui_destroy(&ctx)
 
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1920, 1080, 1)
 	base_height := game.remaining_sim_controls_content_height(&sim, &ctx, .Pellets, 640)
@@ -2270,7 +2575,8 @@ test_remaining_sim_controller_section_uses_supplied_panel_scroll :: proc(t: ^tes
 	defer uifw.gui_destroy(&ctx)
 
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 	sim.scroll = 17
 	panel_scroll := f32(0)
 	editor: game.Color_Scheme_Editor_State
@@ -2291,19 +2597,24 @@ test_primordial_motion_scroll_extent_includes_spacer_and_collision_rows :: proc(
 	ctx.style = uifw.gui_style_for_viewport(uifw.gui_default_style(), 1920, 1080, 1)
 
 	sim: game.Remaining_Sim_State
-	game.remaining_sim_init(&sim)
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
 	sim.primordial.collision_enabled = false
 	row := ctx.style.row_height + ctx.style.spacing
 	spacer := f32(8) + ctx.style.spacing
 	base := game.remaining_sim_controller_section_content_height(&sim, &ctx, .Primordial, 6, 760)
 	expected_base := spacer +
 		ctx.style.heading_line_height + ctx.style.spacing +
-		game.shared_two_axis_pad_height(&ctx) + row * 5
+		game.shared_two_axis_pad_height(&ctx) + row * 6
 	testing.expect_value(t, base, expected_base)
 
 	sim.primordial.collision_enabled = true
 	with_collisions := game.remaining_sim_controller_section_content_height(&sim, &ctx, .Primordial, 6, 760)
 	testing.expect_value(t, with_collisions - base, row * 2)
+
+	sim.primordial_randomize_undo_available = true
+	with_restore := game.remaining_sim_controller_section_content_height(&sim, &ctx, .Primordial, 6, 760)
+	testing.expect_value(t, with_restore - with_collisions, row)
 }
 
 test_scroll_extent_covers_rendered_layout :: proc(t: ^testing.T, ctx: ^uifw.Gui_Context) {
@@ -2323,7 +2634,8 @@ test_all_simulation_controller_sections_cover_their_rendered_layout :: proc(t: ^
 	game.color_scheme_editor_init(&editor)
 
 	gray: game.Gray_Scott_Simulation
-	game.gray_scott_init(&gray, 1280, 720)
+	gray_storage: Test_Gray_Scott_Product_Storage
+	test_gray_scott_init(&gray, &gray_storage, 1280, 720)
 	for section in game.GRAY_SCOTT_CONTROLLER_SECTIONS {
 		uifw.gui_begin_frame(&ctx, {})
 		_ = game.gray_scott_draw_controls(&gray, &ctx, panel, &scroll, nil, &editor, section)
@@ -2334,7 +2646,8 @@ test_all_simulation_controller_sections_cover_their_rendered_layout :: proc(t: ^
 	test_scroll_extent_covers_rendered_layout(t, &ctx)
 
 	particle: game.Particle_Life_Simulation
-	game.particle_life_init(&particle, 1280, 720)
+	particle_storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&particle, &particle_storage, 1280, 720)
 	for section in game.PARTICLE_LIFE_CONTROLLER_SECTIONS {
 		uifw.gui_begin_frame(&ctx, {})
 		game.particle_life_draw_controls(&particle, &ctx, panel, &scroll, nil, &editor, section)
@@ -2345,7 +2658,8 @@ test_all_simulation_controller_sections_cover_their_rendered_layout :: proc(t: ^
 	test_scroll_extent_covers_rendered_layout(t, &ctx)
 
 	remaining: game.Remaining_Sim_State
-	game.remaining_sim_init(&remaining)
+	remaining_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&remaining, &remaining_storage)
 	audit_remaining := proc(kind: game.Remaining_Sim_Kind, sections: []int, remaining: ^game.Remaining_Sim_State, ctx: ^uifw.Gui_Context, panel: uifw.Rect, editor: ^game.Color_Scheme_Editor_State, scroll: ^f32, t: ^testing.T) {
 		for section in sections {
 			uifw.gui_begin_frame(ctx, {})
@@ -2389,6 +2703,7 @@ test_all_simulation_controller_sections_cover_their_rendered_layout :: proc(t: ^
 	settings := game.settings_default()
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.panel_open = true
 	for mode in game.Control_Ui_Mode {
@@ -2499,6 +2814,7 @@ test_simulation_controller_panel_uses_scoped_focus_region_and_leaves_edit_mode :
 	settings := game.settings_default()
 	settings.remember_controller_focus = true
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 	state := game.simulation_controller_ui_state(&ui)
 	state.panel_open = true
@@ -2506,11 +2822,12 @@ test_simulation_controller_panel_uses_scoped_focus_region_and_leaves_edit_mode :
 	state.focus.phase = .Child_Region
 	state.focus.remember_focus = true
 	gray: game.Gray_Scott_Simulation
-	game.gray_scott_init(&gray, 320, 240)
+	gray_storage: Test_Gray_Scott_Product_Storage
+	test_gray_scott_init(&gray, &gray_storage, 320, 240)
 	ctx.style = uifw.gui_default_style()
 
 	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720})
-	game.simulation_controller_ui_draw_panel(&ui, &ctx, &gray, nil, nil, {0, 0, 760, 420}, nil)
+	game.simulation_controller_ui_draw_panel(&ui, &ctx, {0, 0, 760, 420}, nil)
 	section := game.simulation_controller_ui_section(ui.mode, state.active_index)
 	panel_region := game.simulation_controller_ui_panel_region_id(&ctx, section)
 	target := uifw.GUI_ID_NONE
@@ -2527,7 +2844,7 @@ test_simulation_controller_panel_uses_scoped_focus_region_and_leaves_edit_mode :
 	state.focus.parent_region = game.simulation_controller_ui_region_id(&ctx, "deck")
 	ctx.focused = uifw.GUI_ID_NONE
 	uifw.gui_begin_frame(&ctx, {window_width = 1280, window_height = 720, active_device = .Controller})
-	game.simulation_controller_ui_draw_panel(&ui, &ctx, &gray, nil, nil, {0, 0, 760, 420}, nil)
+	game.simulation_controller_ui_draw_panel(&ui, &ctx, {0, 0, 760, 420}, nil)
 	testing.expect_value(t, state.focus.phase, uifw.Controller_Focus_Phase.Child_Region)
 }
 
@@ -2538,7 +2855,8 @@ test_preset_selector_side_arrows_cycle_and_apply_builtin_presets :: proc(t: ^tes
 	defer uifw.gui_destroy(&ctx)
 
 	gray: game.Gray_Scott_Simulation
-	game.gray_scott_init(&gray, 320, 240)
+	gray_storage: Test_Gray_Scott_Product_Storage
+	test_gray_scott_init(&gray, &gray_storage, 320, 240)
 	state: game.Preset_Fieldset_State
 
 	uifw.gui_begin_frame(&ctx, {mouse_pos = {240, 22}, mouse_pressed = true, mouse_released = true})

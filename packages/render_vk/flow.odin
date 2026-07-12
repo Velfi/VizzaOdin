@@ -132,8 +132,8 @@ flow_upload_sampled_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Flow_Image
 		return false
 	}
 	range := vk.ImageSubresourceRange{aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}
-	to_transfer := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_transfer := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		dstAccessMask = {.TRANSFER_WRITE},
 		oldLayout = .UNDEFINED,
 		newLayout = .TRANSFER_DST_OPTIMAL,
@@ -142,7 +142,7 @@ flow_upload_sampled_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Flow_Image
 		image = image.handle,
 		subresourceRange = range,
 	}
-	vk.CmdPipelineBarrier(command_buffer, {.TOP_OF_PIPE}, {.TRANSFER}, {}, 0, nil, 0, nil, 1, &to_transfer)
+	engine.vk_cmd_pipeline_barrier2(command_buffer, {.TOP_OF_PIPE}, {.TRANSFER}, {}, 0, nil, 0, nil, 1, &to_transfer)
 	region := vk.BufferImageCopy {
 		bufferOffset = 0,
 		bufferRowLength = 0,
@@ -152,8 +152,8 @@ flow_upload_sampled_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Flow_Image
 		imageExtent = {width, height, 1},
 	}
 	vk.CmdCopyBufferToImage(command_buffer, staging.handle, image.handle, .TRANSFER_DST_OPTIMAL, 1, &region)
-	to_shader := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_shader := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = {.TRANSFER_WRITE},
 		dstAccessMask = {.SHADER_READ},
 		oldLayout = .TRANSFER_DST_OPTIMAL,
@@ -163,7 +163,7 @@ flow_upload_sampled_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Flow_Image
 		image = image.handle,
 		subresourceRange = range,
 	}
-	vk.CmdPipelineBarrier(command_buffer, {.TRANSFER}, {.COMPUTE_SHADER}, {}, 0, nil, 0, nil, 1, &to_shader)
+	engine.vk_cmd_pipeline_barrier2(command_buffer, {.TRANSFER}, {.COMPUTE_SHADER}, {}, 0, nil, 0, nil, 1, &to_shader)
 	if !engine.vk_submit_upload_commands(vk_ctx) {
 		return false
 	}
@@ -319,7 +319,7 @@ flow_write_params :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, fram
 }
 
 flow_write_params_size :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, frame_slot: int, sim: ^Remaining_Sim_State, dt: f32, screen_width, screen_height: u32) {
-	settings := &sim.flow
+	settings := sim.flow
 	gpu.show_particles = settings.show_particles
 	flow_upload_lut(gpu, settings)
 	flow_upload_background_color(gpu, frame_slot, settings)
@@ -424,7 +424,7 @@ flow_write_shape_params :: proc(gpu: ^Flow_Gpu_State, frame_slot: int, sim: ^Rem
 	if gpu.shape_params_buffers[frame_slot].mapped == nil {
 		return
 	}
-	settings := &sim.flow
+	settings := sim.flow
 	params := cast(^Flow_Shape_Params)gpu.shape_params_buffers[frame_slot].mapped
 	params^ = {
 		center_x = sim.cursor_world[0],
@@ -442,7 +442,7 @@ flow_write_shape_params :: proc(gpu: ^Flow_Gpu_State, frame_slot: int, sim: ^Rem
 }
 
 flow_write_spawn_control :: proc(gpu: ^Flow_Gpu_State, sim: ^Remaining_Sim_State, dt: f32) {
-	settings := &sim.flow
+	settings := sim.flow
 	if gpu.spawn_control_buffer.mapped == nil {return}
 	gpu.autospawn_accumulator += f32(settings.autospawn_rate) * dt
 	autospawn_allowed := u32(math.floor(gpu.autospawn_accumulator))
@@ -577,7 +577,8 @@ flow_create_background_pipeline :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = 2, pDynamicStates = raw_data(dynamic_states[:])}
-	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = gpu.background_pipeline.layout, renderPass = vk_ctx.render_pass, subpass = 0}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
+	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, pNext = &rendering, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = gpu.background_pipeline.layout}
 	return vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &gpu.background_pipeline.pipeline) == .SUCCESS
 }
 
@@ -595,7 +596,8 @@ flow_create_trail_pipeline :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Cont
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = 2, pDynamicStates = raw_data(dynamic_states[:])}
-	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = gpu.trail_pipeline.layout, renderPass = vk_ctx.render_pass, subpass = 0}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
+	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, pNext = &rendering, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = gpu.trail_pipeline.layout}
 	return vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &gpu.trail_pipeline.pipeline) == .SUCCESS
 }
 
@@ -613,6 +615,7 @@ flow_create_particle_pipeline :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_C
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = 2, pDynamicStates = raw_data(dynamic_states[:])}
-	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = gpu.particle_pipeline.layout, renderPass = vk_ctx.render_pass, subpass = 0}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
+	info := vk.GraphicsPipelineCreateInfo{sType = .GRAPHICS_PIPELINE_CREATE_INFO, pNext = &rendering, stageCount = 2, pStages = raw_data(stages[:]), pVertexInputState = &vertex_input, pInputAssemblyState = &input_assembly, pViewportState = &viewport_state, pRasterizationState = &raster, pMultisampleState = &multisample, pColorBlendState = &blend, pDynamicState = &dynamic_state, layout = gpu.particle_pipeline.layout}
 	return vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &gpu.particle_pipeline.pipeline) == .SUCCESS
 }

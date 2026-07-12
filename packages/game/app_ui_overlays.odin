@@ -5,34 +5,14 @@ import engine "../engine"
 
 import "core:fmt"
 
-app_ui_handle_controller_disconnect :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Gray_Scott_Simulation, particle_life: ^Particle_Life_Simulation) {
+app_ui_handle_controller_disconnect :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
 	if !gui.input.controller_disconnected || gui.input.active_device != .Controller || !app_ui_mode_is_simulation(ui.mode) {
 		return
 	}
 	ui.simulation_shell.show_ui = true
 	app_ui_set_simulation_chrome_visible(ui, true)
 	ui.simulation_shell.idle_seconds = 0
-	#partial switch ui.mode {
-	case .Gray_Scott:
-		if sim != nil {sim.settings.paused = true}
-	case .Particle_Life:
-		if particle_life != nil {particle_life.settings.paused = true}
-	case .Slime_Mold:
-		ui.slime_mold.paused = true
-	case .Flow_Field:
-		ui.flow_field.paused = true
-	case .Pellets:
-		ui.pellets.paused = true
-	case .Voronoi_CA:
-		ui.voronoi_ca.paused = true
-	case .Moire:
-		ui.moire.paused = true
-	case .Vectors:
-		ui.vectors.paused = true
-	case .Primordial:
-		ui.primordial.paused = true
-	case:
-	}
+	_ = feature_instance_set_set_paused(&ui.feature_instances, ui.mode, true)
 }
 
 APP_UI_DEVICE_NOTICE_SECONDS :: f32(2.75)
@@ -118,13 +98,13 @@ app_ui_draw_virtual_cursor :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
 	uifw.gui_ellipse(gui, {p.x - size * 0.26, p.y - size * 0.26, size * 0.52, size * 0.52}, accent)
 }
 
-app_ui_draw_gradient_editor :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx: ^engine.Vk_Context) {
-	width := f32(vk_ctx.swapchain_extent.width)
-	height := f32(vk_ctx.swapchain_extent.height)
+app_ui_draw_gradient_editor :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, viewport: uifw.Vec2) {
+	width := viewport.x
+	height := viewport.y
 	color_scheme_editor_draw_full_preview(gui, &ui.color_scheme_editor, {0, 0, width, height})
 
 	if ui.simulation_shell.controls_visible {
-		app_ui_draw_simulation_bar(ui, gui, .Gradient_Editor, nil, nil, nil, true, false, "Gradient Editor", vk_ctx, width, nil)
+		app_ui_draw_simulation_bar(ui, gui, .Gradient_Editor, nil, nil, nil, true, false, "Gradient Editor", viewport, width, nil)
 	}
 	if ui.simulation_shell.show_ui {
 		panel := app_ui_simulation_menu_panel(ui, gui, width, height)
@@ -132,12 +112,12 @@ app_ui_draw_gradient_editor :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, v
 	}
 }
 
-app_ui_draw_remaining_sim :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, sim: ^Remaining_Sim_State, vk_ctx: ^engine.Vk_Context, worker: ^Product_Context) {
-	width := f32(vk_ctx.swapchain_extent.width)
-	height := f32(vk_ctx.swapchain_extent.height)
+app_ui_draw_remaining_sim :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, kind: Remaining_Sim_Kind, sim: ^Remaining_Sim_State, viewport: uifw.Vec2, worker: ^Product_Context) {
+	width := viewport.x
+	height := viewport.y
 	controller_ui_active := kind == .Slime_Mold || simulation_controller_ui_enabled(ui)
 	pause_consumed := false
-	controller_pause_pressed := app_ui_take_controller_action(&ui.frame_actions.pause, gui.input.pause, gui.input.active_device)
+	controller_pause_pressed := app_ui_take_controller_action(&ui.frame_actions.pause)
 	if controller_ui_active && controller_pause_pressed {
 		app_ui_release_controller_focus(ui)
 		app_ui_focus_simulation_bar_pause(gui)
@@ -167,7 +147,7 @@ app_ui_draw_remaining_sim :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, kin
 		if tool.valid {
 			display_name = fmt.tprintf("%s · %s — Primary: %s · Secondary: %s", display_name, tool.name, tool.primary_label, tool.secondary_label)
 		}
-		app_ui_draw_simulation_bar(ui, gui, app_mode_from_remaining_sim_kind(kind), nil, nil, sim, sim.paused, false, display_name, vk_ctx, width, worker)
+		app_ui_draw_simulation_bar(ui, gui, app_mode_from_remaining_sim_kind(kind), nil, nil, sim, sim.paused, false, display_name, viewport, width, worker)
 	}
 	if kind == .Slime_Mold {
 		slime_controller_ui_draw(ui, gui, sim, width, height, worker)
@@ -176,42 +156,32 @@ app_ui_draw_remaining_sim :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, kin
 	}
 	if kind == .Vectors && sim.vectors_image_dialog_requested {
 		sim.vectors_image_dialog_requested = false
-		msg: Render_To_Ui_Message
-		msg.kind = .Request_Vectors_Image_Dialog
-		_ = engine.queue_try_push(worker.render_to_ui, msg)
+		app_ui_request_image_dialog(ui, worker, .Vectors)
 	}
 	if kind == .Moire && sim.moire_image_dialog_requested {
 		sim.moire_image_dialog_requested = false
-		msg: Render_To_Ui_Message
-		msg.kind = .Request_Moire_Image_Dialog
-		_ = engine.queue_try_push(worker.render_to_ui, msg)
+		app_ui_request_image_dialog(ui, worker, .Moire)
 	}
 	if kind == .Flow_Field && sim.flow_image_dialog_requested {
 		sim.flow_image_dialog_requested = false
-		msg: Render_To_Ui_Message
-		msg.kind = .Request_Flow_Image_Dialog
-		_ = engine.queue_try_push(worker.render_to_ui, msg)
+		app_ui_request_image_dialog(ui, worker, .Flow)
 	}
 	if kind == .Slime_Mold && sim.slime_mask_image_dialog_requested {
 		sim.slime_mask_image_dialog_requested = false
-		msg: Render_To_Ui_Message
-		msg.kind = .Request_Slime_Mask_Image_Dialog
-		_ = engine.queue_try_push(worker.render_to_ui, msg)
+		app_ui_request_image_dialog(ui, worker, .Slime_Mask)
 	}
 	if kind == .Slime_Mold && sim.slime_position_image_dialog_requested {
 		sim.slime_position_image_dialog_requested = false
-		msg: Render_To_Ui_Message
-		msg.kind = .Request_Slime_Position_Image_Dialog
-		_ = engine.queue_try_push(worker.render_to_ui, msg)
+		app_ui_request_image_dialog(ui, worker, .Slime_Position)
 	}
 }
 
-app_ui_draw_options :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx: ^engine.Vk_Context, worker: ^Product_Context) {
-	window_w := f32(vk_ctx.swapchain_extent.width)
-	window_h := f32(vk_ctx.swapchain_extent.height)
+app_ui_draw_options :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, viewport: uifw.Vec2, worker: ^Product_Context) {
+	window_w := viewport.x
+	window_h := viewport.y
 	panel_w := min(max(window_w * 0.72, gui.style.body_char_width * 54), max(window_w - gui.style.margin * 2, 1))
 	panel_h := min(max(window_h * 0.86, gui.style.row_height * 12), max(window_h - gui.style.margin * 2, 1))
-	panel := centered_panel_styled(panel_w, panel_h, i32(vk_ctx.swapchain_extent.width), i32(vk_ctx.swapchain_extent.height), &gui.style)
+	panel := centered_panel_styled(panel_w, panel_h, i32(viewport.x), i32(viewport.y), &gui.style)
 	uifw.gui_panel_begin(gui, panel)
 	inner_h := max(panel.h - gui.style.panel_padding * 2, 0)
 	content_w := max(panel.w - gui.style.panel_padding * 2, 1)
@@ -233,6 +203,57 @@ app_ui_draw_options :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx: ^
 	app_ui_draw_options_footer(ui, gui, footer, worker)
 	uifw.gui_pop_id(gui)
 	uifw.gui_panel_end(gui)
+}
+
+App_Ui_Options_Document_Context :: struct {
+	ui: ^App_Ui_State,
+	worker: ^Product_Context,
+}
+
+app_ui_draw_options_document_slot :: proc(data: rawptr, gui: ^uifw.Gui_Context, bounds: uifw.Rect) {
+	document_context := cast(^App_Ui_Options_Document_Context)data
+	if document_context == nil || document_context.ui == nil || gui == nil do return
+	ui := document_context.ui
+	content_w := max(bounds.w, 1)
+	footer_h := app_ui_options_footer_height(gui, content_w)
+	section_rail_h := app_ui_options_section_rail_height(gui, content_w)
+	viewport_h := max(bounds.h - section_rail_h - footer_h - gui.style.spacing * 2, gui.style.row_height)
+	ui.options_section_index = max(min(ui.options_section_index, len(OPTIONS_SECTION_LABELS) - 1), 0)
+	if app_ui_draw_options_section_rail(gui, content_w, &ui.options_section_index) {
+		ui.options_scroll = 0
+	}
+	viewport := uifw.gui_next_rect(gui, height = viewport_h)
+	content_height := app_ui_options_content_height(gui, ui.options_section_index)
+	uifw.gui_push_id(gui, "settings")
+	uifw.gui_scroll_begin(gui, viewport, content_height, &ui.options_scroll)
+	app_ui_draw_options_active_section(ui, gui, document_context.worker)
+	uifw.gui_scroll_end(gui)
+	footer := uifw.gui_next_rect(gui, height = footer_h)
+	app_ui_draw_options_footer(ui, gui, footer, document_context.worker)
+	uifw.gui_pop_id(gui)
+}
+
+app_ui_draw_options_document :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, documents: ^uifw.Ui_Document_Assets, viewport: uifw.Vec2, worker: ^Product_Context) {
+	if ui == nil || gui == nil || documents == nil {
+		app_ui_draw_options(ui, gui, viewport, worker)
+		return
+	}
+	document, found := uifw.ui_document_assets_find(documents, "options")
+	if !found {
+		app_ui_draw_options(ui, gui, viewport, worker)
+		return
+	}
+	root_height := max(viewport.y - 48, gui.style.row_height * 4)
+	slot_height := max(root_height - gui.style.panel_padding * 2 - gui.style.heading_line_height - gui.style.spacing, gui.style.row_height)
+	document_context := App_Ui_Options_Document_Context {ui, worker}
+	bindings := [?]uifw.Ui_Document_Runtime_Binding {
+		{id = "options_slot", kind = .Slot, userdata = &document_context, draw_slot = app_ui_draw_options_document_slot, slot_content_height = slot_height},
+	}
+	actions: uifw.Ui_Document_Action_State
+	result := uifw.ui_document_draw(document, gui, {0, 0, viewport.x, viewport.y}, bindings[:], &actions)
+	if result.error != .None {
+		app_ui_draw_options(ui, gui, viewport, worker)
+	}
 }
 
 app_ui_how_to_play_content_height :: proc(gui: ^uifw.Gui_Context, width: f32) -> f32 {
@@ -265,13 +286,14 @@ app_ui_draw_how_to_play_demo :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, 
 	uifw.gui_spacer(gui, gui.style.spacing_2)
 }
 
-app_ui_controls_help_modal_content_height :: proc(gui: ^uifw.Gui_Context, width: f32, settings: App_Settings) -> f32 {
+app_ui_controls_help_modal_content_height :: proc(gui: ^uifw.Gui_Context, width: f32, settings: App_Settings, mode := App_Mode.Main_Menu) -> f32 {
 	quick_reference := app_ui_controls_help_quick_reference_for_settings(gui.input.active_device, settings)
 	wrap_width := max(width - gui.style.spacing_1, gui.style.body_char_width)
-	return app_ui_how_to_play_content_height(gui, width) +
+	height := app_ui_how_to_play_content_height(gui, width) +
 		gui.style.heading_line_height +
 		f32(uifw.gui_wrap_line_count(gui, quick_reference, wrap_width)) * gui.style.body_line_height +
 		gui.style.spacing * 3 + gui.style.spacing_2
+	return height
 }
 
 app_ui_draw_how_to_play :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
@@ -316,6 +338,54 @@ app_ui_draw_how_to_play :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
 	uifw.gui_panel_end(gui)
 }
 
+app_ui_draw_how_to_play_document_slot :: proc(data: rawptr, gui: ^uifw.Gui_Context, bounds: uifw.Rect) {
+	ui := cast(^App_Ui_State)data
+	if ui == nil || gui == nil do return
+	content_width := max(bounds.w - gui.style.spacing_2, 1)
+	uifw.gui_text_block(gui, HOW_TO_PLAY_INTRO, content_width, gui.style.text)
+	uifw.gui_spacer(gui, gui.style.spacing_1)
+	app_ui_draw_how_to_play_demo(ui, gui, content_width)
+	for section in HOW_TO_PLAY_SECTIONS {
+		uifw.gui_heading(gui, section.title)
+		uifw.gui_text_block(gui, section.body, content_width, gui.style.text_muted)
+		uifw.gui_spacer(gui, gui.style.spacing_2)
+	}
+}
+
+app_ui_draw_how_to_play_document :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, documents: ^uifw.Ui_Document_Assets, viewport: uifw.Vec2) {
+	if ui == nil || gui == nil || documents == nil {
+		app_ui_draw_how_to_play(ui, gui)
+		return
+	}
+	document, found := uifw.ui_document_assets_find(documents, "controls_help")
+	if !found {
+		app_ui_draw_how_to_play(ui, gui)
+		return
+	}
+	content_width := max(viewport.x - gui.style.panel_padding * 2 - gui.style.spacing_2 - 48, 1)
+	content_height := app_ui_how_to_play_content_height(gui, content_width)
+	bindings := [?]uifw.Ui_Document_Runtime_Binding {
+		{id = "content_slot", kind = .Slot, userdata = ui, draw_slot = app_ui_draw_how_to_play_document_slot, slot_content_height = content_height},
+		{id = "close", kind = .Action},
+	}
+	actions: uifw.Ui_Document_Action_State
+	result := uifw.ui_document_draw(document, gui, {0, 0, viewport.x, viewport.y}, bindings[:], &actions)
+	if result.error != .None {
+		app_ui_draw_how_to_play(ui, gui)
+		return
+	}
+	if gui.input.back {
+		app_ui_navigate(ui, .Main_Menu)
+		return
+	}
+	for action in actions.ids[:actions.count] {
+		if action == "close" {
+			app_ui_navigate(ui, .Main_Menu)
+			return
+		}
+	}
+}
+
 app_ui_open_controls_help :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {
 	if ui == nil || gui == nil || ui.controls_help_open {
 		return
@@ -353,7 +423,7 @@ app_ui_draw_controls_help_modal :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Contex
 	uifw.gui_push_id(gui, "controls_help_modal")
 	uifw.gui_rect(gui, {0, 0, window_w, window_h}, {0, 0, 0, 0.72})
 	uifw.gui_overlay_input_begin(gui, {0, 0, window_w, window_h})
-	if gui.frame_index > ui.controls_help_open_frame && (gui.input.back || gui.input.key_f1) {
+	if gui.frame_index > ui.controls_help_open_frame && (gui.input.back || ui.frame_actions.help.pressed) {
 		app_ui_close_controls_help(ui, gui)
 		uifw.gui_overlay_input_cancel(gui)
 		uifw.gui_pop_id(gui)
@@ -381,7 +451,7 @@ app_ui_draw_controls_help_modal :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Contex
 	}
 	viewport := uifw.gui_next_rect(gui, height = max(panel.h - gui.style.panel_padding * 2 - gui.style.row_height - gui.style.spacing, gui.style.row_height))
 	content_width := max(viewport.w - gui.style.spacing_2, 1)
-	content_height := app_ui_controls_help_modal_content_height(gui, content_width, ui.settings)
+	content_height := app_ui_controls_help_modal_content_height(gui, content_width, ui.settings, ui.mode)
 	uifw.gui_scroll_begin_native(gui, viewport, content_height, &ui.controls_help_modal_scroll)
 	quick_reference := app_ui_controls_help_quick_reference_for_settings(gui.input.active_device, ui.settings)
 	uifw.gui_heading(gui, "Quick reference")

@@ -53,17 +53,19 @@ remaining_sim_controls_specific_content_height :: proc(sim: ^Remaining_Sim_State
 		rows = 3 + 2 + 16 + 3 + 3 + 3
 		sections = 1
 	case .Primordial:
-		rows = 3 + 3 + 3 + 10 + 2
+		rows = 3 + 3 + 3 + 14 + 2
 		if sim.primordial.collision_enabled {rows += 2}
+		if sim.primordial_randomize_undo_available {rows += 1}
 		sections = 1
 	case .Voronoi_CA:
-		rows = 3 + 1 + 3 + 15
+		rows = 3 + 1 + 3 + 17
+		if sim.voronoi_randomize_undo_available {rows += 1}
 		sections = 1
 	case .Pellets:
 		rows = 3 + 2 + 3 + 9 + 6
 		sections = 2
 	case .Flow_Field:
-		rows = 3 + 1 + 3 + 16 + 3 + 3 + 3 + 9 + 5
+		rows = 3 + 1 + 3 + 16 + 3 + 3 + 3 + 9 + 6
 		sections = 4
 	case .Slime_Mold:
 		rows = 3 + 3 + 3 + 1 + 3 + 1 + 8 + 5 + 3 + 3 + 4
@@ -141,7 +143,7 @@ remaining_sim_controller_section_content_height :: proc(sim: ^Remaining_Sim_Stat
 			if sim.flow.vector_field_type == .Image {height += row * 9}
 			return height
 		case 6: return heading + row * (sim.flow.emitter_mode == .Ring ? 13 : 12)
-		case 7: return 8 + heading + row * 6
+		case 7: return 8 + heading + row * 7
 		case:
 		}
 	case .Pellets:
@@ -152,7 +154,11 @@ remaining_sim_controller_section_content_height :: proc(sim: ^Remaining_Sim_Stat
 		case:
 		}
 	case .Voronoi_CA:
-		if section == 5 {return heading * 2 + row * 7 + shared_two_axis_pad_height(gui)}
+		if section == 5 {
+			rows := 9
+			if sim.voronoi_randomize_undo_available {rows += 1}
+			return heading * 2 + row * f32(rows) + shared_two_axis_pad_height(gui)
+		}
 	case .Moire:
 		switch section {
 		case MOIRE_SECTION_PATTERN:
@@ -173,10 +179,11 @@ remaining_sim_controller_section_content_height :: proc(sim: ^Remaining_Sim_Stat
 	case .Primordial:
 		switch section {
 		case 3: return heading * 2 + shared_two_axis_pad_height(gui) + row * 5
-		case 5: return 8 + heading + row * 3
+		case 5: return 8 + heading + row * 5
 		case 6:
-			rows := 5
+			rows := 6
 			if sim.primordial.collision_enabled {rows += 2}
+			if sim.primordial_randomize_undo_available {rows += 1}
 			return spacer + heading + row * f32(rows) + shared_two_axis_pad_height(gui)
 		case:
 		}
@@ -436,13 +443,13 @@ remaining_sim_draw_display_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 	uifw.gui_heading(gui, "Display Settings")
 	#partial switch kind {
 	case .Slime_Mold:
-		settings := &sim.slime
+		settings := sim.slime
 		_ = color_scheme_editor_draw_selector(gui, color_editor, "slime_color_scheme", &settings.color_scheme, &settings.color_scheme_reversed)
 		if uifw.gui_selector(gui, fmt.tprintf("Background: %s", SLIME_BACKGROUND_MODE_NAMES[settings.background_index]), "slime_background", &settings.background_index, SLIME_BACKGROUND_MODE_NAMES[:]) {
 			settings.background_mode = Slime_Background_Mode(settings.background_index)
 		}
 	case .Flow_Field:
-		settings := &sim.flow
+		settings := sim.flow
 		_ = color_scheme_editor_draw_selector(gui, color_editor, "flow_color_scheme", &settings.color_scheme, &settings.color_scheme_reversed)
 		if uifw.gui_selector(gui, fmt.tprintf("Particle Color Mode: %s", FLOW_FOREGROUND_MODE_NAMES[settings.foreground_index]), "flow_foreground", &settings.foreground_index, FLOW_FOREGROUND_MODE_NAMES[:]) {
 			settings.foreground_color_mode = Flow_Foreground_Mode(settings.foreground_index)
@@ -451,7 +458,7 @@ remaining_sim_draw_display_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 			settings.background_color_mode = Vector_Background_Mode(settings.background_index)
 		}
 	case .Pellets:
-		settings := &sim.pellets
+		settings := sim.pellets
 		_ = color_scheme_editor_draw_selector(gui, color_editor, "pellets_color_scheme", &settings.color_scheme, &settings.color_scheme_reversed)
 		if uifw.gui_selector(gui, fmt.tprintf("Background Color Mode: %s", VECTOR_BACKGROUND_MODE_NAMES[settings.background_index]), "pellets_background", &settings.background_index, VECTOR_BACKGROUND_MODE_NAMES[:]) {
 			settings.background_color_mode = Vector_Background_Mode(settings.background_index)
@@ -467,7 +474,7 @@ remaining_sim_draw_display_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 			_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Trail Fade: %.2f", settings.trail_fade), "pellets_trail_fade", &settings.trail_fade, 0.01, 0, 1)
 		}
 	case .Voronoi_CA:
-		settings := &sim.voronoi
+		settings := sim.voronoi
 		_ = color_scheme_editor_draw_selector(gui, color_editor, "voronoi_color_scheme", &settings.color_scheme, &settings.color_scheme_reversed)
 		settings.color_mode_index = max(min(settings.color_mode_index, len(VORONOI_COLOR_MODE_NAMES) - 1), 0)
 		if uifw.gui_selector(gui, fmt.tprintf("Coloring Mode: %s", VORONOI_COLOR_MODE_NAMES[settings.color_mode_index]), "voronoi_color_mode", &settings.color_mode_index, VORONOI_COLOR_MODE_NAMES[:]) {
@@ -478,7 +485,7 @@ remaining_sim_draw_display_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 			_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Border Width: %.1f", settings.border_width), "voronoi_border_width", &settings.border_width, 0.5, 0, 64)
 		}
 	case .Primordial:
-		settings := &sim.primordial
+		settings := sim.primordial
 		_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Particle Size: %.3f", settings.particle_size), "primordial_particle_size", &settings.particle_size, 0.001, 0.001, 0.1)
 		_ = color_scheme_editor_draw_selector(gui, color_editor, "primordial_color_scheme", &settings.color_scheme, &settings.color_scheme_reversed)
 		if uifw.gui_selector(gui, fmt.tprintf("Background Color Mode: %s", VECTOR_BACKGROUND_MODE_NAMES[settings.background_index]), "primordial_background", &settings.background_index, VECTOR_BACKGROUND_MODE_NAMES[:]) {
@@ -561,22 +568,27 @@ remaining_sim_draw_color_scheme_modal :: proc(gui: ^uifw.Gui_Context, color_edit
 	}
 }
 
-remaining_sim_enqueue_image_command :: proc(worker: ^Product_Context, kind: Ui_To_Render_Command_Kind, path: string = "") {
+remaining_sim_enqueue_image_command :: proc(worker: ^Product_Context, target: Feature_Image_Target, path: string = "", clear := false) {
 	if worker == nil {
 		return
 	}
-	cmd: Ui_To_Render_Command
-	cmd.kind = kind
-	if len(path) > 0 {
-		write_fixed_string(cmd.file_path[:], path)
+	command_id := clear ? FEATURE_COMMAND_CLEAR_IMAGE : FEATURE_COMMAND_LOAD_IMAGE
+	feature_id, slot, found := feature_image_target_location(target)
+	if found {
+		payload: Feature_Image_Command
+		payload.slot = slot
+		write_fixed_string(payload.path[:], path)
+		if feature, ok := feature_command_make(feature_id, command_id, &payload); ok {
+			_ = engine.queue_try_push(worker.ui_to_render, Ui_To_Render_Command{kind = .Feature, feature = feature})
+		}
+		return
 	}
-	_ = engine.queue_try_push(worker.ui_to_render, cmd)
 }
 
 // Polls SDL once per render frame. AcquireCameraFrame returns nil until the
 // camera has a new frame, so this naturally follows the device cadence (30/60
 // fps, etc.) instead of throttling it to a timer.
-remaining_sim_webcam_capture_control :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, worker: ^Product_Context, command: Ui_To_Render_Command_Kind, key: string) {
+remaining_sim_webcam_capture_control :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, worker: ^Product_Context, target: Feature_Image_Target, key: string) {
 	count: c.int
 	ids := sdl.GetCameras(&count)
 	defer if ids != nil {sdl.free(ids)}
@@ -598,7 +610,7 @@ remaining_sim_webcam_capture_control :: proc(sim: ^Remaining_Sim_State, gui: ^ui
 			}
 		}
 		sim.webcam_capture = sdl.OpenCamera(ids[selected], nil)
-		sim.webcam_capture_command = command
+		sim.webcam_capture_target = target
 		sim.webcam_capture_frames = 0
 		write_fixed_string(sim.webcam_capture_status[:], sim.webcam_capture == nil ? "Could not open preferred camera" : "Waiting for camera permission…")
 	}

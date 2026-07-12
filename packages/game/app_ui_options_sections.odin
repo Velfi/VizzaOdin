@@ -1,8 +1,6 @@
 package game
 
 import uifw "../ui"
-import engine "../engine"
-
 import "core:fmt"
 import "core:math"
 import "core:c"

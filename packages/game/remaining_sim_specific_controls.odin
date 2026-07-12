@@ -26,7 +26,7 @@ remaining_sim_draw_moire_menu :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_
 }
 
 remaining_sim_draw_moire_display_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, color_editor: ^Color_Scheme_Editor_State, worker: ^Product_Context = nil) {
-	settings := &sim.moire
+	settings := sim.moire
 	uifw.gui_heading(gui, "Display Settings")
 	_ = color_scheme_editor_draw_selector(gui, color_editor, "moire_color_scheme", &settings.color_scheme, &settings.color_scheme_reversed)
 	_ = uifw.gui_toggle(gui, fmt.tprintf("Image Mode: %v", settings.image_mode_enabled), "image_mode", &settings.image_mode_enabled)
@@ -48,7 +48,7 @@ remaining_sim_draw_moire_display_settings :: proc(sim: ^Remaining_Sim_State, gui
 	image_options.empty_label = fmt.tprintf("No image selected (%s)", IMAGE_FILE_FORMAT_LABEL)
 	image_options.selected_path = fixed_string(settings.image_path[:])
 	image_result := shared_image_selector(gui, &settings.image_fit_index, VECTOR_IMAGE_FIT_MODE_NAMES[:], image_options)
-	remaining_sim_webcam_capture_control(sim, gui, worker, .Load_Moire_Image, "moire_capture_webcam")
+	remaining_sim_webcam_capture_control(sim, gui, worker, .Moire, "moire_capture_webcam")
 	reload_image := false
 	if image_result.fit_changed {
 		settings.image_fit_mode = Vector_Image_Fit_Mode(settings.image_fit_index)
@@ -58,10 +58,10 @@ remaining_sim_draw_moire_display_settings :: proc(sim: ^Remaining_Sim_State, gui
 		sim.moire_image_dialog_requested = true
 	}
 	if image_result.load_requested || reload_image {
-		remaining_sim_enqueue_image_command(worker, .Load_Moire_Image, fixed_string(settings.image_path[:]))
+		remaining_sim_enqueue_image_command(worker, .Moire, fixed_string(settings.image_path[:]))
 	}
 	if image_result.clear_requested {
-		remaining_sim_enqueue_image_command(worker, .Clear_Moire_Image)
+		remaining_sim_enqueue_image_command(worker, .Moire, clear = true)
 	}
 	_ = uifw.gui_toggle(gui, fmt.tprintf("Mirror Horizontal: %v", settings.image_mirror_horizontal), "mirror_h", &settings.image_mirror_horizontal)
 	_ = uifw.gui_toggle(gui, fmt.tprintf("Mirror Vertical: %v", settings.image_mirror_vertical), "mirror_v", &settings.image_mirror_vertical)
@@ -69,13 +69,13 @@ remaining_sim_draw_moire_display_settings :: proc(sim: ^Remaining_Sim_State, gui
 }
 
 remaining_sim_draw_moire_animation :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context) {
-	settings := &sim.moire
+	settings := sim.moire
 	uifw.gui_heading(gui, "Animation")
 	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Speed: %.2f", settings.speed), "moire_speed", &settings.speed, 0.01, 0, 5)
 }
 
 remaining_sim_draw_moire_patterns :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context) {
-	settings := &sim.moire
+	settings := sim.moire
 	uifw.gui_heading(gui, "Moire Patterns")
 	if uifw.gui_selector(gui, fmt.tprintf("Generator Type: %s", MOIRE_GENERATOR_TYPE_NAMES[settings.generator_index]), "generator_type", &settings.generator_index, MOIRE_GENERATOR_TYPE_NAMES[:]) {
 		settings.generator_type = Moire_Generator_Type(settings.generator_index)
@@ -95,7 +95,7 @@ remaining_sim_draw_moire_patterns :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.
 }
 
 remaining_sim_draw_moire_radial :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context) {
-	settings := &sim.moire
+	settings := sim.moire
 	uifw.gui_heading(gui, "Radial Pattern Settings")
 	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Swirl: %.2f", settings.radial_swirl_strength), "radial_swirl", &settings.radial_swirl_strength, 0.01, 0, 1)
 	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Starburst: %.1f", settings.radial_starburst_count), "radial_starburst", &settings.radial_starburst_count, 0.5, 1, 64)
@@ -103,7 +103,7 @@ remaining_sim_draw_moire_radial :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gu
 }
 
 remaining_sim_draw_moire_advection :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context) {
-	settings := &sim.moire
+	settings := sim.moire
 	uifw.gui_heading(gui, "Advection Flow")
 	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Advect Strength: %.2f", settings.advect_strength), "advect_strength", &settings.advect_strength, 0.01, 0, 2)
 	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Advect Speed: %.2f", settings.advect_speed), "advect_speed", &settings.advect_speed, 0.01, 0, 5)
@@ -119,7 +119,7 @@ remaining_sim_draw_vectors_menu :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gu
 }
 
 remaining_sim_draw_vectors_color :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, color_editor: ^Color_Scheme_Editor_State) {
-	settings := &sim.vectors
+	settings := sim.vectors
 	uifw.gui_heading(gui, "Color")
 	if uifw.gui_selector(gui, fmt.tprintf("Background: %s", VECTOR_BACKGROUND_MODE_NAMES[settings.background_index]), "vectors_background", &settings.background_index, VECTOR_BACKGROUND_MODE_NAMES[:]) {
 		settings.background_color_mode = Vector_Background_Mode(settings.background_index)
@@ -128,7 +128,7 @@ remaining_sim_draw_vectors_color :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 }
 
 remaining_sim_draw_vectors_field :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, worker: ^Product_Context = nil) {
-	settings := &sim.vectors
+	settings := sim.vectors
 	uifw.gui_heading(gui, "Vector Field")
 	if uifw.gui_selector(gui, fmt.tprintf("Vector Field: %s", VECTOR_FIELD_TYPE_NAMES[settings.vector_field_index]), "vector_field", &settings.vector_field_index, VECTOR_FIELD_TYPE_NAMES[:]) {
 		settings.vector_field_type = Vector_Field_Type(settings.vector_field_index)
@@ -146,7 +146,7 @@ remaining_sim_draw_vectors_field :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 		image_options.empty_label = fmt.tprintf("No image selected (%s)", IMAGE_FILE_FORMAT_LABEL)
 		image_options.selected_path = fixed_string(settings.image_path[:])
 		image_result := shared_image_selector(gui, &settings.image_fit_index, VECTOR_IMAGE_FIT_MODE_NAMES[:], image_options)
-		remaining_sim_webcam_capture_control(sim, gui, worker, .Load_Vectors_Image, "vectors_capture_webcam")
+		remaining_sim_webcam_capture_control(sim, gui, worker, .Vectors, "vectors_capture_webcam")
 		if image_result.fit_changed {
 			settings.image_fit_mode = Vector_Image_Fit_Mode(settings.image_fit_index)
 		}
@@ -154,10 +154,10 @@ remaining_sim_draw_vectors_field :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 			sim.vectors_image_dialog_requested = true
 		}
 		if image_result.load_requested {
-			remaining_sim_enqueue_image_command(worker, .Load_Vectors_Image, fixed_string(settings.image_path[:]))
+			remaining_sim_enqueue_image_command(worker, .Vectors, fixed_string(settings.image_path[:]))
 		}
 		if image_result.clear_requested {
-			remaining_sim_enqueue_image_command(worker, .Clear_Vectors_Image)
+			remaining_sim_enqueue_image_command(worker, .Vectors, clear = true)
 		}
 		_ = uifw.gui_toggle(gui, fmt.tprintf("Mirror Horizontal: %v", settings.image_mirror_horizontal), "vector_mirror_h", &settings.image_mirror_horizontal)
 		_ = uifw.gui_toggle(gui, fmt.tprintf("Mirror Vertical: %v", settings.image_mirror_vertical), "vector_mirror_v", &settings.image_mirror_vertical)
@@ -183,19 +183,35 @@ remaining_sim_draw_vectors_field :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 }
 
 remaining_sim_draw_primordial_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, subsection := -1) {
-	settings := &sim.primordial
+	settings := sim.primordial
 	if subsection < 0 || subsection == 0 {
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, subsection == 0 ? "Population" : "Particle Configuration")
 	if uifw.gui_selector(gui, fmt.tprintf("Position Generator: %s", PRIMORDIAL_POSITION_GENERATOR_NAMES[settings.position_generator_index]), "primordial_position_generator", &settings.position_generator_index, PRIMORDIAL_POSITION_GENERATOR_NAMES[:]) {
 		settings.position_generator = u32(settings.position_generator_index)
+		primordial_regenerate(sim)
+		uifw.gui_notice(gui, fmt.tprintf("Particles regenerated as %s.", PRIMORDIAL_POSITION_GENERATOR_NAMES[settings.position_generator_index]))
 	}
 	_ = uifw.gui_numeric_u32(gui, "Particle Count", "primordial_particle_count", &settings.particle_count, 100, 500000, 100)
 	_ = uifw.gui_numeric_u32(gui, "Random Seed", "primordial_seed", &settings.random_seed, 0, ~u32(0))
+	if uifw.gui_button(gui, "Regenerate Particles", "primordial_regenerate") {
+		primordial_regenerate(sim)
+		uifw.gui_notice(gui, "Particles regenerated with a new seed. Motion settings stayed unchanged.")
+	}
+	shared_control_explanation(gui, "primordial_generation", "Changing the generator or choosing Regenerate rebuilds the population. The seed makes a layout repeatable.")
 	}
 	if subsection < 0 || subsection == 1 {
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, subsection == 1 ? "Motion" : "Physics Parameters")
+	if uifw.gui_button(gui, "Randomize Motion", "primordial_randomize_motion") {
+		primordial_randomize_settings(sim)
+		uifw.gui_notice(gui, "PPS motion randomized. Restore Previous Motion is available here.")
+	}
+	if sim.primordial_randomize_undo_available && uifw.gui_button(gui, "Restore Previous Motion", "primordial_undo_randomize") {
+		if primordial_undo_randomize_settings(sim) {
+			uifw.gui_notice(gui, "Previous PPS motion restored.")
+		}
+	}
 	_ = shared_two_axis_pad_f32(gui, "Rotation Response", "primordial_rotation", "Alpha", "Beta", &settings.alpha, &settings.beta, -180, 180, -60, 60)
 	shared_control_explanation(gui, "primordial_rotation", "Alpha and Beta are the two rotation-response angles. Together they decide how particles turn around neighbors.")
 	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Velocity: %.2f", settings.velocity), "velocity", &settings.velocity, 0.01, 0.01, 2)
@@ -212,7 +228,7 @@ remaining_sim_draw_primordial_settings :: proc(sim: ^Remaining_Sim_State, gui: ^
 }
 
 remaining_sim_draw_voronoi_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, heading := "Voronoi Parameters") {
-	settings := &sim.voronoi
+	settings := sim.voronoi
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, heading)
 	interaction_help := "Canvas: drag attracts, right-drag repels, Shift-drag plucks and flings, click releases a shockwave, and Ctrl-drag/right-drag paints or erases sites."
@@ -220,6 +236,19 @@ remaining_sim_draw_voronoi_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 		interaction_help = "Canvas: primary attracts, secondary repels, right-stick up + primary plucks, right-stick down + primary/secondary paints or erases, and a trigger tap releases a shockwave."
 	}
 	shared_control_explanation(gui, "voronoi_playground", interaction_help)
+	if uifw.gui_button(gui, "Regenerate Sites", "voronoi_regenerate") {
+		voronoi_regenerate(sim)
+		uifw.gui_notice(gui, "Voronoi sites regenerated with a new seed. Motion settings stayed unchanged.")
+	}
+	if uifw.gui_button(gui, "Randomize Playground", "voronoi_randomize") {
+		voronoi_randomize_settings(sim)
+		uifw.gui_notice(gui, "Voronoi population and motion randomized. Restore Previous Playground is available here.")
+	}
+	if sim.voronoi_randomize_undo_available && uifw.gui_button(gui, "Restore Previous Playground", "voronoi_undo_randomize") {
+		if voronoi_undo_randomize_settings(sim) {
+			uifw.gui_notice(gui, "Previous Voronoi playground restored.")
+		}
+	}
 	_ = uifw.gui_numeric_u32(gui, "Points", "voronoi_points", &settings.point_count, 32, 20000, 100)
 	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Drift: %.2f", settings.drift), "voronoi_drift", &settings.drift, 0.01, 0, 4)
 	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Brownian Speed: %.1f", settings.brownian_speed), "voronoi_brownian_speed", &settings.brownian_speed, 1, 0, 500)
@@ -229,7 +258,7 @@ remaining_sim_draw_voronoi_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 }
 
 remaining_sim_draw_pellets_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, subsection := -1) {
-	settings := &sim.pellets
+	settings := sim.pellets
 	if subsection < 0 || subsection == 0 {
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, "Particle")
@@ -252,7 +281,7 @@ remaining_sim_draw_pellets_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uif
 }
 
 remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, worker: ^Product_Context = nil, subsection := -1) {
-	settings := &sim.flow
+	settings := sim.flow
 	if subsection < 0 || subsection == 0 {
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, "Flow Field")
@@ -280,7 +309,7 @@ remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 		image_options.empty_label = fmt.tprintf("No image selected (%s)", IMAGE_FILE_FORMAT_LABEL)
 		image_options.selected_path = fixed_string(settings.image_path[:])
 		image_result := shared_image_selector(gui, &settings.image_fit_index, VECTOR_IMAGE_FIT_MODE_NAMES[:], image_options)
-		remaining_sim_webcam_capture_control(sim, gui, worker, .Load_Flow_Image, "flow_capture_webcam")
+		remaining_sim_webcam_capture_control(sim, gui, worker, .Flow, "flow_capture_webcam")
 		reload_image := false
 		if image_result.fit_changed {
 			settings.image_fit_mode = Vector_Image_Fit_Mode(settings.image_fit_index)
@@ -302,10 +331,10 @@ remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 			reload_image = true
 		}
 		if reload_image {
-			remaining_sim_enqueue_image_command(worker, .Load_Flow_Image, fixed_string(settings.image_path[:]))
+			remaining_sim_enqueue_image_command(worker, .Flow, fixed_string(settings.image_path[:]))
 		}
 		if image_result.clear_requested {
-			remaining_sim_enqueue_image_command(worker, .Clear_Flow_Image)
+			remaining_sim_enqueue_image_command(worker, .Flow, clear = true)
 		}
 	}
 	}
@@ -337,6 +366,9 @@ remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 	if subsection < 0 || subsection == 2 {
 	uifw.gui_spacer(gui, 8)
 	uifw.gui_heading(gui, "Trails")
+	if uifw.gui_button(gui, "Clear Trails", "flow_clear_trails") {
+		flow_request_clear_trails(sim)
+	}
 	if uifw.gui_selector(gui, fmt.tprintf("Style: %s", FLOW_TRAIL_STYLE_NAMES[settings.trail_style_index]), "flow_trail_style", &settings.trail_style_index, FLOW_TRAIL_STYLE_NAMES[:]) {
 		settings.trail_style = Flow_Trail_Style(settings.trail_style_index)
 	}
@@ -351,7 +383,7 @@ remaining_sim_draw_flow_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.G
 }
 
 remaining_sim_draw_slime_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, worker: ^Product_Context = nil) {
-	settings := &sim.slime
+	settings := sim.slime
 	if uifw.gui_numeric_u32(gui, "Agent Count", "slime_agent_count", &settings.agent_count, SLIME_MIN_AGENT_COUNT, SLIME_MAX_AGENT_COUNT) {
 		slime_request_reset(sim)
 	}
@@ -384,7 +416,7 @@ remaining_sim_draw_slime_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.
 		position_options.empty_label = fmt.tprintf("No position image selected (%s)", IMAGE_FILE_FORMAT_LABEL)
 		position_options.selected_path = fixed_string(settings.position_image_path[:])
 		position_result := shared_image_selector(gui, &settings.position_image_fit_index, VECTOR_IMAGE_FIT_MODE_NAMES[:], position_options)
-		remaining_sim_webcam_capture_control(sim, gui, worker, .Load_Slime_Position_Image, "slime_position_capture_webcam")
+		remaining_sim_webcam_capture_control(sim, gui, worker, .Slime_Position, "slime_position_capture_webcam")
 		reload_position_image := false
 		if position_result.fit_changed {
 			settings.position_image_fit_mode = Vector_Image_Fit_Mode(settings.position_image_fit_index)
@@ -394,10 +426,10 @@ remaining_sim_draw_slime_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.
 			sim.slime_position_image_dialog_requested = true
 		}
 		if position_result.load_requested || reload_position_image {
-			remaining_sim_enqueue_image_command(worker, .Load_Slime_Position_Image, fixed_string(settings.position_image_path[:]))
+			remaining_sim_enqueue_image_command(worker, .Slime_Position, fixed_string(settings.position_image_path[:]))
 		}
 		if position_result.clear_requested {
-			remaining_sim_enqueue_image_command(worker, .Clear_Slime_Position_Image)
+			remaining_sim_enqueue_image_command(worker, .Slime_Position, clear = true)
 		}
 	}
 	_ = uifw.gui_numeric_f32(gui, fmt.tprintf("Jitter: %.2f", settings.agent_jitter), "agent_jitter", &settings.agent_jitter, 0.01, 0, 1)
@@ -432,7 +464,7 @@ remaining_sim_draw_slime_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.
 		mask_options.empty_label = fmt.tprintf("No mask image selected (%s)", IMAGE_FILE_FORMAT_LABEL)
 		mask_options.selected_path = fixed_string(settings.mask_image_path[:])
 		mask_result := shared_image_selector(gui, &settings.mask_image_fit_index, VECTOR_IMAGE_FIT_MODE_NAMES[:], mask_options)
-		remaining_sim_webcam_capture_control(sim, gui, worker, .Load_Slime_Mask_Image, "slime_mask_capture_webcam")
+		remaining_sim_webcam_capture_control(sim, gui, worker, .Slime_Mask, "slime_mask_capture_webcam")
 		reload_mask_image := false
 		if mask_result.fit_changed {
 			settings.mask_image_fit_mode = Vector_Image_Fit_Mode(settings.mask_image_fit_index)
@@ -442,10 +474,10 @@ remaining_sim_draw_slime_settings :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.
 			sim.slime_mask_image_dialog_requested = true
 		}
 		if mask_result.load_requested || reload_mask_image {
-			remaining_sim_enqueue_image_command(worker, .Load_Slime_Mask_Image, fixed_string(settings.mask_image_path[:]))
+			remaining_sim_enqueue_image_command(worker, .Slime_Mask, fixed_string(settings.mask_image_path[:]))
 		}
 		if mask_result.clear_requested {
-			remaining_sim_enqueue_image_command(worker, .Clear_Slime_Mask_Image)
+			remaining_sim_enqueue_image_command(worker, .Slime_Mask, clear = true)
 		}
 	}
 	_ = uifw.gui_toggle(gui, fmt.tprintf("Mirror Horizontal: %v", settings.mask_mirror_horizontal), "slime_mask_mirror_h", &settings.mask_mirror_horizontal)

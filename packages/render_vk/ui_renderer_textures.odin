@@ -85,7 +85,7 @@ ui_renderer_ensure_backdrop_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Con
 	return true
 }
 
-ui_renderer_create_backdrop_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, index: int, width, height: u32, framebuffer: bool) -> bool {
+ui_renderer_create_backdrop_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context, index: int, width, height: u32, render_target: bool) -> bool {
 	texture := &renderer.textures[index]
 	image_info := vk.ImageCreateInfo {
 		sType = .IMAGE_CREATE_INFO,
@@ -96,7 +96,7 @@ ui_renderer_create_backdrop_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Con
 		arrayLayers = 1,
 		samples = {._1},
 		tiling = .OPTIMAL,
-		usage = framebuffer ? vk.ImageUsageFlags{.COLOR_ATTACHMENT, .SAMPLED} : vk.ImageUsageFlags{.TRANSFER_DST, .SAMPLED},
+		usage = render_target ? vk.ImageUsageFlags{.COLOR_ATTACHMENT, .SAMPLED} : vk.ImageUsageFlags{.TRANSFER_DST, .SAMPLED},
 		sharingMode = .EXCLUSIVE,
 		initialLayout = .UNDEFINED,
 	}
@@ -148,22 +148,6 @@ ui_renderer_create_backdrop_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Con
 		return false
 	}
 
-	if framebuffer {
-		fb_info := vk.FramebufferCreateInfo {
-			sType = .FRAMEBUFFER_CREATE_INFO,
-			renderPass = renderer.backdrop_render_pass,
-			attachmentCount = 1,
-			pAttachments = &texture.view,
-			width = width,
-			height = height,
-			layers = 1,
-		}
-		if vk.CreateFramebuffer(ctx.device, &fb_info, nil, &texture.framebuffer) != .SUCCESS {
-			log_error("ui_renderer_create_backdrop_texture: framebuffer creation failed index=", index)
-			ui_renderer_destroy_texture(ctx, texture)
-			return false
-		}
-	}
 
 	sampler_info := vk.SamplerCreateInfo {sType = .SAMPLER_CREATE_INFO}
 	sampler_info.magFilter = .LINEAR
@@ -293,9 +277,6 @@ ui_renderer_descriptor_texture :: proc(renderer: ^Ui_Renderer, index: int) -> ^U
 
 ui_renderer_destroy_texture :: proc(ctx: ^Vk_Context, texture: ^Ui_Texture) {
 	if texture.owned {
-		if texture.framebuffer != vk.Framebuffer(0) {
-			vk.DestroyFramebuffer(ctx.device, texture.framebuffer, nil)
-		}
 		if texture.sampler != vk.Sampler(0) {
 			vk.DestroySampler(ctx.device, texture.sampler, nil)
 		}
@@ -328,8 +309,8 @@ ui_renderer_upload_texture :: proc(ctx: ^Vk_Context, image: vk.Image, width, hei
 		baseArrayLayer = 0,
 		layerCount = 1,
 	}
-	to_transfer := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_transfer := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = {},
 		dstAccessMask = {.TRANSFER_WRITE},
 		oldLayout = .UNDEFINED,
@@ -339,7 +320,7 @@ ui_renderer_upload_texture :: proc(ctx: ^Vk_Context, image: vk.Image, width, hei
 		image = image,
 		subresourceRange = range,
 	}
-	vk.CmdPipelineBarrier(command_buffer, {.TOP_OF_PIPE}, {.TRANSFER}, {}, 0, nil, 0, nil, 1, &to_transfer)
+	engine.vk_cmd_pipeline_barrier2(command_buffer, {.TOP_OF_PIPE}, {.TRANSFER}, {}, 0, nil, 0, nil, 1, &to_transfer)
 
 	region := vk.BufferImageCopy {
 		bufferOffset = 0,
@@ -356,8 +337,8 @@ ui_renderer_upload_texture :: proc(ctx: ^Vk_Context, image: vk.Image, width, hei
 	}
 	vk.CmdCopyBufferToImage(command_buffer, staging, image, .TRANSFER_DST_OPTIMAL, 1, &region)
 
-	to_shader := vk.ImageMemoryBarrier {
-		sType = .IMAGE_MEMORY_BARRIER,
+	to_shader := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcAccessMask = {.TRANSFER_WRITE},
 		dstAccessMask = {.SHADER_READ},
 		oldLayout = .TRANSFER_DST_OPTIMAL,
@@ -367,7 +348,7 @@ ui_renderer_upload_texture :: proc(ctx: ^Vk_Context, image: vk.Image, width, hei
 		image = image,
 		subresourceRange = range,
 	}
-	vk.CmdPipelineBarrier(command_buffer, {.TRANSFER}, {.FRAGMENT_SHADER}, {}, 0, nil, 0, nil, 1, &to_shader)
+	engine.vk_cmd_pipeline_barrier2(command_buffer, {.TRANSFER}, {.FRAGMENT_SHADER}, {}, 0, nil, 0, nil, 1, &to_shader)
 
 	return vk_submit_upload_commands(ctx)
 }

@@ -544,7 +544,7 @@ particle_life_note_trail_camera :: proc(sim: ^Particle_Life_Simulation) {
 		math.abs(sim.runtime.camera_y - sim.runtime.trail_camera_y) > epsilon ||
 		math.abs(zoom - sim.runtime.trail_camera_zoom) > epsilon
 	if camera_changed {
-		sim.gpu.trail_initialized = false
+		sim.runtime.trail_reset_requested = true
 		sim.runtime.trail_camera_x = sim.runtime.camera_x
 		sim.runtime.trail_camera_y = sim.runtime.camera_y
 		sim.runtime.trail_camera_zoom = zoom
@@ -604,14 +604,9 @@ particle_life_clear_preserved_particles :: proc(sim: ^Particle_Life_Simulation) 
 }
 
 particle_life_request_resource_rebuild :: proc(sim: ^Particle_Life_Simulation) {
-	if !sim.runtime.needs_reset && sim.gpu.particle_buffer.mapped != nil && sim.gpu.uploaded_particle_count > 0 && sim.gpu.uploaded_particle_count == particle_life_target_particle_count(sim.settings) && sim.gpu.uploaded_species_count == particle_life_target_species_count(sim.settings) {
-		particle_life_clear_preserved_particles(sim)
-		count := int(sim.gpu.uploaded_particle_count)
-		sim.runtime.preserved_particles = make([]Particle_Life_Particle, count)
-		particles := (cast([^]Particle_Life_Particle)sim.gpu.particle_buffer.mapped)[:count]
-		copy(sim.runtime.preserved_particles, particles)
-	}
-	sim.gpu.ready = false
+	sim.runtime.preserve_particles_requested = !sim.runtime.needs_reset
+	sim.runtime.render_rebuild_requested = true
+	sim.runtime.render_ready = false
 }
 
 particle_life_reset_camera :: proc(sim: ^Particle_Life_Simulation) {

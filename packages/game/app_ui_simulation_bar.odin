@@ -6,10 +6,10 @@ import engine "../engine"
 import "core:fmt"
 import "core:math"
 
-app_ui_draw_simulation_bar :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, mode: App_Mode, gray_scott: ^Gray_Scott_Simulation, particle_life: ^Particle_Life_Simulation, remaining: ^Remaining_Sim_State, paused, loading: bool, simulation_name: string, vk_ctx: ^engine.Vk_Context, width: f32, worker: ^Product_Context) {
+app_ui_draw_simulation_bar :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, mode: App_Mode, gray_scott: ^Gray_Scott_Simulation, particle_life: ^Particle_Life_Simulation, remaining: ^Remaining_Sim_State, paused, loading: bool, simulation_name: string, viewport: uifw.Vec2, width: f32, worker: ^Product_Context) {
 	height := f32(gui.input.window_height)
-	if vk_ctx != nil && vk_ctx.swapchain_extent.height > 0 {
-		height = f32(vk_ctx.swapchain_extent.height)
+	if viewport.y > 0 {
+		height = viewport.y
 	}
 	if height <= 0 {height = f32(720)}
 	bar := app_ui_simulation_chrome_rect(ui, gui, mode, width, height)
@@ -77,7 +77,7 @@ app_ui_draw_simulation_bar :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, mo
 		app_ui_open_controls_help(ui, gui)
 	}
 	if uifw.gui_button_at(gui, uifw.gui_make_id(gui, "pause"), pause_rect, pause_label, true, false) {
-		app_ui_simulation_set_paused(mode, gray_scott, particle_life, remaining, !paused)
+		app_ui_simulation_set_paused(ui, mode, !paused)
 	}
 	if paused {
 		uifw.gui_round_stroke(gui, pause_rect, gui.style.radius_control, uifw.gui_apply_opacity(gui.style.accent, 0.62), max(gui.style.border_width * 1.5, 1.5))
@@ -233,31 +233,13 @@ app_ui_video_recording_apply_command_state :: proc(ui: ^App_Ui_State, state: Vid
 	write_fixed_string(ui.video_recording_status[:], text)
 }
 
-app_ui_simulation_set_paused :: proc(mode: App_Mode, gray_scott: ^Gray_Scott_Simulation, particle_life: ^Particle_Life_Simulation, remaining: ^Remaining_Sim_State, paused: bool) {
-	#partial switch mode {
-	case .Gray_Scott:
-		if gray_scott != nil {
-			gray_scott.settings.paused = paused
-		}
-	case .Particle_Life:
-		if particle_life != nil {
-			particle_life.settings.paused = paused
-		}
-	case .Slime_Mold, .Flow_Field, .Pellets, .Voronoi_CA, .Moire, .Vectors, .Primordial:
-		if remaining != nil {
-			remaining.paused = paused
-		}
-	case:
-	}
+app_ui_simulation_set_paused :: proc(ui: ^App_Ui_State, mode: App_Mode, paused: bool) {
+	if ui != nil do _ = feature_instance_set_set_paused(&ui.feature_instances, mode, paused)
 }
 
 app_ui_mode_is_simulation :: proc(mode: App_Mode) -> bool {
-	#partial switch mode {
-	case .Slime_Mold, .Gray_Scott, .Particle_Life, .Flow_Field, .Pellets, .Gradient_Editor, .Voronoi_CA, .Moire, .Vectors, .Primordial:
-		return true
-	case:
-		return false
-	}
+	descriptor, ok := feature_descriptor_by_mode(mode)
+	return ok && feature_has_capability(descriptor, .Simulation)
 }
 
 app_mode_from_remaining_sim_kind :: proc(kind: Remaining_Sim_Kind) -> App_Mode {

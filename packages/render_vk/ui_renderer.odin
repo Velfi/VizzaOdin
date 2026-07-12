@@ -143,7 +143,6 @@ Ui_Texture :: struct {
 	image: vk.Image,
 	memory: vk.DeviceMemory,
 	view: vk.ImageView,
-	framebuffer: vk.Framebuffer,
 	sampler: vk.Sampler,
 	descriptor_set: vk.DescriptorSet,
 	width: u32,
@@ -169,7 +168,6 @@ Ui_Renderer :: struct {
 	backdrop_width: u32,
 	backdrop_height: u32,
 	backdrop_layouts: [UI_MAX_TEXTURES]vk.ImageLayout,
-	backdrop_render_pass: vk.RenderPass,
 	backdrop_blur_pipeline: Vk_Graphics_Pipeline,
 	glass_pipeline: Vk_Graphics_Pipeline,
 	backdrop_vertex_buffers: [MAX_FRAMES_IN_FLIGHT]Vk_Buffer,
@@ -204,11 +202,6 @@ ui_renderer_init :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) -> bool {
 			return false
 		}
 	}
-	if !ui_renderer_create_backdrop_render_pass(renderer, ctx) {
-		log_error("ui_renderer_init: backdrop blur render pass creation failed")
-		ui_renderer_destroy(renderer, ctx)
-		return false
-	}
 	if !ui_renderer_create_blur_pipeline(renderer, ctx, &renderer.backdrop_blur_pipeline) {
 		log_error("ui_renderer_init: backdrop blur pipeline creation failed")
 		ui_renderer_destroy(renderer, ctx)
@@ -240,9 +233,6 @@ ui_renderer_destroy :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) {
 	}
 	vk_destroy_graphics_pipeline(ctx, &renderer.glass_pipeline)
 	vk_destroy_graphics_pipeline(ctx, &renderer.backdrop_blur_pipeline)
-	if renderer.backdrop_render_pass != vk.RenderPass(0) {
-		vk.DestroyRenderPass(ctx.device, renderer.backdrop_render_pass, nil)
-	}
 	for i in 0 ..< len(renderer.textures) {
 		ui_renderer_destroy_texture(ctx, &renderer.textures[i])
 	}
@@ -326,36 +316,6 @@ ui_renderer_create_texture_resources :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Co
 	_ = ui_renderer_create_controller_icon_atlas_texture(renderer, ctx)
 	_ = ui_renderer_create_kenney_input_atlas_texture(renderer, ctx)
 	return true
-}
-
-ui_renderer_create_backdrop_render_pass :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) -> bool {
-	attachment := vk.AttachmentDescription {
-		format = ctx.swapchain_format,
-		samples = {._1},
-		loadOp = .CLEAR,
-		storeOp = .STORE,
-		stencilLoadOp = .DONT_CARE,
-		stencilStoreOp = .DONT_CARE,
-		initialLayout = .COLOR_ATTACHMENT_OPTIMAL,
-		finalLayout = .COLOR_ATTACHMENT_OPTIMAL,
-	}
-	color_ref := vk.AttachmentReference {
-		attachment = 0,
-		layout = .COLOR_ATTACHMENT_OPTIMAL,
-	}
-	subpass := vk.SubpassDescription {
-		pipelineBindPoint = .GRAPHICS,
-		colorAttachmentCount = 1,
-		pColorAttachments = &color_ref,
-	}
-	info := vk.RenderPassCreateInfo {
-		sType = .RENDER_PASS_CREATE_INFO,
-		attachmentCount = 1,
-		pAttachments = &attachment,
-		subpassCount = 1,
-		pSubpasses = &subpass,
-	}
-	return vk.CreateRenderPass(ctx.device, &info, nil, &renderer.backdrop_render_pass) == .SUCCESS
 }
 
 ui_renderer_create_example_screenshot_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) -> bool {

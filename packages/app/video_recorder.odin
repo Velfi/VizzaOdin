@@ -490,8 +490,15 @@ video_recorder_capture_release :: proc(data: rawptr, index: int) {
 	video_recorder_release_frame(cast(^Video_Recorder_State)data, index)
 }
 
-video_recorder_capture_submit :: proc(data: rawptr, index: int, pixels: []u8, width, height: u32, format: vk.Format) -> bool {
-	return video_recorder_submit_reserved_frame(cast(^Video_Recorder_State)data, index, pixels, width, height, format)
+video_recorder_capture_submit :: proc(data: rawptr, index: int, pixels: []u8, width, height: u32, format: Capture_Pixel_Format) -> bool {
+	vk_format: vk.Format
+	switch format {
+	case .RGBA8_UNorm: vk_format = .R8G8B8A8_UNORM
+	case .BGRA8_UNorm: vk_format = .B8G8R8A8_UNORM
+	case .RGBA8_SRGB: vk_format = .R8G8B8A8_SRGB
+	case .BGRA8_SRGB: vk_format = .B8G8R8A8_SRGB
+	}
+	return video_recorder_submit_reserved_frame(cast(^Video_Recorder_State)data, index, pixels, width, height, vk_format)
 }
 
 video_recorder_capture_fail :: proc(data: rawptr, text: string) {

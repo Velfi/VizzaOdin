@@ -49,6 +49,7 @@ struct PhysicsParams {
     uint density_damping_enabled;
     float overlap_resolution_strength;
     uint frame_index;
+    uint coloring_mode;
 };
 
 struct GridParams {
@@ -63,23 +64,19 @@ struct GridParams {
     uint _pad2;
 };
 
-struct GridCell {
-
-    uint particle_count;
-    uint[64] particle_indices;
-};
-
 [[vk::binding(0, 0)]]
 RWStructuredBuffer<Particle> particles;
 [[vk::binding(1, 0)]]
 ConstantBuffer<PhysicsParams> params;
 [[vk::binding(2, 0)]]
-StructuredBuffer<GridCell> grid;
+StructuredBuffer<uint> particle_indices;
 [[vk::binding(3, 0)]]
 ConstantBuffer<GridParams> grid_params;
 // Atomic per-cell particle counts for deterministic neighbor iteration
 [[vk::binding(4, 0)]]
 StructuredBuffer<uint> grid_counts;
+[[vk::binding(5, 0)]]
+StructuredBuffer<uint> grid_offsets;
 
 // Convert world position to grid coordinates
 uint2 world_to_grid(float2 pos) {
@@ -199,6 +196,7 @@ void main(uint3 global_id : SV_DispatchThreadID) {
     // Density-based velocity damping only if enabled, using grid neighbors
     if (params.density_damping_enabled != 0) {
         var nearby_count = 0;
+        var nearby_velocity = float2(0.0, 0.0);
         let center_cell = world_to_grid(particle.position);
         let particle_radius = params.particle_size;
         let nearby_radius_sq = particle_radius * particle_radius * 4.0;
@@ -208,21 +206,30 @@ void main(uint3 global_id : SV_DispatchThreadID) {
                 let cy = (int(center_cell.y) + dy + int(grid_params.grid_height)) % int(grid_params.grid_height);
                 let cell_index = grid_coord_to_index(uint2(uint(cx), uint(cy)));
                 let count = grid_counts[cell_index];
-                for (var k = 0; k < min(count, 64); k++) {
-                    let j = grid[cell_index].particle_indices[k];
+                let start = grid_offsets[cell_index];
+                for (var k = 0; k < count; k++) {
+                    let j = particle_indices[start + k];
                     if (j == index) { continue; }
                     let other = particles[j];
                     var delta = other.position - particle.position;
                     if (abs(delta.x) > 1.0) { delta.x = delta.x - sign(delta.x) * 2.0; }
                     if (abs(delta.y) > 1.0) { delta.y = delta.y - sign(delta.y) * 2.0; }
                     let distance_sq = dot(delta, delta);
-                    if (distance_sq < nearby_radius_sq) { nearby_count += 1; }
+                    if (distance_sq < nearby_radius_sq) {
+                        nearby_count += 1;
+                        nearby_velocity += other.velocity;
+                    }
                 }
             }
         }
         let density_factor = min(float(nearby_count) / 10.0, 1.0);
         let velocity_damping = 1.0 - density_factor * 0.1;
-        particle.velocity *= velocity_damping;
+        if (nearby_count > 0) {
+            // Damp only motion relative to the local group. Scaling absolute
+            // velocity here removes coherent bulk momentum from dense clumps.
+            let local_velocity = (particle.velocity + nearby_velocity) / float(nearby_count + 1);
+            particle.velocity = local_velocity + (particle.velocity - local_velocity) * velocity_damping;
+        }
     }
     
     // Overlap resolution
@@ -250,6 +257,14 @@ void main(uint3 global_id : SV_DispatchThreadID) {
         particle.velocity = normalize(particle.velocity) * max_velocity;
     }
     
+    // Velocity and random coloring need no neighbor pass. Update them here so
+    // the standalone density dispatch is only required for density coloring.
+    if (params.coloring_mode == 1) {
+        particle.density = length(particle.velocity) * 4.0;
+    } else if (params.coloring_mode == 2) {
+        let seed = float(index) * 0.1234;
+        particle.density = frac(sin(seed) * 43758.5453) * 255.0;
+    }
     particles[index] = particle;
 }
 
@@ -284,8 +299,9 @@ float2 compute_gravity_grid(Particle particle, uint particle_index) {
             let cy = (int(center_cell.y) + dy + int(grid_params.grid_height)) % int(grid_params.grid_height);
             let cell_index = grid_coord_to_index(uint2(uint(cx), uint(cy)));
             let count = grid_counts[cell_index];
-            for (var k = 0; k < min(count, 64); k++) {
-                let neighbor_index = grid[cell_index].particle_indices[k];
+            let start = grid_offsets[cell_index];
+            for (var k = 0; k < count; k++) {
+                let neighbor_index = particle_indices[start + k];
                 if (neighbor_index == particle_index) { continue; }
                 let other = particles[neighbor_index];
                 var delta = other.position - particle.position;
@@ -359,8 +375,9 @@ float2 compute_collision_forces_grid(Particle particle, uint particle_index) {
             let cy = (int(center_cell.y) + dy + int(grid_params.grid_height)) % int(grid_params.grid_height);
             let cell_index = grid_coord_to_index(uint2(uint(cx), uint(cy)));
             let count = grid_counts[cell_index];
-            for (var k = 0; k < min(count, 64); k++) {
-                let j = grid[cell_index].particle_indices[k];
+            let start = grid_offsets[cell_index];
+            for (var k = 0; k < count; k++) {
+                let j = particle_indices[start + k];
                 if (j == particle_index) { continue; }
                 let other = particles[j];
                 var delta = other.position - particle.position;
@@ -443,8 +460,9 @@ void resolve_collisions(inout Particle particle, uint particle_index) {
                 let cy = (int(center_cell.y) + dy + int(grid_params.grid_height)) % int(grid_params.grid_height);
                 let cell_index = grid_coord_to_index(uint2(uint(cx), uint(cy)));
                 let count = grid_counts[cell_index];
-                for (var k = 0; k < min(count, 64); k++) {
-                    let i = grid[cell_index].particle_indices[k];
+                let start = grid_offsets[cell_index];
+                for (var k = 0; k < count; k++) {
+                    let i = particle_indices[start + k];
                     if (i == particle_index) { continue; }
                     let other = particles[i];
                     var delta = particle.position - other.position;

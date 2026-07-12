@@ -5,30 +5,8 @@ import sdl "vendor:sdl3"
 
 import "core:c"
 
-simulation_leave_cleanup :: proc(app_ui: ^App_Ui_State, gray_scott: ^Gray_Scott_Simulation, particle_life: ^Particle_Life_Simulation, mode: App_Mode) {
-	state: ^Remaining_Sim_State
-	if app_ui != nil {
-		#partial switch mode {
-		case .Vectors: state = &app_ui.vectors
-		case .Moire: state = &app_ui.moire
-		case .Flow_Field: state = &app_ui.flow_field
-		case .Slime_Mold: state = &app_ui.slime_mold
-		case .Pellets: state = &app_ui.pellets
-		case .Voronoi_CA: state = &app_ui.voronoi_ca
-		case .Primordial: state = &app_ui.primordial
-		case:
-		}
-	}
-	app_ui_simulation_set_paused(mode, gray_scott, particle_life, state, true)
-	if mode == .Gray_Scott {
-		if gray_scott != nil {gray_scott_stop_webcam(gray_scott)}
-		return
-	}
-	if state != nil && state.webcam_capture != nil {
-		sdl.CloseCamera(state.webcam_capture)
-		state.webcam_capture = nil
-		write_fixed_string(state.webcam_capture_status[:], "Webcam stopped")
-	}
+simulation_leave_cleanup :: proc(app_ui: ^App_Ui_State, mode: App_Mode) {
+	if app_ui != nil do _ = feature_instance_set_leave(&app_ui.feature_instances, mode)
 }
 
 // Shared latest-frame capture/transform path for every image consumer. SDL
@@ -135,9 +113,9 @@ webcam_update_remaining :: proc(state: ^Remaining_Sim_State, mode: App_Mode, ctx
 		defer sdl.ReleaseCameraFrame(state.webcam_capture, frame)
 		ok := false
 		#partial switch mode {
-		case .Flow_Field: ok = webcam_update_flow(flow, ctx, frame, &state.flow)
-		case .Slime_Mold: ok = webcam_update_slime(slime, ctx, frame, &state.slime, state.webcam_capture_command == .Load_Slime_Position_Image)
-		case .Vectors: ok = webcam_update_vectors(vectors, ctx, frame, &state.vectors)
+		case .Flow_Field: ok = webcam_update_flow(flow, ctx, frame, state.flow)
+		case .Slime_Mold: ok = webcam_update_slime(slime, ctx, frame, state.slime, state.webcam_capture_target == .Slime_Position)
+		case .Vectors: ok = webcam_update_vectors(vectors, ctx, frame, state.vectors)
 		}
 		if ok {
 			state.webcam_capture_frames += 1
@@ -150,9 +128,9 @@ webcam_update_remaining :: proc(state: ^Remaining_Sim_State, mode: App_Mode, ctx
 	defer sdl.DestroySurface(frame)
 	ok := false
 	#partial switch mode {
-	case .Vectors: ok = webcam_update_vectors(vectors, ctx, frame, &state.vectors)
-	case .Moire: ok = webcam_update_moire(moire, ctx, frame, &state.moire)
-	case .Flow_Field: ok = webcam_update_flow(flow, ctx, frame, &state.flow)
+	case .Vectors: ok = webcam_update_vectors(vectors, ctx, frame, state.vectors)
+	case .Moire: ok = webcam_update_moire(moire, ctx, frame, state.moire)
+	case .Flow_Field: ok = webcam_update_flow(flow, ctx, frame, state.flow)
 	case:
 	}
 	if ok {state.webcam_capture_frames += 1; write_fixed_string(state.webcam_capture_status[:], "Webcam live")}

@@ -137,6 +137,33 @@ test_numeric_context_hint_explains_device_specific_magnitude_controls :: proc(t:
 	testing.expect(t, !ctx.tooltip_from_hover)
 	testing.expect(t, ctx.tooltip_numeric_controls)
 	testing.expect_value(t, ctx.tooltip_text, "D-pad adjusts. Press Secondary to cycle the step: 0.01x, 0.1x, 1x, 10x, or 100x. Accept commits; Back cancels.")
+	// There is no room above this top-row control, so its legend sits below it.
+	testing.expect(t, ctx.tooltip_rect.y >= 72)
+}
+
+@(test)
+test_numeric_context_hint_anchors_above_field_instead_of_at_pointer :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+	value := f32(50)
+	id := uifw.gui_make_id(&ctx, "positioned_hint")
+	ctx.focused = id
+	ctx.focus_edit_id = id
+
+	uifw.gui_begin_frame(&ctx, {
+		window_width = 1280,
+		window_height = 720,
+		mouse_pos = {900, 330},
+	})
+	uifw.gui_layout_begin(&ctx, {640, 360, 560, 60}, .Column, 0, 44)
+	_ = uifw.gui_numeric_f32(&ctx, "Value: 50", "positioned_hint", &value, 1, 0, 100)
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+
+	testing.expect(t, ctx.tooltip_visible)
+	testing.expect(t, ctx.tooltip_rect.x <= 640)
+	testing.expect(t, ctx.tooltip_rect.y + ctx.tooltip_rect.h <= 360)
 }
 
 @(test)
@@ -221,7 +248,8 @@ test_numeric_u32_preserves_values_above_f32_exact_integer_range :: proc(t: ^test
 @(test)
 test_randomize_operations_can_restore_previous_settings :: proc(t: ^testing.T) {
 	gray: game.Gray_Scott_Simulation
-	game.gray_scott_init(&gray, 320, 240)
+	gray_storage: Test_Gray_Scott_Product_Storage
+	test_gray_scott_init(&gray, &gray_storage, 320, 240)
 	gray_feed := gray.settings.feed
 	game.gray_scott_randomize_settings(&gray)
 	testing.expect(t, gray.runtime.randomize_undo_available)
@@ -232,7 +260,8 @@ test_randomize_operations_can_restore_previous_settings :: proc(t: ^testing.T) {
 	testing.expect_value(t, gray.settings.stability_factor, f32(0.37))
 
 	particle: game.Particle_Life_Simulation
-	game.particle_life_init(&particle, 320, 240)
+	particle_storage: Test_Particle_Life_Product_Storage
+	test_particle_life_init(&particle, &particle_storage, 320, 240)
 	particle_force := particle.runtime.force_matrix[0]
 	game.particle_life_randomize_forces(&particle)
 	testing.expect(t, particle.runtime.force_randomize_undo_available)
@@ -240,7 +269,8 @@ test_randomize_operations_can_restore_previous_settings :: proc(t: ^testing.T) {
 	testing.expect_value(t, particle.runtime.force_matrix[0], particle_force)
 
 	slime: game.Remaining_Sim_State
-	game.remaining_sim_init(&slime)
+	slime_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&slime, &slime_storage)
 	turn_rate := slime.slime.agent_turn_rate
 	game.slime_randomize_settings(&slime)
 	testing.expect(t, slime.slime_randomize_undo_available)
@@ -249,12 +279,66 @@ test_randomize_operations_can_restore_previous_settings :: proc(t: ^testing.T) {
 	testing.expect_value(t, slime.slime.agent_turn_rate, turn_rate)
 	testing.expect_value(t, slime.slime.mask_strength, f32(0.83))
 
-	slime.moire.curl = 1.73
+	primordial: game.Remaining_Sim_State
+	primordial_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&primordial, &primordial_storage)
+	primordial_before := primordial.primordial^
+	game.primordial_randomize_settings(&primordial)
+	testing.expect(t, primordial.primordial_randomize_undo_available)
+	testing.expect(t, primordial.primordial.alpha != primordial_before.alpha || primordial.primordial.beta != primordial_before.beta)
+	testing.expect(t, game.primordial_undo_randomize_settings(&primordial))
+	testing.expect_value(t, primordial.primordial.alpha, primordial_before.alpha)
+	testing.expect_value(t, primordial.primordial.beta, primordial_before.beta)
+	testing.expect_value(t, primordial.primordial.velocity, primordial_before.velocity)
+	testing.expect_value(t, primordial.primordial.radius, primordial_before.radius)
+	testing.expect_value(t, primordial.primordial.random_seed, primordial_before.random_seed)
+
+	voronoi: game.Remaining_Sim_State
+	voronoi_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&voronoi, &voronoi_storage)
+	voronoi_before := voronoi.voronoi^
+	game.voronoi_randomize_settings(&voronoi)
+	testing.expect(t, voronoi.voronoi_randomize_undo_available)
+	testing.expect(t, voronoi.voronoi.point_count != voronoi_before.point_count || voronoi.voronoi.drift != voronoi_before.drift)
+	testing.expect(t, game.voronoi_undo_randomize_settings(&voronoi))
+	testing.expect_value(t, voronoi.voronoi.point_count, voronoi_before.point_count)
+	testing.expect_value(t, voronoi.voronoi.time_scale, voronoi_before.time_scale)
+	testing.expect_value(t, voronoi.voronoi.drift, voronoi_before.drift)
+	testing.expect_value(t, voronoi.voronoi.brownian_speed, voronoi_before.brownian_speed)
+	testing.expect_value(t, voronoi.voronoi.random_seed, voronoi_before.random_seed)
+
+	slime.slime.agent_turn_rate = 1.73
 	game.remaining_sim_reset_with_undo(&slime)
 	testing.expect(t, slime.reset_undo.available)
-	testing.expect(t, slime.moire.curl != 1.73)
+	testing.expect(t, slime.slime.agent_turn_rate != 1.73)
 	testing.expect(t, game.remaining_sim_undo_reset(&slime))
-	testing.expect_value(t, slime.moire.curl, f32(1.73))
+	testing.expect_value(t, slime.slime.agent_turn_rate, f32(1.73))
+}
+
+@(test)
+test_primordial_regenerate_changes_only_generation_seed :: proc(t: ^testing.T) {
+	sim: game.Remaining_Sim_State
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
+	before := sim.primordial^
+	game.primordial_regenerate(&sim)
+	testing.expect(t, sim.primordial.random_seed != before.random_seed)
+	testing.expect_value(t, sim.primordial.position_generator, before.position_generator)
+	testing.expect_value(t, sim.primordial.alpha, before.alpha)
+	testing.expect_value(t, sim.primordial.beta, before.beta)
+}
+
+@(test)
+test_voronoi_regenerate_changes_only_site_seed :: proc(t: ^testing.T) {
+	sim: game.Remaining_Sim_State
+	sim_storage: Test_Remaining_Sim_Product_Storage
+	test_remaining_sim_init(&sim, &sim_storage)
+	before := sim.voronoi^
+	game.voronoi_regenerate(&sim)
+	testing.expect(t, sim.voronoi.random_seed != before.random_seed)
+	testing.expect_value(t, sim.voronoi.point_count, before.point_count)
+	testing.expect_value(t, sim.voronoi.drift, before.drift)
+	testing.expect_value(t, sim.voronoi.brownian_speed, before.brownian_speed)
 }
 
 @(test)

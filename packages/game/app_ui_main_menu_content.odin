@@ -1,14 +1,11 @@
 package game
 
 import uifw "../ui"
-import engine "../engine"
-
 import "core:fmt"
-import "core:math"
 
-app_ui_draw_particle_life :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, worker: ^Product_Context) {
-	width := f32(vk_ctx.swapchain_extent.width)
-	height := f32(vk_ctx.swapchain_extent.height)
+app_ui_draw_particle_life :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Particle_Life_Simulation, viewport: uifw.Vec2, worker: ^Product_Context) {
+	width := viewport.x
+	height := viewport.y
 	pause_consumed := simulation_controller_ui_update_input(ui, gui)
 	if gui.input.pause && !pause_consumed {
 		sim.settings.paused = !sim.settings.paused
@@ -22,10 +19,10 @@ app_ui_draw_particle_life :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim
 		tool_set := canvas_tool_set_for_mode(.Particle_Life)
 		tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
 		name := fmt.tprintf("Particle Life · %s — Primary: %s · Secondary: %s", tool.name, tool.primary_label, tool.secondary_label)
-		app_ui_draw_simulation_bar(ui, gui, .Particle_Life, nil, sim, nil, sim.settings.paused, !sim.gpu.ready, name, vk_ctx, width, worker)
+		app_ui_draw_simulation_bar(ui, gui, .Particle_Life, nil, sim, nil, sim.settings.paused, !sim.runtime.render_ready, name, viewport, width, worker)
 	}
 	simulation_controller_ui_draw(ui, gui, particle = sim, width = width, height = height, worker = worker)
-	app_ui_draw_loading_overlay(gui, width, height, !sim.gpu.ready)
+	app_ui_draw_loading_overlay(gui, width, height, !sim.runtime.render_ready)
 }
 
 app_ui_mode_for_simulation_index :: proc(index: int) -> App_Mode {
@@ -277,12 +274,8 @@ app_ui_draw_main_menu_detail :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, 
 }
 
 app_ui_live_preview_supported :: proc(mode: App_Mode) -> bool {
-	#partial switch mode {
-	case .Slime_Mold, .Gray_Scott, .Particle_Life, .Flow_Field, .Pellets, .Voronoi_CA, .Moire, .Vectors, .Primordial:
-		return true
-	case:
-		return false
-	}
+	descriptor, ok := feature_descriptor_by_mode(mode)
+	return ok && feature_has_capability(descriptor, .Live_Preview)
 }
 
 app_ui_draw_live_simulation_preview :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, rect, clip_rect: uifw.Rect, mode: App_Mode, fallback_color: uifw.Color, seed: f32) {
@@ -318,96 +311,12 @@ app_ui_draw_lut_gradient_preview :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Conte
 }
 
 app_ui_draw_simulation_preview :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, rect: uifw.Rect, mode: App_Mode, seed: f32) {
-	if rect.w <= 0 || rect.h <= 0 {
+	_ = seed
+	if rect.w <= 0 || rect.h <= 0 do return
+	if mode == .Gradient_Editor {
+		app_ui_draw_lut_gradient_preview(ui, gui, rect)
 		return
 	}
-	uifw.gui_round_rect(gui, rect, gui.style.radius_control, {0.015, 0.018, 0.026, 0.96})
+	uifw.gui_round_rect(gui, rect, gui.style.radius_control, {0.08, 0.08, 0.10, 1})
 	uifw.gui_round_stroke(gui, rect, gui.style.radius_control, gui.style.panel_border, gui.style.border_width)
-	clip := uifw.gui_inset(rect, gui.style.border_width)
-	uifw.gui_scissor_begin(gui, clip)
-	t := f32(gui.frame_index % 240) / 240.0
-	cx := rect.x + rect.w * 0.5
-	cy := rect.y + rect.h * 0.5
-	min_d := min(rect.w, rect.h)
-
-	#partial switch mode {
-	case .Slime_Mold:
-		uifw.gui_gradient_rect(gui, rect, {0.02, 0.04, 0.025, 1}, {0.08, 0.16, 0.10, 1})
-		for i in 0 ..< 8 {
-			a := f32(i) * 0.785 + t * 2.0
-			r := min_d * (0.12 + f32(i % 4) * 0.055)
-			p := uifw.Vec2{cx + math.cos(a) * r, cy + math.sin(a * 1.7) * r}
-			uifw.gui_line(gui, p, {p.x + math.cos(a + 1.4) * min_d * 0.22, p.y + math.sin(a + 1.4) * min_d * 0.22}, {0.52, 1.0, 0.58, 0.45}, max(gui.style.border_width, 1))
-		}
-	case .Gray_Scott:
-		uifw.gui_gradient_rect(gui, rect, {0.03, 0.035, 0.08, 1}, {0.20, 0.10, 0.28, 1})
-		for i in 0 ..< 6 {
-			r := min_d * (0.10 + f32(i) * 0.055)
-			uifw.gui_ellipse_stroke(gui, {cx - r, cy - r, r * 2, r * 2}, {0.65, 0.88, 1.0, 0.18 + f32(i) * 0.035}, max(gui.style.border_width, 1))
-		}
-	case .Particle_Life:
-		uifw.gui_rect(gui, rect, {0.015, 0.018, 0.024, 1})
-		for i in 0 ..< 18 {
-			a := f32(i) * 2.399 + seed
-			r := min_d * (0.10 + f32(i % 7) * 0.045)
-			x := cx + math.cos(a + t) * r
-			y := cy + math.sin(a * 1.3 - t) * r
-			color := (i % 3 == 0) ? uifw.Color{0.95, 0.34, 0.42, 0.88} : ((i % 3 == 1) ? uifw.Color{0.28, 0.80, 1.0, 0.88} : uifw.Color{0.95, 0.82, 0.32, 0.88})
-			s := max(min_d * 0.035, 2)
-			uifw.gui_ellipse(gui, {x - s, y - s, s * 2, s * 2}, color)
-		}
-	case .Flow_Field:
-		uifw.gui_gradient_rect(gui, rect, {0.02, 0.03, 0.06, 1}, {0.05, 0.16, 0.18, 1})
-		for i in 0 ..< 7 {
-			y := rect.y + rect.h * (f32(i) + 0.5) / 7.0
-			uifw.gui_line(gui, {rect.x + rect.w * 0.12, y}, {rect.x + rect.w * 0.88, y + math.sin(f32(i) + t * 6.0) * rect.h * 0.10}, {0.35, 0.95, 0.95, 0.40}, max(gui.style.border_width, 1))
-		}
-	case .Pellets:
-		uifw.gui_rect(gui, rect, {0.04, 0.03, 0.025, 1})
-		for i in 0 ..< 10 {
-			x := rect.x + rect.w * (0.14 + f32((i * 37) % 73) / 100.0)
-			y := rect.y + rect.h * (0.18 + f32((i * 19) % 67) / 100.0)
-			s := min_d * (0.035 + f32(i % 3) * 0.014)
-			uifw.gui_ellipse(gui, {x - s, y - s, s * 2, s * 2}, {0.95, 0.63, 0.24, 0.85})
-		}
-	case .Gradient_Editor:
-		app_ui_draw_lut_gradient_preview(ui, gui, rect)
-	case .Voronoi_CA:
-		uifw.gui_rect(gui, rect, {0.025, 0.025, 0.035, 1})
-		cell := max(min_d * 0.18, 4)
-		for y := rect.y; y < rect.y + rect.h; y += cell {
-			for x := rect.x; x < rect.x + rect.w; x += cell {
-				k := int((x + y + seed * 17) / cell) % 3
-				color := k == 0 ? uifw.Color{0.16, 0.72, 0.68, 0.65} : (k == 1 ? uifw.Color{0.86, 0.34, 0.48, 0.58} : uifw.Color{0.88, 0.78, 0.30, 0.50})
-				uifw.gui_rect(gui, {x, y, cell - gui.style.border_width, cell - gui.style.border_width}, color)
-			}
-		}
-	case .Moire:
-		uifw.gui_rect(gui, rect, {0.02, 0.02, 0.028, 1})
-		for i in 0 ..< 9 {
-			a := -0.7 + f32(i) * 0.17
-			x := rect.x + rect.w * f32(i) / 8.0
-			uifw.gui_rotated_rect(gui, {x, cy, rect.w * 0.9, max(gui.style.border_width, 1)}, a, {0.94, 0.84, 0.36, 0.20})
-		}
-	case .Vectors:
-		uifw.gui_rect(gui, rect, {0.015, 0.025, 0.028, 1})
-		for i in 0 ..< 6 {
-			x := rect.x + rect.w * (0.15 + f32(i) * 0.14)
-			y := rect.y + rect.h * (0.25 + f32(i % 3) * 0.22)
-			a := f32(i) * 0.7 + t * 2
-			d := min_d * 0.12
-			uifw.gui_line(gui, {x - math.cos(a) * d, y - math.sin(a) * d}, {x + math.cos(a) * d, y + math.sin(a) * d}, {0.58, 0.93, 0.88, 0.75}, max(gui.style.border_width, 1))
-		}
-	case .Primordial:
-		uifw.gui_gradient_rect(gui, rect, {0.025, 0.016, 0.04, 1}, {0.10, 0.04, 0.13, 1})
-		for i in 0 ..< 12 {
-			a := f32(i) * 0.86 + t * 4
-			r := min_d * (0.08 + f32(i) * 0.018)
-			s := max(min_d * 0.025, 2)
-			uifw.gui_ellipse(gui, {cx + math.cos(a) * r - s, cy + math.sin(a * 1.2) * r - s, s * 2, s * 2}, {0.96, 0.42, 0.95, 0.55})
-		}
-	case:
-		uifw.gui_rect(gui, rect, {0.08, 0.08, 0.10, 1})
-	}
-	uifw.gui_scissor_end(gui)
 }

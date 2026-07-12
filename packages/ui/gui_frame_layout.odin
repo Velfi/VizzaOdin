@@ -181,13 +181,19 @@ gui_style_for_viewport :: proc(base: Gui_Style, width, height, ui_scale: f32) ->
 }
 
 gui_init :: proc(ctx: ^Gui_Context) {
-	ctx.commands = make([dynamic]Draw_Command, 0, 256)
+	ctx.spare_commands = make([dynamic]Draw_Command, 0, 256)
+	ctx.commands = ctx.spare_commands
+	ctx.paint_commands = make([dynamic]Draw_Command, 0, 256)
 	ctx.style = gui_default_style()
 	sync.once_do(&gui_text_shaper_once, gui_init_text_shaper)
 }
 
 gui_destroy :: proc(ctx: ^Gui_Context) {
-	delete(ctx.commands)
+	if ctx.paint_publish_pending {
+		ctx.spare_commands = ctx.commands
+	}
+	delete(ctx.paint_commands)
+	delete(ctx.spare_commands)
 }
 
 gui_init_text_shaper :: proc() {
@@ -216,6 +222,14 @@ gui_effective_font_kind :: proc(font_kind: Gui_Font_Kind) -> Gui_Font_Kind {
 }
 
 gui_begin_frame :: proc(ctx: ^Gui_Context, input: Input_State) {
+	if ctx.paint_publish_pending {
+		// A diagnostic/test caller may begin a replacement frame without
+		// publishing the previous draft. Preserve the possibly reallocated
+		// dynamic-array header before clearing that draft buffer.
+		ctx.spare_commands = ctx.commands
+	}
+	ctx.commands = ctx.spare_commands
+	ctx.paint_publish_pending = true
 	gui_profile_reset()
 	clear(&ctx.commands)
 	frame_input := input
@@ -262,6 +276,9 @@ gui_begin_frame :: proc(ctx: ^Gui_Context, input: Input_State) {
 	ctx.focus_edit_seen = false
 	ctx.wants_text_input = false
 	ctx.spatial_item_count = 0
+	ctx.next_interaction_rect_count = 0
+	ctx.interaction_snapshot_misses = 0
+	gui_semantic_begin_frame(ctx)
 	ctx.spatial_group_depth = 0
 	ctx.focus_scope = GUI_ID_NONE
 	ctx.focus_scope_active = false
@@ -365,6 +382,14 @@ gui_end_frame :: proc(ctx: ^Gui_Context) {
 	gui_draw_combo_popup_overlay(ctx)
 	gui_draw_notice_overlay(ctx)
 	gui_draw_tooltip_overlay(ctx)
+	gui_semantic_finalize(ctx)
+	if ctx.paint_publish_pending {
+		completed := ctx.paint_commands
+		ctx.paint_commands = ctx.commands
+		ctx.commands = ctx.paint_commands
+		ctx.spare_commands = completed
+		ctx.paint_publish_pending = false
+	}
 	ctx.overlay_input_rect_count = ctx.next_overlay_input_rect_count
 	for i in 0 ..< ctx.overlay_input_rect_count {
 		ctx.overlay_input_rects[i] = ctx.next_overlay_input_rects[i]
@@ -373,6 +398,10 @@ gui_end_frame :: proc(ctx: ^Gui_Context) {
 	for i in 0 ..< ctx.scroll_hit_count {
 		ctx.scroll_hits[i] = ctx.next_scroll_hits[i]
 	}
+	ctx.interaction_rect_count = ctx.next_interaction_rect_count
+	for i in 0 ..< ctx.interaction_rect_count {
+		ctx.interaction_rects[i] = ctx.next_interaction_rects[i]
+	}
 	if ctx.input.mouse_down == false {
 		ctx.active = GUI_ID_NONE
 		ctx.fine_pointer_drag_id = GUI_ID_NONE
@@ -380,6 +409,7 @@ gui_end_frame :: proc(ctx: ^Gui_Context) {
 	if ctx.focus_edit_id != GUI_ID_NONE && ctx.input.back {
 		cancelled_id := ctx.focus_edit_id
 		ctx.focus_edit_id = GUI_ID_NONE
+		gui_focus_owner_release(ctx, .Active_Control, cancelled_id)
 		if ctx.controller_armed_id == cancelled_id {
 			ctx.controller_armed_id = GUI_ID_NONE
 		}
@@ -388,6 +418,7 @@ gui_end_frame :: proc(ctx: ^Gui_Context) {
 	if ctx.focus_edit_id != GUI_ID_NONE && (!ctx.focus_edit_seen || ctx.focused != ctx.focus_edit_id || !gui_spatial_item_registered(ctx, ctx.focus_edit_id)) {
 		abandoned_id := ctx.focus_edit_id
 		ctx.focus_edit_id = GUI_ID_NONE
+		gui_focus_owner_release(ctx, .Active_Control, abandoned_id)
 		if ctx.controller_armed_id == abandoned_id {
 			ctx.controller_armed_id = GUI_ID_NONE
 		}
@@ -410,6 +441,7 @@ gui_end_frame :: proc(ctx: ^Gui_Context) {
 		}
 		ctx.focused = GUI_ID_NONE
 		ctx.focus_edit_id = GUI_ID_NONE
+		gui_focus_owner_release(ctx, .Active_Control, stale_id)
 		ctx.controller_armed_id = GUI_ID_NONE
 		gui_controller_edit_clear_snapshot(ctx, stale_id)
 	}
@@ -444,12 +476,14 @@ gui_focus_scope_trap_current :: proc(ctx: ^Gui_Context) {
 	if group.enabled {
 		ctx.focus_scope = group.id
 		ctx.focus_scope_active = true
+		gui_focus_owner_push_modal(ctx, group.id)
 	}
 }
 
 gui_focus_scope_release :: proc(ctx: ^Gui_Context) {
 	ctx.focus_scope = GUI_ID_NONE
 	ctx.focus_scope_active = false
+	gui_focus_owner_pop_modal(ctx)
 }
 
 gui_focus_editing :: proc(ctx: ^Gui_Context, id: Gui_Id) -> bool {
@@ -462,11 +496,13 @@ gui_focus_editing :: proc(ctx: ^Gui_Context, id: Gui_Id) -> bool {
 gui_focus_edit_begin :: proc(ctx: ^Gui_Context, id: Gui_Id) {
 	ctx.focus_edit_id = id
 	ctx.focus_edit_seen = true
+	gui_focus_owner_claim(ctx, .Active_Control, id)
 }
 
 gui_focus_edit_end :: proc(ctx: ^Gui_Context, id: Gui_Id) {
 	if ctx.focus_edit_id == id {
 		ctx.focus_edit_id = GUI_ID_NONE
+		gui_focus_owner_release(ctx, .Active_Control, id)
 	}
 }
 
@@ -484,6 +520,7 @@ gui_panel_begin :: proc(ctx: ^Gui_Context, bounds: Rect) {
 	gui_round_rect(ctx, bounds, ctx.style.radius_panel, ctx.style.panel)
 	gui_refractive_glass_rect(ctx, bounds, gui_default_glass_style(ctx, ctx.style.radius_panel))
 	gui_round_stroke(ctx, bounds, ctx.style.radius_panel, ctx.style.panel_border, ctx.style.border_width)
+	ctx.semantic_next_container_kind = .Panel
 	gui_layout_begin(ctx, gui_inset(bounds, ctx.style.panel_padding), .Column, ctx.style.spacing, ctx.style.row_height)
 }
 
@@ -512,6 +549,10 @@ gui_layout_begin_ex :: proc(ctx: ^Gui_Context, bounds: Rect, axis: Gui_Axis, gap
 		align_cross = align_cross,
 	}
 	ctx.layout_depth += 1
+	kind := ctx.semantic_next_container_kind
+	if kind == .None do kind = axis == .Row ? .Row : .Stack
+	ctx.semantic_next_container_kind = .None
+	gui_semantic_container_begin(ctx, kind, bounds)
 	ctx.next_cursor = {content.x, content.y}
 	ctx.content_width = content.w
 }
@@ -521,6 +562,7 @@ gui_layout_end :: proc(ctx: ^Gui_Context) {
 		return
 	}
 	ctx.layout_depth -= 1
+	gui_semantic_container_end(ctx)
 	if ctx.layout_depth > 0 {
 		parent := &ctx.layout_stack[ctx.layout_depth - 1]
 		ctx.next_cursor = parent.cursor
@@ -582,6 +624,7 @@ gui_next_rect :: proc(ctx: ^Gui_Context, width := f32(-1), height := f32(-1), st
 
 gui_row_begin :: proc(ctx: ^Gui_Context, height: f32) {
 	row := gui_next_rect(ctx, height = height)
+	ctx.semantic_next_container_kind = .Row
 	gui_layout_begin(ctx, row, .Row, ctx.style.spacing, height)
 }
 

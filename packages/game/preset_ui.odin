@@ -173,7 +173,7 @@ preset_fieldset_apply_selection :: proc(
 		preset_fieldset_apply_builtin(builtin_context, selected_index)
 		return
 	}
-	preset_fieldset_enqueue(worker, .Load_Preset, simulation_directory, preset_names[selected_index])
+	preset_fieldset_enqueue(worker, .Load, simulation_directory, preset_names[selected_index])
 }
 
 preset_fieldset_apply_builtin :: proc(builtin_context: Preset_Fieldset_Builtin_Context, index: int) {
@@ -192,6 +192,17 @@ preset_fieldset_apply_builtin :: proc(builtin_context: Preset_Fieldset_Builtin_C
 		}
 	case:
 	}
+}
+
+Preset_Save_Document_Context :: struct {
+	state: ^Preset_Fieldset_State,
+}
+
+preset_save_dialog_document_name_slot :: proc(data: rawptr, ctx: ^uifw.Gui_Context, bounds: uifw.Rect) {
+	document_context := cast(^Preset_Save_Document_Context)data
+	if document_context == nil || document_context.state == nil || ctx == nil do return
+	uifw.gui_label(ctx, "Preset Name")
+	_ = uifw.gui_text_input(ctx, "Enter preset name...", "preset_save_name", document_context.state.save_name[:], &document_context.state.save_name_len)
 }
 
 preset_save_dialog_draw :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fieldset_State, worker: ^Product_Context, simulation_directory: string) {
@@ -224,6 +235,14 @@ preset_save_dialog_draw :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fieldset_
 		y = max((window_h - dialog_h) * 0.5, ctx.style.spacing_2),
 		w = dialog_w,
 		h = dialog_h,
+	}
+	document: ^uifw.Ui_Document
+	document_found := false
+	if worker != nil && worker.documents != nil {
+		document, document_found = uifw.ui_document_assets_find(worker.documents, "preset_dialog")
+		if document_found {
+			dialog = uifw.ui_document_solve_root_bounds(document, overlay)
+		}
 	}
 
 	uifw.gui_push_id(ctx, "preset_save_dialog")
@@ -269,37 +288,49 @@ preset_save_dialog_draw :: proc(ctx: ^uifw.Gui_Context, state: ^Preset_Fieldset_
 	ctx.controller_explicit_activation = previous_explicit_activation || ctx.input.active_device == .Controller
 	defer ctx.controller_explicit_activation = previous_explicit_activation
 
-	uifw.gui_panel_begin(ctx, dialog)
-	uifw.gui_heading(ctx, "Save Preset")
-	uifw.gui_label(ctx, "Preset Name")
-	_ = uifw.gui_text_input(ctx, "Enter preset name...", "preset_save_name", state.save_name[:], &state.save_name_len)
-	if ctx.input.key_enter && preset_save_dialog_has_name(state) {
-		preset_save_dialog_commit(state, worker, simulation_directory)
-		preset_save_dialog_restore_focus(ctx, state)
-		uifw.gui_focus_scope_release(ctx)
-		uifw.gui_panel_end(ctx)
-		uifw.gui_overlay_input_cancel(ctx)
-		uifw.gui_pop_id(ctx)
-		return
-	}
-
-	button_row := uifw.gui_next_rect(ctx, height = ctx.style.row_height)
-	button_gap := ctx.style.spacing
-	button_w := max((button_row.w - button_gap) * 0.5, ctx.style.row_height)
-	save_rect := uifw.Rect{button_row.x, button_row.y, button_w, button_row.h}
-	cancel_rect := uifw.Rect{button_row.x + button_w + button_gap, button_row.y, button_w, button_row.h}
 	save_enabled := preset_save_dialog_has_name(state)
-	if uifw.gui_button_at(ctx, uifw.gui_make_id(ctx, "preset_save_confirm"), save_rect, "Save", save_enabled) && save_enabled {
+	confirmed := false
+	cancelled := false
+	if document_found {
+		document_context := Preset_Save_Document_Context {state}
+		bindings := [?]uifw.Ui_Document_Runtime_Binding {
+			{id = "name_slot", kind = .Slot, userdata = &document_context, draw_slot = preset_save_dialog_document_name_slot, slot_content_height = ctx.style.body_line_height + ctx.style.row_height + ctx.style.spacing},
+			{id = "confirm_enabled", kind = .Enabled, bool_value = &save_enabled},
+			{id = "confirm", kind = .Action},
+			{id = "cancel", kind = .Action},
+		}
+		actions: uifw.Ui_Document_Action_State
+		result := uifw.ui_document_draw(document, ctx, overlay, bindings[:], &actions)
+		if result.error == .None {
+			for action in actions.ids[:actions.count] {
+				if action == "confirm" do confirmed = true
+				if action == "cancel" do cancelled = true
+			}
+		} else {
+			document_found = false
+		}
+	}
+	if !document_found {
+		uifw.gui_panel_begin(ctx, dialog)
+		uifw.gui_heading(ctx, "Save Preset")
+		preset_save_dialog_document_name_slot(&Preset_Save_Document_Context{state}, ctx, dialog)
+		button_row := uifw.gui_next_rect(ctx, height = ctx.style.row_height)
+		button_gap := ctx.style.spacing
+		button_w := max((button_row.w - button_gap) * 0.5, ctx.style.row_height)
+		confirmed = uifw.gui_button_at(ctx, uifw.gui_make_id(ctx, "preset_save_confirm"), {button_row.x, button_row.y, button_w, button_row.h}, "Save", save_enabled) && save_enabled
+		cancelled = uifw.gui_button_at(ctx, uifw.gui_make_id(ctx, "preset_save_cancel"), {button_row.x + button_w + button_gap, button_row.y, button_w, button_row.h}, "Cancel", true)
+		uifw.gui_panel_end(ctx)
+	}
+	confirmed = confirmed || ctx.input.key_enter && save_enabled
+	if confirmed {
 		preset_save_dialog_commit(state, worker, simulation_directory)
 		preset_save_dialog_restore_focus(ctx, state)
 		uifw.gui_focus_scope_release(ctx)
-	}
-	if uifw.gui_button_at(ctx, uifw.gui_make_id(ctx, "preset_save_cancel"), cancel_rect, "Cancel", true) {
+	} else if cancelled {
 		preset_save_dialog_close(state)
 		preset_save_dialog_restore_focus(ctx, state)
 		uifw.gui_focus_scope_release(ctx)
 	}
-	uifw.gui_panel_end(ctx)
 	if state.save_open {
 		uifw.gui_overlay_input_end(ctx)
 	} else {
@@ -314,7 +345,7 @@ preset_save_dialog_has_name :: proc(state: ^Preset_Fieldset_State) -> bool {
 
 preset_save_dialog_commit :: proc(state: ^Preset_Fieldset_State, worker: ^Product_Context, simulation_directory: string) {
 	name := strings.trim_space(string(state.save_name[:state.save_name_len]))
-	preset_fieldset_enqueue(worker, .Save_Preset, simulation_directory, name)
+	preset_fieldset_enqueue(worker, .Save, simulation_directory, name)
 	state.select_saved_when_available = true
 	display_name := strings.trim_suffix(preset_filename_from_name(name), ".toml")
 	state.select_saved_name_len = min(len(display_name), len(state.select_saved_name))
@@ -345,16 +376,35 @@ preset_name_accepts_char :: proc(ch: rune) -> bool {
 		ch == ' ' || ch == '_' || ch == '-' || ch == '.'
 }
 
-preset_fieldset_enqueue :: proc(worker: ^Product_Context, kind: Ui_To_Render_Command_Kind, simulation_directory, preset_name: string) {
+preset_feature_id_for_directory :: proc(directory: string) -> (Feature_Id, bool) {
+	switch directory {
+	case "slime_mold": return FEATURE_ID_SLIME_MOLD, true
+	case "gray_scott": return FEATURE_ID_GRAY_SCOTT, true
+	case "particle_life": return FEATURE_ID_PARTICLE_LIFE, true
+	case "flow_field": return FEATURE_ID_FLOW_FIELD, true
+	case "pellets": return FEATURE_ID_PELLETS, true
+	case "voronoi_ca": return FEATURE_ID_VORONOI, true
+	case "moire": return FEATURE_ID_MOIRE, true
+	case "vectors": return FEATURE_ID_VECTORS, true
+	case "primordial": return FEATURE_ID_PRIMORDIAL, true
+	case: return {}, false
+	}
+}
+
+preset_fieldset_enqueue :: proc(worker: ^Product_Context, operation: Feature_Preset_File_Operation, simulation_directory, preset_name: string) {
 	if worker == nil || worker.ui_to_render == nil {
 		return
 	}
+	feature_id, found := preset_feature_id_for_directory(simulation_directory)
+	if !found do return
 	filename := preset_filename_from_name(preset_name)
 	path := fmt.tprintf("%s/%s", simulation_directory, filename)
-	cmd: Ui_To_Render_Command
-	cmd.kind = kind
-	write_fixed_string(cmd.preset_name[:], path)
-	_ = engine.queue_try_push(worker.ui_to_render, cmd)
+	payload := Feature_Preset_File_Command {operation = operation}
+	write_fixed_string(payload.path[:], path)
+	feature, ok := feature_command_make(feature_id, FEATURE_COMMAND_PRESET_FILE, &payload)
+	if ok {
+		_ = engine.queue_try_push(worker.ui_to_render, Ui_To_Render_Command {kind = .Feature, feature = feature})
+	}
 }
 
 preset_filename_from_name :: proc(name: string) -> string {

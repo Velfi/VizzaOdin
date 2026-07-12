@@ -16,8 +16,18 @@ if [ ! -x "$SLANGC" ]; then
 fi
 
 MANIFEST="${SHADER_BUILD}/slang-manifest.txt"
+BUILD_STAMP="${SHADER_BUILD}/.vulkan13-spirv16"
+PROFILE="spirv_1_6"
+TARGET_ENV="vulkan1.3"
+SPIRV_VAL=${SPIRV_VAL:-$(command -v spirv-val 2>/dev/null || true)}
 mkdir -p "$SHADER_BUILD"
 : > "$MANIFEST"
+
+build_signature=$(printf '%s\n' "$PROFILE" "$TARGET_ENV" "$(cksum < "$0")")
+if [ ! -f "$BUILD_STAMP" ] || [ "$(cat "$BUILD_STAMP")" != "$build_signature" ]; then
+    find "$SHADER_BUILD" -type f -name '*.spv' -delete
+fi
+printf '%s' "$build_signature" > "$BUILD_STAMP"
 
 should_recompile() {
     local input=$1
@@ -25,17 +35,15 @@ should_recompile() {
     if [ ! -f "$output" ]; then
         return 0
     fi
-    if [ "$input" -nt "$output" ]; then
+    if [ "$input" -nt "$output" ] || [ "$0" -nt "$output" ]; then
         return 0
     fi
-    if [ -d "${SHADER_SRC}/common" ]; then
-        local common_dep
-        while IFS= read -r common_dep; do
-            if [ "$common_dep" -nt "$output" ]; then
-                return 0
-            fi
-        done < <(find "${SHADER_SRC}/common" -type f -name '*.slang')
-    fi
+    local dep
+    while IFS= read -r dep; do
+        if [ "$dep" -nt "$output" ]; then
+            return 0
+        fi
+    done < <(find "$SHADER_SRC" -type f -name '*.slang')
     return 1
 }
 
@@ -86,12 +94,13 @@ while IFS= read -r source; do
         entry=${stage_entry#*|}
         output="${out_base}.spv"
         if should_recompile "$source" "$output"; then
-            "$SLANGC" "$source" -target spirv -profile spirv_1_5 -stage "$stage" -entry "$entry" -o "$output"
+            "$SLANGC" "$source" -target spirv -profile "$PROFILE" -stage "$stage" -entry "$entry" -o "$output"
             echo "Compiled ${source} [${stage}/${entry}] -> ${output}"
         else
             echo "Up to date ${source} [${stage}/${entry}]"
         fi
-        printf '%s|%s|%s|%s\n' "$source" "$stage" "$entry" "$output" >> "$MANIFEST"
+        if [ -n "$SPIRV_VAL" ]; then "$SPIRV_VAL" --target-env "$TARGET_ENV" "$output"; fi
+        printf '%s|%s|%s|%s|%s|%s\n' "$source" "$stage" "$entry" "$output" "SPIR-V 1.6" "$TARGET_ENV" >> "$MANIFEST"
     else
         for stage_entry in "${entries[@]}"; do
             stage=${stage_entry%|*}
@@ -109,12 +118,13 @@ while IFS= read -r source; do
                 output="${out_base}_${stage}.spv"
             fi
             if should_recompile "$source" "$output"; then
-                "$SLANGC" "$source" -target spirv -profile spirv_1_5 -stage "$stage" -entry "$entry" -o "$output"
+                "$SLANGC" "$source" -target spirv -profile "$PROFILE" -stage "$stage" -entry "$entry" -o "$output"
                 echo "Compiled ${source} [${stage}/${entry}] -> ${output}"
             else
                 echo "Up to date ${source} [${stage}/${entry}]"
             fi
-            printf '%s|%s|%s|%s\n' "$source" "$stage" "$entry" "$output" >> "$MANIFEST"
+            if [ -n "$SPIRV_VAL" ]; then "$SPIRV_VAL" --target-env "$TARGET_ENV" "$output"; fi
+            printf '%s|%s|%s|%s|%s|%s\n' "$source" "$stage" "$entry" "$output" "SPIR-V 1.6" "$TARGET_ENV" >> "$MANIFEST"
         done
     fi
 done < <(find "$SHADER_SRC" -type f -name '*.slang' | sort)

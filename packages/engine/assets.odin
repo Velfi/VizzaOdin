@@ -21,6 +21,8 @@ Slang_Shader_Manifest :: struct {
 	stage: Shader_Stage,
 	entry_point: string,
 	spirv_path: string,
+	spirv_version: string,
+	target_environment: string,
 }
 
 SLANG_MANIFEST_PATH :: "build/shaders/slang-manifest.txt"
@@ -44,7 +46,7 @@ shader_compile_command_hint :: proc(shader: Shader_Asset, out: []u8) -> string {
 	}
 
 	prefix := "slangc "
-	mid := " -target spirv -profile spirv_1_5 -stage "
+	mid := " -target spirv -profile spirv_1_6 -stage "
 	entry := " -entry "
 	output := " -o "
 	parts := []string{prefix, shader.source_path, mid, stage, entry, shader.entry_point, output, shader.spirv_path}
@@ -100,12 +102,12 @@ shader_manifest_find_spirv :: proc(source_path: string, stage: Shader_Stage, ent
 
 shader_manifest_parse_line :: proc(line: string) -> (Slang_Shader_Manifest, bool) {
 	result: Slang_Shader_Manifest
-	parts: [4]string
+	parts: [6]string
 	count := 0
 	start := 0
 	for i := 0; i <= len(line); i += 1 {
 		if i == len(line) || line[i] == '|' {
-			if count < 4 {
+			if count < 6 {
 				parts[count] = line[start:i]
 				count += 1
 			}
@@ -132,5 +134,9 @@ shader_manifest_parse_line :: proc(line: string) -> (Slang_Shader_Manifest, bool
 	}
 	result.entry_point = parts[2]
 	result.spirv_path = parts[3]
+	if count >= 6 {
+		result.spirv_version = parts[4]
+		result.target_environment = parts[5]
+	}
 	return result, true
 }

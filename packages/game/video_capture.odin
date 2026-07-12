@@ -1,13 +1,18 @@
 package game
 
-import vk "vendor:vulkan"
+Capture_Pixel_Format :: enum u8 {
+	RGBA8_UNorm,
+	BGRA8_UNorm,
+	RGBA8_SRGB,
+	BGRA8_SRGB,
+}
 
 Video_Capture_Sink :: struct {
 	userdata: rawptr,
 	is_recording: proc(rawptr) -> bool,
 	reserve_frame: proc(rawptr, ^int) -> bool,
 	release_frame: proc(rawptr, int),
-	submit_frame: proc(rawptr, int, []u8, u32, u32, vk.Format) -> bool,
+	submit_frame: proc(rawptr, int, []u8, u32, u32, Capture_Pixel_Format) -> bool,
 	fail: proc(rawptr, string),
 }
 
@@ -25,7 +30,7 @@ video_capture_release_frame :: proc(sink: ^Video_Capture_Sink, index: int) {
 	}
 }
 
-video_capture_submit_frame :: proc(sink: ^Video_Capture_Sink, index: int, pixels: []u8, width, height: u32, format: vk.Format) -> bool {
+video_capture_submit_frame :: proc(sink: ^Video_Capture_Sink, index: int, pixels: []u8, width, height: u32, format: Capture_Pixel_Format) -> bool {
 	return sink != nil && sink.submit_frame != nil && sink.submit_frame(sink.userdata, index, pixels, width, height, format)
 }
 

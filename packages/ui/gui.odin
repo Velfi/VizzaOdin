@@ -212,7 +212,6 @@ Input_State :: struct {
 	key_space_pressed: bool,
 	key_space_released: bool,
 	controller_left: Vec2,
-	controller_right: Vec2,
 	controller_zoom: f32,
 }
 
@@ -481,6 +480,7 @@ MAX_GUI_ANIMATION_SLOTS :: 128
 MAX_GUI_SPATIAL_ITEMS :: 512
 MAX_GUI_SPATIAL_GROUP_DEPTH :: 16
 MAX_GUI_OVERLAY_INPUT_RECTS :: 16
+MAX_GUI_INTERACTION_RECTS :: 512
 GUI_TEXT_WIDTH_CACHE_SLOTS :: 512
 GUI_TEXT_WIDTH_CACHE_MAX_BYTES :: 128
 GUI_FONT_KIND_CAP :: 4
@@ -569,6 +569,23 @@ Gui_Spatial_Item :: struct {
 	scroll_owner: int,
 }
 
+// Interaction rectangles are a compact retained snapshot of the previous
+// completed frame. Product values remain immediate-mode; only stable ID and
+// resolved geometry cross the frame boundary.
+Gui_Interaction_Rect :: struct {
+	id: Gui_Id,
+	bounds: Rect,
+	enabled: bool,
+}
+
+Gui_Document_Scroll_Slot :: struct {
+	id: Gui_Id,
+	value: f32,
+	last_frame: u64,
+}
+
+MAX_GUI_DOCUMENT_SCROLL_SLOTS :: 64
+
 Gui_Shaped_Glyph :: struct {
 	glyph_id: u32,
 	x_offset: f32,
@@ -581,6 +598,9 @@ Gui_Context :: struct {
 	input: Input_State,
 	previous_input: Input_State,
 	commands: [dynamic]Draw_Command,
+	paint_commands: [dynamic]Draw_Command,
+	spare_commands: [dynamic]Draw_Command,
+	paint_publish_pending: bool,
 	hot: Gui_Id,
 	active: Gui_Id,
 	focused: Gui_Id,
@@ -687,4 +707,23 @@ Gui_Context :: struct {
 	debug_registered_id_count: int,
 	debug_duplicate_id_count: int,
 	animation_slots: [MAX_GUI_ANIMATION_SLOTS]Gui_Animation_Slot,
+	interaction_rects: [MAX_GUI_INTERACTION_RECTS]Gui_Interaction_Rect,
+	interaction_rect_count: int,
+	next_interaction_rects: [MAX_GUI_INTERACTION_RECTS]Gui_Interaction_Rect,
+	next_interaction_rect_count: int,
+	interaction_snapshot_misses: u32,
+	semantic_nodes: [MAX_GUI_SEMANTIC_NODES]Gui_Semantic_Node,
+	semantic_node_count: int,
+	semantic_stack: [MAX_GUI_SEMANTIC_DEPTH]int,
+	semantic_depth: int,
+	semantic_next_container_kind: Gui_Semantic_Node_Kind,
+	semantic_unstable_ids: [MAX_GUI_UNSTABLE_IDS]Gui_Id,
+	semantic_unstable_id_count: int,
+	next_semantic_unstable_ids: [MAX_GUI_UNSTABLE_IDS]Gui_Id,
+	next_semantic_unstable_id_count: int,
+	semantic_diagnostics: Gui_Semantic_Diagnostics,
+	document_scroll_slots: [MAX_GUI_DOCUMENT_SCROLL_SLOTS]Gui_Document_Scroll_Slot,
+	document_scroll_slot_count: int,
+	document_scroll_fallback: f32,
+	focus_ownership: Gui_Focus_Ownership,
 }

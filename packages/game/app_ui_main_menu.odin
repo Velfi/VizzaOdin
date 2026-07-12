@@ -6,9 +6,9 @@ import engine "../engine"
 import "core:fmt"
 import "core:math"
 
-app_ui_draw_main_menu :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx: ^engine.Vk_Context, worker: ^Product_Context) {
-	width := f32(vk_ctx.swapchain_extent.width)
-	height := f32(vk_ctx.swapchain_extent.height)
+app_ui_draw_main_menu :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, viewport: uifw.Vec2, worker: ^Product_Context) {
+	width := viewport.x
+	height := viewport.y
 	theme := app_ui_menu_theme(gui, width, height)
 	ui.main_menu_live_preview_visible = false
 	ui.main_menu_preview_slot_count = 0
@@ -160,6 +160,40 @@ app_ui_draw_main_menu :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx:
 		if gui.focused == quit_id {
 			ui.main_menu_focus_slot = app_ui_main_menu_quit_slot()
 		}
+	}
+}
+
+App_Ui_Main_Menu_Document_Context :: struct {
+	ui: ^App_Ui_State,
+	worker: ^Product_Context,
+	viewport: uifw.Vec2,
+}
+
+app_ui_draw_main_menu_document_slot :: proc(data: rawptr, gui: ^uifw.Gui_Context, bounds: uifw.Rect) {
+	_ = bounds
+	document_context := cast(^App_Ui_Main_Menu_Document_Context)data
+	if document_context == nil || document_context.ui == nil || gui == nil do return
+	app_ui_draw_main_menu(document_context.ui, gui, document_context.viewport, document_context.worker)
+}
+
+app_ui_draw_main_menu_document :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, documents: ^uifw.Ui_Document_Assets, viewport: uifw.Vec2, worker: ^Product_Context) {
+	if ui == nil || gui == nil || documents == nil {
+		app_ui_draw_main_menu(ui, gui, viewport, worker)
+		return
+	}
+	document, found := uifw.ui_document_assets_find(documents, "main_menu")
+	if !found {
+		app_ui_draw_main_menu(ui, gui, viewport, worker)
+		return
+	}
+	document_context := App_Ui_Main_Menu_Document_Context {ui, worker, viewport}
+	bindings := [?]uifw.Ui_Document_Runtime_Binding {
+		{id = "wide_shell", kind = .Slot, userdata = &document_context, draw_slot = app_ui_draw_main_menu_document_slot, slot_content_height = viewport.y},
+		{id = "compact_shell", kind = .Slot, userdata = &document_context, draw_slot = app_ui_draw_main_menu_document_slot, slot_content_height = viewport.y},
+	}
+	result := uifw.ui_document_draw(document, gui, {0, 0, viewport.x, viewport.y}, bindings[:], nil)
+	if result.error != .None {
+		app_ui_draw_main_menu(ui, gui, viewport, worker)
 	}
 }
 

@@ -11,7 +11,7 @@ gray_scott_reset_runtime :: proc(sim: ^Gray_Scott_Simulation) {
 	sim.runtime.frame_index = 0
 	sim.runtime.pending_seed_mode = GRAY_SCOTT_MODE_INITIAL_SEED
 	sim.runtime.paint_active = false
-	sim.gpu.ready = false
+	sim.runtime.render_ready = false
 }
 
 gray_scott_seed_noise :: proc(sim: ^Gray_Scott_Simulation) {
@@ -19,6 +19,27 @@ gray_scott_seed_noise :: proc(sim: ^Gray_Scott_Simulation) {
 	if sim.runtime.seed == 0 {
 		sim.runtime.seed = 0x6d2b79f5
 	}
+	sim.runtime.pending_seed_mode = GRAY_SCOTT_MODE_NOISE_SEED
+}
+
+gray_scott_randomize_seed_recipe :: proc(sim: ^Gray_Scott_Simulation) {
+	seed := sim.runtime.seed + u32(sim.runtime.frame_index & 0xffffffff) + 1
+	noise := &sim.settings.seed_noise
+	noise.kind = Noise_Kind(int(gray_scott_random_range(&seed, 0, f32(len(NOISE_KIND_NAMES)))) % len(NOISE_KIND_NAMES))
+	noise.fractal_mode = Noise_Fractal_Mode(int(gray_scott_random_range(&seed, 0, f32(len(NOISE_FRACTAL_MODE_NAMES)))) % len(NOISE_FRACTAL_MODE_NAMES))
+	noise.warp_mode = Noise_Warp_Mode(int(gray_scott_random_range(&seed, 0, f32(len(NOISE_WARP_MODE_NAMES)))) % len(NOISE_WARP_MODE_NAMES))
+	noise.frequency = gray_scott_random_range(&seed, 1.5, 14.0)
+	noise.octaves = u32(gray_scott_random_range(&seed, 2, 8))
+	noise.lacunarity = gray_scott_random_range(&seed, 1.6, 3.0)
+	noise.gain = gray_scott_random_range(&seed, 0.3, 0.75)
+	noise.warp_octaves = u32(gray_scott_random_range(&seed, 1, 6))
+	noise.warp_amplitude = gray_scott_random_range(&seed, 0.15, 1.75)
+	noise.warp_frequency = gray_scott_random_range(&seed, 0.4, 3.5)
+	noise.rotation = gray_scott_random_range(&seed, -f32(math.PI), f32(math.PI))
+	sim.settings.seed_density = gray_scott_random_range(&seed, 0.3, 0.8)
+	sim.settings.seed_amplitude = gray_scott_random_range(&seed, 0.25, 1.5)
+	noise_sync_indices(noise)
+	sim.runtime.seed = seed
 	sim.runtime.pending_seed_mode = GRAY_SCOTT_MODE_NOISE_SEED
 }
 
@@ -76,14 +97,14 @@ gray_scott_undo_randomize_settings :: proc(sim: ^Gray_Scott_Simulation) -> bool 
 }
 
 gray_scott_load_settings :: proc(sim: ^Gray_Scott_Simulation, settings: Gray_Scott_Settings) {
-	sim.settings = settings
+	sim.settings^ = settings
 	sim.runtime.randomize_undo_available = false
 	sim.runtime.current_preset_index = len(GRAY_SCOTT_BUILTIN_PRESET_NAMES) - 1
 	gray_scott_request_nutrient_upload(sim)
 }
 
 gray_scott_save_settings :: proc(sim: ^Gray_Scott_Simulation) -> Gray_Scott_Settings {
-	return sim.settings
+	return sim.settings^
 }
 
 gray_scott_xy_plot_height :: proc(ctx: ^uifw.Gui_Context) -> f32 {
@@ -207,7 +228,7 @@ gray_scott_controls_content_height :: proc(sim: ^Gray_Scott_Simulation, ctx: ^ui
 		case 5:
 			return heading + row * 3 + spacer + undo_row
 		case GRAY_SCOTT_SECTION_PATTERN:
-			return heading + row * 7 + spacer + gray_scott_xy_plot_height(ctx) * 2
+			return heading * 2 + row * 7 + spacer * 2 + gray_scott_xy_plot_height(ctx) * 2 + noise_settings_controls_content_height(ctx, &sim.settings.seed_noise) + uifw.gui_slider_height(ctx) * 2
 		case GRAY_SCOTT_SECTION_MASK:
 			rows := 2
 			if sim.settings.mask_pattern != .Disabled {
@@ -236,6 +257,7 @@ gray_scott_controls_content_height :: proc(sim: ^Gray_Scott_Simulation, ctx: ^ui
 	add_section(&rows, &sections, 5) // Controls
 	add_section(&rows, &sections, sim.runtime.randomize_undo_available ? 3 : 2) // Settings
 	add_section(&rows, &sections, 26) // Reaction-Diffusion
+	rows += int(noise_settings_controls_content_height(ctx, &sim.settings.seed_noise) / max(ctx.style.row_height, 1)) + 4
 	if sim.settings.mask_pattern != .Disabled {
 		rows += 6
 		if sim.settings.mask_pattern == .Nutrient_Map {
@@ -251,7 +273,7 @@ gray_scott_controls_content_height :: proc(sim: ^Gray_Scott_Simulation, ctx: ^ui
 gray_scott_draw_actions :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Context) -> bool {
 	changed := false
 	actions_bounds := uifw.gui_next_rect(ctx)
-	actions := uifw.gui_grid_begin(ctx, actions_bounds, 3, ctx.style.spacing)
+	actions := uifw.gui_grid_begin(ctx, actions_bounds, 4, ctx.style.spacing)
 	if uifw.gui_button_at(ctx, uifw.gui_make_id(ctx, "reset"), uifw.gui_grid_next(&actions, actions_bounds.h), "Reset Simulation", true) {
 		gray_scott_reset_runtime(sim)
 		uifw.gui_notice(ctx, "Fresh pattern started. Your settings stayed exactly as they were.")
@@ -267,6 +289,11 @@ gray_scott_draw_actions :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Cont
 		uifw.gui_notice(ctx, "New noise seed added. Settings stayed unchanged.")
 		changed = true
 	}
+	if uifw.gui_button_at(ctx, uifw.gui_make_id(ctx, "randomize_seed_recipe"), uifw.gui_grid_next(&actions, actions_bounds.h), "Random Seed Recipe", true) {
+		gray_scott_randomize_seed_recipe(sim)
+		uifw.gui_notice(ctx, "Noise type, scale, fractal, warp, density, and amplitude randomized.")
+		changed = true
+	}
 	if sim.runtime.randomize_undo_available && uifw.gui_button(ctx, "Restore Before Randomize", "undo_randomize") {
 		if gray_scott_undo_randomize_settings(sim) {
 			uifw.gui_notice(ctx, "Previous Gray-Scott settings restored.")
@@ -274,16 +301,6 @@ gray_scott_draw_actions :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Cont
 		}
 	}
 	return changed
-}
-
-gray_scott_enqueue_preset_command :: proc(worker: ^Product_Context, kind: Ui_To_Render_Command_Kind, name: string) {
-	if worker == nil || worker.ui_to_render == nil {
-		return
-	}
-	cmd: Ui_To_Render_Command
-	cmd.kind = kind
-	write_fixed_string(cmd.preset_name[:], name)
-	_ = engine.queue_try_push(worker.ui_to_render, cmd)
 }
 
 gray_scott_plot_value_to_point :: proc(area: uifw.Rect, value, min_value, max_value: uifw.Vec2) -> uifw.Vec2 {
@@ -479,6 +496,11 @@ gray_scott_draw_controls :: proc(sim: ^Gray_Scott_Simulation, ctx: ^uifw.Gui_Con
 	}
 
 	if section < 0 || section == 6 || section == GRAY_SCOTT_SECTION_PATTERN {
+	uifw.gui_heading(ctx, "Seed Generator")
+	if draw_noise_settings_controls(ctx, &sim.settings.seed_noise, "gray_scott_seed") {changed = true}
+	if uifw.gui_slider_f32(ctx, fmt.tprintf("Seed Density: %.2f", sim.settings.seed_density), "seed_density", &sim.settings.seed_density, 0, 1) {changed = true}
+	if uifw.gui_slider_f32(ctx, fmt.tprintf("Seed Amplitude: %.2f", sim.settings.seed_amplitude), "seed_amplitude", &sim.settings.seed_amplitude, 0, 2) {changed = true}
+	uifw.gui_spacer(ctx, 8)
 	uifw.gui_heading(ctx, "Reaction-Diffusion")
 	uifw.gui_label(ctx, "Drag the handles to adjust paired parameters.")
 	if gray_scott_xy_plot(ctx, "Feed Rate vs Kill Rate", "feed_kill_plot", "Feed", "Kill", "F", "K", &sim.settings.feed, &sim.settings.kill, {0.0, 0.0}, {0.1, 0.1}, {0.94, 0.28, 0.31, 1.0}, {0.74, 0.16, 0.18, 1.0}) {

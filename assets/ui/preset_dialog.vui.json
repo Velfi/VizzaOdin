@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "document_id": "preset_dialog",
+  "nodes": [
+    {"id": "root", "kind": "panel", "layout": {"width": 420, "height": 240}},
+    {"id": "heading", "parent": "root", "kind": "text", "text": "Save Preset"},
+    {"id": "name_slot", "parent": "root", "kind": "slot", "binding": "name_slot"},
+    {"id": "actions", "parent": "root", "kind": "row", "layout": {"gap": 8}},
+    {"id": "preset_save_confirm", "parent": "actions", "kind": "button", "text": "Save", "binding": "confirm_enabled", "action": "confirm"},
+    {"id": "preset_save_cancel", "parent": "actions", "kind": "button", "text": "Cancel", "action": "cancel"}
+  ],
+  "bindings": [
+    {"id": "name_slot", "kind": "slot", "required": true},
+    {"id": "confirm_enabled", "kind": "enabled", "required": true},
+    {"id": "confirm", "kind": "action", "required": true},
+    {"id": "cancel", "kind": "action", "required": true}
+  ],
+  "constraints": [
+    {"left": "root.width", "relation": "less_equal", "right": "viewport.width", "constant": -24, "strength": "required"},
+    {"left": "root.height", "relation": "less_equal", "right": "viewport.height", "constant": -24, "strength": "required"},
+    {"left": "root.center_x", "relation": "equal", "right": "viewport.center_x", "strength": "required"},
+    {"left": "root.center_y", "relation": "equal", "right": "viewport.center_y", "strength": "required"}
+  ]
+}

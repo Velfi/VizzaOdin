@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "document_id": "simulation_shell",
+  "nodes": [
+    {"id": "root", "kind": "overlay"},
+    {"id": "feature_shell", "parent": "root", "kind": "slot", "binding": "feature_shell"}
+  ],
+  "bindings": [{"id": "feature_shell", "kind": "slot", "required": true}],
+  "constraints": []
+}

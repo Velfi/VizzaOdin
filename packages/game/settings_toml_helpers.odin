@@ -44,3 +44,20 @@ toml_string :: proc(table: Toml_Datum, key: string) -> (string, bool) {
 	}
 	return strings.string_from_ptr(cast(^byte)datum.u.str.ptr, int(datum.u.str.len)), true
 }
+
+toml_f32_array :: proc(table: Toml_Datum, key: string, out: []f32) -> bool {
+	datum := toml_seek_key(table, key)
+	if datum.type != .ARRAY || datum.u.arr.elem == nil || datum.u.arr.size < i32(len(out)) {
+		return false
+	}
+	elements := cast([^]Toml_Datum)datum.u.arr.elem
+	for index in 0 ..< len(out) {
+		element := elements[index]
+		#partial switch element.type {
+		case .FP64: out[index] = f32(element.u.fp64)
+		case .INT64: out[index] = f32(element.u.int64)
+		case: return false
+		}
+	}
+	return true
+}

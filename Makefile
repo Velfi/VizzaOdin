@@ -154,6 +154,7 @@ steam-upload-preview:
 	./scripts/steam-upload.sh --preview --local "$(VERSION)"
 
 check: check-boundaries $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
+	bash ./scripts/check_vulkan13.sh
 	odin check $(SRC)
 
 check-boundaries:
@@ -195,6 +196,7 @@ shaders:
 	test -n "$(SLANGC)"
 	mkdir -p $(SHADER_BUILD)
 	./scripts/build_shaders.sh $(SLANGC) $(SHADER_SRC) $(SHADER_BUILD)
+	bash ./scripts/check_shader_manifest.sh $(SHADER_BUILD)/slang-manifest.txt
 
 fmt:
 	for pkg in $(ODIN_PACKAGES); do odin strip-semicolon $$pkg -no-entry-point; done

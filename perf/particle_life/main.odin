@@ -23,6 +23,23 @@ Bench_Config :: struct {
 	exact_forces: bool,
 }
 
+bench_simulation_init :: proc(sim: ^game.Particle_Life_Simulation, product: ^game.Feature_Instance, feature: ^render_vk.Render_Feature_Instance) -> bool {
+	if sim == nil || product == nil || feature == nil do return false
+	if !game.feature_instance_init(product, .Particle_Life) do return false
+	if !game.particle_life_bind_product_instance(sim, product) {game.feature_instance_destroy(product); return false}
+	game.particle_life_init(sim, 1280, 720)
+	if !render_vk.render_feature_instance_init(feature, .Particle_Life) {game.feature_instance_destroy(product); return false}
+	sim.render_runtime = feature.runtime
+	return true
+}
+
+bench_simulation_destroy :: proc(sim: ^game.Particle_Life_Simulation, product: ^game.Feature_Instance, feature: ^render_vk.Render_Feature_Instance, vk_ctx: ^engine.Vk_Context) {
+	if sim != nil do game.particle_life_analysis_workspace_destroy(&sim.runtime.analysis)
+	render_vk.render_feature_instance_destroy(feature, vk_ctx)
+	game.feature_instance_destroy(product)
+	if sim != nil do sim.render_runtime = nil
+}
+
 parse_u32_list :: proc(value: string, allocator := context.allocator) -> []u32 {
 	out := make([dynamic]u32, allocator)
 	for token in strings.split(value, ",") {
@@ -85,8 +102,12 @@ parse_config :: proc(args: []string) -> Bench_Config {
 
 run_churn :: proc(vk_ctx: ^engine.Vk_Context, config: Bench_Config) -> bool {
 	sim: game.Particle_Life_Simulation
-	game.particle_life_init(&sim, 1280, 720)
-	defer render_vk.particle_life_destroy(&sim, vk_ctx)
+	product: game.Feature_Instance
+	feature: render_vk.Render_Feature_Instance
+	if !bench_simulation_init(&sim, &product, &feature) do return false
+	defer bench_simulation_destroy(&sim, &product, &feature, vk_ctx)
+	gpu, gpu_ok := render_vk.render_feature_instance_runtime(&feature, render_vk.Particle_Life_Gpu_State)
+	if !gpu_ok do return false
 	sim.settings.particle_count = config.particles[0]
 	sim.settings.species_count = config.species
 	sim.settings.force_generator = 0
@@ -100,7 +121,7 @@ run_churn :: proc(vk_ctx: ^engine.Vk_Context, config: Bench_Config) -> bool {
 	for _ in 0 ..< config.warmup + 2 {
 		if !submit_step(&sim, vk_ctx) { return false }
 	}
-	initial_grid_buffer := sim.gpu.grid_heads_buffer.handle
+	initial_grid_buffer := gpu.grid_heads_buffer.handle
 	rebuilds := 0
 	samples := make([]f64, config.iterations)
 	for i in 0 ..< config.iterations {
@@ -108,9 +129,9 @@ run_churn :: proc(vk_ctx: ^engine.Vk_Context, config: Bench_Config) -> bool {
 		start := time.tick_now()
 		if !submit_step(&sim, vk_ctx) { return false }
 		samples[i] = time.duration_seconds(time.tick_since(start)) * 1000.0
-		if sim.gpu.grid_heads_buffer.handle != initial_grid_buffer {
+		if gpu.grid_heads_buffer.handle != initial_grid_buffer {
 			rebuilds += 1
-			initial_grid_buffer = sim.gpu.grid_heads_buffer.handle
+			initial_grid_buffer = gpu.grid_heads_buffer.handle
 		}
 	}
 	sort_f64(samples)
@@ -137,8 +158,10 @@ percentile :: proc(sorted: []f64, fraction: f64) -> f64 {
 
 run_case :: proc(vk_ctx: ^engine.Vk_Context, particle_count, species: u32, influence_range: f32, collisions, temporal_coherence: bool, warmup, iterations: int) -> bool {
 	sim: game.Particle_Life_Simulation
-	game.particle_life_init(&sim, 1280, 720)
-	defer render_vk.particle_life_destroy(&sim, vk_ctx)
+	product: game.Feature_Instance
+	feature: render_vk.Render_Feature_Instance
+	if !bench_simulation_init(&sim, &product, &feature) do return false
+	defer bench_simulation_destroy(&sim, &product, &feature, vk_ctx)
 	sim.settings.particle_count = particle_count
 	sim.settings.species_count = species
 	sim.settings.force_generator = 0 // Random
@@ -165,8 +188,8 @@ run_case :: proc(vk_ctx: ^engine.Vk_Context, particle_count, species: u32, influ
 	sort_f64(samples)
 	total: f64
 	for sample in samples { total += sample }
-	grid_w, grid_h := game.particle_life_target_grid_dimensions(sim.settings, game.particle_life_world_size(&sim))
-	radius := game.particle_life_target_neighbor_radius_cells(sim.settings, grid_w, grid_h, game.particle_life_world_size(&sim))
+	grid_w, grid_h := game.particle_life_target_grid_dimensions(sim.settings^, game.particle_life_world_size(&sim))
+	radius := game.particle_life_target_neighbor_radius_cells(sim.settings^, grid_w, grid_h, game.particle_life_world_size(&sim))
 	fmt.printf("%d,%d,random,%.6f,%t,%t,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f\n", particle_count, species, influence_range, collisions, temporal_coherence, grid_w, grid_h, radius, iterations, total / f64(iterations), percentile(samples, 0.5), percentile(samples, 0.95), samples[len(samples) - 1])
 	return true
 }

@@ -101,70 +101,10 @@ vk_create_swapchain :: proc(ctx: ^Vk_Context, width, height: i32) -> bool {
 			}
 		}
 
-		if !vk_create_render_pass(ctx) {
-			log_error("vk_create_swapchain: render pass creation failed")
-			return false
-		}
-		if !vk_create_framebuffers(ctx) {
-			log_error("vk_create_swapchain: framebuffer creation failed")
-			return false
-		}
 		log_debug("vk_create_swapchain: ready image_count=", ctx.swapchain_image_count, " extent=", ctx.swapchain_extent.width, "x", ctx.swapchain_extent.height)
 
 		return true
 	}
-
-vk_create_render_pass_variant :: proc(ctx: ^Vk_Context, load_op: vk.AttachmentLoadOp, initial_layout: vk.ImageLayout, out: ^vk.RenderPass) -> bool {
-	attachment := vk.AttachmentDescription {
-		format = ctx.swapchain_format,
-		samples = {._1},
-		loadOp = load_op,
-		storeOp = .STORE,
-		stencilLoadOp = .DONT_CARE,
-		stencilStoreOp = .DONT_CARE,
-		initialLayout = initial_layout,
-		finalLayout = .PRESENT_SRC_KHR,
-	}
-	color_ref := vk.AttachmentReference {
-		attachment = 0,
-		layout = .COLOR_ATTACHMENT_OPTIMAL,
-	}
-	subpass := vk.SubpassDescription {
-		pipelineBindPoint = .GRAPHICS,
-		colorAttachmentCount = 1,
-		pColorAttachments = &color_ref,
-	}
-	dependency := vk.SubpassDependency {
-		srcSubpass = vk.SUBPASS_EXTERNAL,
-		dstSubpass = 0,
-		srcStageMask = {.COLOR_ATTACHMENT_OUTPUT},
-		dstStageMask = {.COLOR_ATTACHMENT_OUTPUT},
-		dstAccessMask = {.COLOR_ATTACHMENT_WRITE},
-		dependencyFlags = {.BY_REGION},
-	}
-	info := vk.RenderPassCreateInfo {
-		sType = .RENDER_PASS_CREATE_INFO,
-		attachmentCount = 1,
-		pAttachments = &attachment,
-		subpassCount = 1,
-		pSubpasses = &subpass,
-		dependencyCount = 1,
-		pDependencies = &dependency,
-	}
-	result := vk.CreateRenderPass(ctx.device, &info, nil, out)
-	log_debug("vk_create_render_pass_variant: result=", result, " load_op=", load_op, " initial_layout=", initial_layout, " final_layout=", attachment.finalLayout)
-	return result == .SUCCESS
-}
-
-vk_create_render_pass :: proc(ctx: ^Vk_Context) -> bool {
-	if !vk_create_render_pass_variant(ctx, .CLEAR, .UNDEFINED, &ctx.render_pass) {
-		return false
-	}
-	if !vk_create_render_pass_variant(ctx, .LOAD, .COLOR_ATTACHMENT_OPTIMAL, &ctx.render_pass_load) {
-		return false
-	}
-	return true
-}
 
 vk_swapchain_image_usage :: proc(ctx: ^Vk_Context, caps: vk.SurfaceCapabilitiesKHR) -> vk.ImageUsageFlags {
 	usage := vk.ImageUsageFlags{.COLOR_ATTACHMENT, .TRANSFER_DST}
@@ -175,27 +115,6 @@ vk_swapchain_image_usage :: proc(ctx: ^Vk_Context, caps: vk.SurfaceCapabilitiesK
 		ctx.swapchain_supports_transfer_src = true
 	}
 	return usage
-}
-
-vk_create_framebuffers :: proc(ctx: ^Vk_Context) -> bool {
-	for i in 0 ..< ctx.swapchain_image_count {
-		attachment := ctx.swapchain_image_views[i]
-		info := vk.FramebufferCreateInfo {
-			sType = .FRAMEBUFFER_CREATE_INFO,
-			renderPass = ctx.render_pass,
-			attachmentCount = 1,
-			pAttachments = &attachment,
-			width = ctx.swapchain_extent.width,
-			height = ctx.swapchain_extent.height,
-			layers = 1,
-		}
-			result := vk.CreateFramebuffer(ctx.device, &info, nil, &ctx.swapchain_framebuffers[i])
-			log_debug("vk_create_framebuffers: index=", i, " result=", result, " size=", info.width, "x", info.height)
-			if result != .SUCCESS {
-				return false
-			}
-		}
-	return true
 }
 
 vk_create_frame_resources :: proc(ctx: ^Vk_Context) -> bool {
@@ -280,20 +199,6 @@ vk_destroy_frame_resources :: proc(ctx: ^Vk_Context) {
 }
 
 vk_destroy_swapchain_resources :: proc(ctx: ^Vk_Context) {
-	for i in 0 ..< ctx.swapchain_image_count {
-		if ctx.swapchain_framebuffers[i] != vk.Framebuffer(0) {
-			vk.DestroyFramebuffer(ctx.device, ctx.swapchain_framebuffers[i], nil)
-			ctx.swapchain_framebuffers[i] = vk.Framebuffer(0)
-		}
-	}
-	if ctx.render_pass != vk.RenderPass(0) {
-		vk.DestroyRenderPass(ctx.device, ctx.render_pass, nil)
-		ctx.render_pass = vk.RenderPass(0)
-	}
-	if ctx.render_pass_load != vk.RenderPass(0) {
-		vk.DestroyRenderPass(ctx.device, ctx.render_pass_load, nil)
-		ctx.render_pass_load = vk.RenderPass(0)
-	}
 	for i in 0 ..< ctx.swapchain_image_count {
 		if ctx.swapchain_image_views[i] != vk.ImageView(0) {
 			vk.DestroyImageView(ctx.device, ctx.swapchain_image_views[i], nil)

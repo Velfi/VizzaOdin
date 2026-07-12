@@ -59,11 +59,11 @@ remaining_sim_apply_frame_input_for_kind :: proc(sim: ^Remaining_Sim_State, kind
 	if sim.cursor_active != 0 && kind != .Voronoi_CA {
 		tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
 		if tool.valid {
-			sim.cursor_mode = canvas_tool_interaction_mode(tool, input.mouse_button == 3 || input.secondary_down)
+			sim.cursor_mode = canvas_tool_interaction_mode(tool, input.mouse_button == 3 || input.actions.secondary.down)
 		}
 	}
 	if kind == .Vectors && sim.cursor_active != 0 {
-		settings := &sim.vectors
+		settings := sim.vectors
 		if sim.cursor_mode == 3 || sim.cursor_mode == 4 {
 			settings.probe_position = sim.cursor_world
 			settings.probe_initialized = true
@@ -82,12 +82,12 @@ remaining_sim_apply_frame_input_for_kind :: proc(sim: ^Remaining_Sim_State, kind
 	}
 	if kind == .Voronoi_CA {
 		tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
-		sim.voronoi_pressed = input.mouse_pressed || input.primary_pressed || input.secondary_pressed
-		sim.voronoi_released = input.mouse_released || input.primary_released || input.secondary_released
+		sim.voronoi_pressed = input.mouse_pressed || input.actions.primary.pressed || input.actions.secondary.pressed
+		sim.voronoi_released = input.mouse_released || input.actions.primary.released || input.actions.secondary.released
 		// 1 magnet, 2 repel, 3 pluck, 4 paint, 5 erase.
 		sim.voronoi_interaction_mode = 0
-		if input.mouse_down || input.primary_down || input.secondary_down {
-			secondary := input.mouse_button == 3 || input.secondary_down
+		if input.mouse_down || input.actions.primary.down || input.actions.secondary.down {
+			secondary := input.mouse_button == 3 || input.actions.secondary.down
 			action := canvas_tool_action_for_input(tool, secondary)
 			#partial switch action {
 			case .Attract: sim.voronoi_interaction_mode = 1
@@ -139,7 +139,7 @@ remaining_sim_step :: proc(sim: ^Remaining_Sim_State, dt: f32) {
 		return
 	}
 	speed := sim.speed
-	if sim.moire.speed > 0 {
+	if sim.moire != nil && sim.moire.speed > 0 {
 		speed = sim.moire.speed
 	}
 	sim.time += dt * max(speed, 0)
@@ -225,7 +225,7 @@ remaining_sim_draw :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, ki
 }
 
 remaining_sim_draw_slime :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, width, height: f32) {
-	settings := &sim.slime
+	settings := sim.slime
 	if settings.background_mode == .White {
 		uifw.gui_rect(gui, {0, 0, width, height}, {0.90, 0.92, 0.88, 0.70})
 	}
@@ -246,7 +246,7 @@ remaining_sim_draw_slime :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Conte
 }
 
 remaining_sim_draw_flow :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, width, height: f32) {
-	settings := &sim.flow
+	settings := sim.flow
 	cols := 28
 	rows := 16
 	for y in 0 ..< rows {
@@ -294,7 +294,7 @@ remaining_sim_draw_flow_particle :: proc(gui: ^uifw.Gui_Context, shape: Flow_Par
 }
 
 remaining_sim_draw_pellets :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, width, height: f32) {
-	settings := &sim.pellets
+	settings := sim.pellets
 	#partial switch settings.background_color_mode {
 	case .White:
 		uifw.gui_rect(gui, {0, 0, width, height}, {0.92, 0.91, 0.88, 0.70})
@@ -322,7 +322,7 @@ remaining_sim_draw_pellets :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Con
 }
 
 remaining_sim_draw_voronoi :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, width, height: f32) {
-	settings := &sim.voronoi
+	settings := sim.voronoi
 	target_cells := max(math.sqrt(f32(max(settings.point_count, 1))) * 0.7, 4)
 	cell := max(min(width, height) / target_cells / max(sim.scale, 0.25), 12)
 	cols := int(width / cell) + 2
@@ -341,7 +341,7 @@ remaining_sim_draw_voronoi :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Con
 }
 
 remaining_sim_draw_moire :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, width, height: f32) {
-	settings := &sim.moire
+	settings := sim.moire
 	center := uifw.Vec2{width * 0.5, height * 0.5}
 	count := 72
 	for i in 0 ..< count {
@@ -371,7 +371,7 @@ remaining_sim_draw_moire :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Conte
 }
 
 remaining_sim_draw_vectors :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, width, height: f32) {
-	settings := &sim.vectors
+	settings := sim.vectors
 	#partial switch settings.background_color_mode {
 	case .White:
 		uifw.gui_rect(gui, {0, 0, width, height}, {0.92, 0.93, 0.90, 0.72})
@@ -401,7 +401,7 @@ remaining_sim_draw_vectors :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Con
 }
 
 remaining_sim_draw_primordial :: proc(sim: ^Remaining_Sim_State, gui: ^uifw.Gui_Context, width, height: f32) {
-	settings := &sim.primordial
+	settings := sim.primordial
 	center := uifw.Vec2{width * 0.5, height * 0.5}
 	count := 120
 	for i in 0 ..< count {

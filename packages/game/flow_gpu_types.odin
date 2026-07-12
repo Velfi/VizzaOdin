@@ -1,7 +1,5 @@
 package game
 
-import engine "../engine"
-import vk "vendor:vulkan"
 
 FLOW_VECTOR_SHADER_SOURCE :: "assets/shaders/simulations/flow/shaders/flow_vector_compute.slang"
 FLOW_PARTICLE_UPDATE_SHADER_SOURCE :: "assets/shaders/simulations/flow/shaders/particle_update.slang"
@@ -27,8 +25,6 @@ FLOW_ENTRY :: cstring("main")
 FLOW_VERTEX_ENTRY :: cstring("main")
 FLOW_FRAGMENT_ENTRY :: cstring("main")
 FLOW_FIELD_RESOLUTION :: u32(128)
-FLOW_IMAGE_FORMAT :: vk.Format(.R8G8B8A8_UNORM)
-FLOW_RETIRED_VECTOR_FIELD_IMAGE_CAP :: 4
 
 Flow_Particle :: struct #align(8) {
 	position: [2]f32,
@@ -158,91 +154,6 @@ Flow_Shape_Params :: struct #align(16) {
 	trail_map_height: u32,
 	_padding_0: u32,
 	_padding_1: u32,
-}
-
-Flow_Image :: struct {
-	handle: vk.Image,
-	memory: vk.DeviceMemory,
-	view: vk.ImageView,
-	layout: vk.ImageLayout,
-	width: u32,
-	height: u32,
-}
-
-Flow_Retired_Vector_Field_Image :: struct {
-	image: Flow_Image,
-	pending_frame_slots: u32,
-}
-
-Flow_Gpu_State :: struct {
-	vector_shader: engine.Vk_Shader_Module,
-	particle_update_shader: engine.Vk_Shader_Module,
-	trail_decay_shader: engine.Vk_Shader_Module,
-	shape_drawing_shader: engine.Vk_Shader_Module,
-	background_vertex_shader: engine.Vk_Shader_Module,
-	background_fragment_shader: engine.Vk_Shader_Module,
-	trail_vertex_shader: engine.Vk_Shader_Module,
-	trail_fragment_shader: engine.Vk_Shader_Module,
-	particle_vertex_shader: engine.Vk_Shader_Module,
-	particle_fragment_shader: engine.Vk_Shader_Module,
-	vector_pipeline: engine.Vk_Compute_Pipeline,
-	particle_update_pipeline: engine.Vk_Compute_Pipeline,
-	trail_decay_pipeline: engine.Vk_Compute_Pipeline,
-	shape_drawing_pipeline: engine.Vk_Compute_Pipeline,
-	background_pipeline: engine.Vk_Graphics_Pipeline,
-	trail_pipeline: engine.Vk_Graphics_Pipeline,
-	particle_pipeline: engine.Vk_Graphics_Pipeline,
-	vector_set_layout: vk.DescriptorSetLayout,
-	update_set_layout: vk.DescriptorSetLayout,
-	background_set_layout: vk.DescriptorSetLayout,
-	trail_set_layout: vk.DescriptorSetLayout,
-	shape_drawing_set_layout: vk.DescriptorSetLayout,
-	particle_set_layout: vk.DescriptorSetLayout,
-	camera_set_layout: vk.DescriptorSetLayout,
-	descriptor_pool: vk.DescriptorPool,
-	vector_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	update_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	background_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	trail_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	shape_drawing_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	particle_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	camera_sets: [engine.MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	particle_buffer: engine.Vk_Buffer,
-	flow_vector_buffer: engine.Vk_Buffer,
-	sim_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	vector_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	lut_buffer: engine.Vk_Buffer,
-	background_color_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	spawn_control_buffer: engine.Vk_Buffer,
-	shape_params_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	camera_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	trail_image: Flow_Image,
-	default_image: Flow_Image,
-	vector_field_image: Flow_Image,
-	webcam_images: [engine.MAX_FRAMES_IN_FLIGHT]Flow_Image,
-	webcam_staging_buffers: [engine.MAX_FRAMES_IN_FLIGHT]engine.Vk_Buffer,
-	webcam_upload_pending: [engine.MAX_FRAMES_IN_FLIGHT]bool,
-	webcam_image_ready: [engine.MAX_FRAMES_IN_FLIGHT]bool,
-	webcam_live: bool,
-	webcam_width: u32,
-	webcam_height: u32,
-	retired_vector_field_images: [FLOW_RETIRED_VECTOR_FIELD_IMAGE_CAP]Flow_Retired_Vector_Field_Image,
-	vector_field_image_loaded: bool,
-	vector_field_image_path: [MAX_FILE_PATH]u8,
-	vector_field_image_fit_uploaded: Vector_Image_Fit_Mode,
-	vector_field_image_mirror_horizontal_uploaded: bool,
-	vector_field_image_mirror_vertical_uploaded: bool,
-	vector_field_image_invert_tone_uploaded: bool,
-	sampler: vk.Sampler,
-	total_pool_size: u32,
-	trail_width: u32,
-	trail_height: u32,
-	autospawn_accumulator: f32,
-	brush_spawn_accumulator: f32,
-	trail_cleared: bool,
-	default_image_initialized: bool,
-	show_particles: bool,
-	ready: bool,
 }
 
 flow_background_color :: proc(settings: ^Flow_Settings) -> [4]f32 {

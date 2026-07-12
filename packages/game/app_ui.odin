@@ -2,7 +2,6 @@ package game
 
 import uifw "../ui"
 import engine "../engine"
-
 import "core:fmt"
 import "core:math"
 import sdl "vendor:sdl3"
@@ -111,6 +110,11 @@ Mode_Transition_Phase :: enum u8 {
 }
 
 App_Ui_State :: struct {
+	feature_instances: Feature_Instance_Set,
+	gray_scott: Gray_Scott_Simulation,
+	preview_gray_scott: Gray_Scott_Simulation,
+	particle_life: Particle_Life_Simulation,
+	preview_particle_life: Particle_Life_Simulation,
 	mode: App_Mode,
 	previous_mode: App_Mode,
 	mode_transition_phase: Mode_Transition_Phase,
@@ -126,6 +130,8 @@ App_Ui_State :: struct {
 	keyboard_shortcut_profile_index: int,
 	keyboard_binding_notice: [128]u8,
 	settings_dirty: bool,
+	next_dialog_request_id: u64,
+	pending_image_dialog_requests: [6]u64,
 	simulation_shell: Simulation_Shell_State,
 	simulation_exit_hold_seconds: f32,
 	simulation_exit_hold_triggered: bool,
@@ -176,6 +182,13 @@ App_Ui_State :: struct {
 	moire: Remaining_Sim_State,
 	vectors: Remaining_Sim_State,
 	primordial: Remaining_Sim_State,
+	preview_slime_mold: Remaining_Sim_State,
+	preview_flow_field: Remaining_Sim_State,
+	preview_pellets: Remaining_Sim_State,
+	preview_voronoi_ca: Remaining_Sim_State,
+	preview_moire: Remaining_Sim_State,
+	preview_vectors: Remaining_Sim_State,
+	preview_primordial: Remaining_Sim_State,
 	theme_preview: bool,
 	component_fixture: Ui_Component_Fixture,
 	component_fixture_state: Ui_Component_Fixture_State,
@@ -189,6 +202,28 @@ App_Ui_State :: struct {
 	preview_combo_query: [64]u8,
 	preview_progress: f32,
 	color_scheme_editor: Color_Scheme_Editor_State,
+}
+
+app_ui_request_image_dialog :: proc(ui: ^App_Ui_State, worker: ^Product_Context, target: Feature_Image_Target) {
+	if ui == nil || worker == nil do return
+	ui.next_dialog_request_id += 1
+	if ui.next_dialog_request_id == 0 do ui.next_dialog_request_id = 1
+	request_id := ui.next_dialog_request_id
+	ui.pending_image_dialog_requests[int(target)] = request_id
+	feature_id, slot, found := feature_image_target_location(target)
+	if !found do return
+	payload := Feature_Image_Command{slot = slot, dialog_request_id = request_id}
+	if command, ok := feature_command_make(feature_id, FEATURE_COMMAND_LOAD_IMAGE, &payload); ok {
+		_ = engine.queue_try_push(worker.ui_to_render, Ui_To_Render_Command{kind = .Feature, feature = command})
+	}
+}
+
+app_ui_consume_image_dialog_request :: proc(ui: ^App_Ui_State, target: Feature_Image_Target, request_id: u64) -> bool {
+	if ui == nil || request_id == 0 do return false
+	pending := &ui.pending_image_dialog_requests[int(target)]
+	if pending^ != request_id do return false
+	pending^ = 0
+	return true
 }
 
 APP_SIMULATION_NAMES := [?]string {
@@ -358,8 +393,32 @@ Menu_Theme :: struct {
 	start_width: f32,
 }
 
-app_ui_init :: proc(ui: ^App_Ui_State, settings: App_Settings, theme_preview := false) {
+app_ui_init :: proc(ui: ^App_Ui_State, settings: App_Settings, theme_preview := false) -> bool {
+	feature_instance_set_destroy(&ui.feature_instances)
 	ui^ = {}
+	if !feature_instance_set_init(&ui.feature_instances) do return false
+	if !gray_scott_bind_product_instance(&ui.gray_scott, feature_instance_set_get(&ui.feature_instances, .Gray_Scott)) ||
+	   !gray_scott_bind_product_instance(&ui.preview_gray_scott, feature_instance_set_get(&ui.feature_instances, .Gray_Scott, true)) ||
+	   !particle_life_bind_product_instance(&ui.particle_life, feature_instance_set_get(&ui.feature_instances, .Particle_Life)) ||
+	   !particle_life_bind_product_instance(&ui.preview_particle_life, feature_instance_set_get(&ui.feature_instances, .Particle_Life, true)) {
+		feature_instance_set_destroy(&ui.feature_instances)
+		return false
+	}
+	bindings := [?]struct {state: ^Remaining_Sim_State, mode: App_Mode, kind: Remaining_Sim_Kind, preview: bool} {
+		{&ui.slime_mold, .Slime_Mold, .Slime_Mold, false}, {&ui.preview_slime_mold, .Slime_Mold, .Slime_Mold, true},
+		{&ui.flow_field, .Flow_Field, .Flow_Field, false}, {&ui.preview_flow_field, .Flow_Field, .Flow_Field, true},
+		{&ui.pellets, .Pellets, .Pellets, false}, {&ui.preview_pellets, .Pellets, .Pellets, true},
+		{&ui.voronoi_ca, .Voronoi_CA, .Voronoi_CA, false}, {&ui.preview_voronoi_ca, .Voronoi_CA, .Voronoi_CA, true},
+		{&ui.moire, .Moire, .Moire, false}, {&ui.preview_moire, .Moire, .Moire, true},
+		{&ui.vectors, .Vectors, .Vectors, false}, {&ui.preview_vectors, .Vectors, .Vectors, true},
+		{&ui.primordial, .Primordial, .Primordial, false}, {&ui.preview_primordial, .Primordial, .Primordial, true},
+	}
+	for binding in bindings {
+		if !remaining_sim_bind_product_instance(binding.state, feature_instance_set_get(&ui.feature_instances, binding.mode, binding.preview), binding.kind) {
+			feature_instance_set_destroy(&ui.feature_instances)
+			return false
+		}
+	}
 	ui.mode = .Main_Menu
 	ui.previous_mode = .Main_Menu
 	ui.settings = settings
@@ -396,20 +455,74 @@ app_ui_init :: proc(ui: ^App_Ui_State, settings: App_Settings, theme_preview := 
 	remaining_sim_init(&ui.moire)
 	remaining_sim_init(&ui.vectors)
 	remaining_sim_init(&ui.primordial)
+	remaining_sim_init(&ui.preview_slime_mold)
+	remaining_sim_init(&ui.preview_flow_field)
+	remaining_sim_init(&ui.preview_pellets)
+	remaining_sim_init(&ui.preview_voronoi_ca)
+	remaining_sim_init(&ui.preview_moire)
+	remaining_sim_init(&ui.preview_vectors)
+	remaining_sim_init(&ui.preview_primordial)
 	if theme_preview {
 		ui.mode = .Theme_Preview
 		ui.previous_mode = .Theme_Preview
 	}
+	return true
 }
 
-app_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Gray_Scott_Simulation, particle_life: ^Particle_Life_Simulation, vk_ctx: ^engine.Vk_Context, worker: ^Product_Context) {
+app_ui_destroy :: proc(ui: ^App_Ui_State) {
+	if ui == nil do return
+	if ui.camera_test != nil do sdl.CloseCamera(ui.camera_test)
+	feature_instance_set_destroy(&ui.feature_instances)
+	ui^ = {}
+}
+
+App_Ui_Simulation_Document_Context :: struct {
+	ui: ^App_Ui_State,
+	viewport: uifw.Vec2,
+	worker: ^Product_Context,
+}
+
+app_ui_draw_simulation_document_slot :: proc(data: rawptr, gui: ^uifw.Gui_Context, bounds: uifw.Rect) {
+	_ = bounds
+	document_context := cast(^App_Ui_Simulation_Document_Context)data
+	if document_context == nil || document_context.ui == nil || gui == nil do return
+	ui := document_context.ui
+	viewport := document_context.viewport
+	worker := document_context.worker
+	descriptor, ok := feature_descriptor_by_mode(ui.mode)
+	if ok && descriptor.draw_ui != nil do descriptor.draw_ui(ui, gui, viewport, worker)
+}
+
+app_ui_draw_simulation_document :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, documents: ^uifw.Ui_Document_Assets, viewport: uifw.Vec2, worker: ^Product_Context) {
+	if documents == nil {
+		fallback := App_Ui_Simulation_Document_Context {ui, viewport, worker}
+		app_ui_draw_simulation_document_slot(&fallback, gui, {0, 0, viewport.x, viewport.y})
+		return
+	}
+	document, found := uifw.ui_document_assets_find(documents, "simulation_shell")
+	if !found {
+		fallback := App_Ui_Simulation_Document_Context {ui, viewport, worker}
+		app_ui_draw_simulation_document_slot(&fallback, gui, {0, 0, viewport.x, viewport.y})
+		return
+	}
+	document_context := App_Ui_Simulation_Document_Context {ui, viewport, worker}
+	bindings := [?]uifw.Ui_Document_Runtime_Binding {
+		{id = "feature_shell", kind = .Slot, userdata = &document_context, draw_slot = app_ui_draw_simulation_document_slot, slot_content_height = viewport.y},
+	}
+	result := uifw.ui_document_draw(document, gui, {0, 0, viewport.x, viewport.y}, bindings[:], nil)
+	if result.error != .None {
+		app_ui_draw_simulation_document_slot(&document_context, gui, {0, 0, viewport.x, viewport.y})
+	}
+}
+
+app_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, documents: ^uifw.Ui_Document_Assets, viewport: uifw.Vec2, worker: ^Product_Context) {
 	if ui.mode != .Options && ui.camera_test != nil {
 		sdl.CloseCamera(ui.camera_test)
 		ui.camera_test = nil
 		ui.camera_test_frames = 0
 	}
 	app_ui_mode_transition_update(ui, max(gui.input.delta_time, 0))
-	app_ui_handle_controller_disconnect(ui, gui, sim, particle_life)
+	app_ui_handle_controller_disconnect(ui, gui)
 	app_ui_update_device_notice(ui, gui)
 
 	transitioning := app_ui_mode_transition_active(ui)
@@ -421,33 +534,15 @@ app_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Gray_Scott_
 	}
 	#partial switch ui.mode {
 	case .Main_Menu:
-		app_ui_draw_main_menu(ui, gui, vk_ctx, worker)
+		app_ui_draw_main_menu_document(ui, gui, documents, viewport, worker)
 	case .Options:
-		app_ui_draw_options(ui, gui, vk_ctx, worker)
+		app_ui_draw_options_document(ui, gui, documents, viewport, worker)
 	case .How_To_Play:
-		app_ui_draw_how_to_play(ui, gui)
-	case .Slime_Mold:
-		app_ui_draw_remaining_sim(ui, gui, .Slime_Mold, &ui.slime_mold, vk_ctx, worker)
-	case .Gray_Scott:
-	app_ui_draw_gray_scott(ui, gui, sim, vk_ctx, worker)
-	case .Particle_Life:
-		app_ui_draw_particle_life(ui, gui, particle_life, vk_ctx, worker)
-	case .Flow_Field:
-		app_ui_draw_remaining_sim(ui, gui, .Flow_Field, &ui.flow_field, vk_ctx, worker)
-	case .Pellets:
-		app_ui_draw_remaining_sim(ui, gui, .Pellets, &ui.pellets, vk_ctx, worker)
-	case .Gradient_Editor:
-		app_ui_draw_gradient_editor(ui, gui, vk_ctx)
-	case .Voronoi_CA:
-		app_ui_draw_remaining_sim(ui, gui, .Voronoi_CA, &ui.voronoi_ca, vk_ctx, worker)
-	case .Moire:
-		app_ui_draw_remaining_sim(ui, gui, .Moire, &ui.moire, vk_ctx, worker)
-	case .Vectors:
-		app_ui_draw_remaining_sim(ui, gui, .Vectors, &ui.vectors, vk_ctx, worker)
-	case .Primordial:
-		app_ui_draw_remaining_sim(ui, gui, .Primordial, &ui.primordial, vk_ctx, worker)
+		app_ui_draw_how_to_play_document(ui, gui, documents, viewport)
+	case .Slime_Mold, .Gray_Scott, .Particle_Life, .Flow_Field, .Pellets, .Gradient_Editor, .Voronoi_CA, .Moire, .Vectors, .Primordial:
+		app_ui_draw_simulation_document(ui, gui, documents, viewport, worker)
 	case .Theme_Preview:
-		app_ui_draw_theme_preview(ui, gui, vk_ctx)
+		app_ui_draw_theme_preview(ui, gui, viewport)
 	}
 	if ui.controls_help_open && app_ui_mode_is_simulation(ui.mode) {
 		app_ui_draw_controls_help_modal(ui, gui)
@@ -598,7 +693,6 @@ app_ui_mode_transition_suppress_input :: proc(input: ^uifw.Input_State) {
 	input.key_space_pressed = false
 	input.key_space_released = false
 	input.controller_left = {}
-	input.controller_right = {}
 	input.controller_zoom = 0
 }
 

@@ -15,6 +15,7 @@ test_input_context_routes_channels_by_priority :: proc(t: ^testing.T) {
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 
 	input := game.Ui_Frame_Input{window_width = 1280, window_height = 720, mouse_pos = {640, 360}}
@@ -62,6 +63,7 @@ test_controller_ui_shortcut_is_owned_without_changing_prompt_device :: proc(t: ^
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	show_ui_before := ui.simulation_shell.show_ui
 
@@ -69,7 +71,6 @@ test_controller_ui_shortcut_is_owned_without_changing_prompt_device :: proc(t: ^
 		window_width = 1280,
 		window_height = 720,
 		active_device = .Mouse_Keyboard,
-		toggle_ui = true,
 		actions = {
 			toggle_ui = {pressed = true, owner = .Controller},
 		},
@@ -80,7 +81,6 @@ test_controller_ui_shortcut_is_owned_without_changing_prompt_device :: proc(t: ^
 	testing.expect_value(t, route.global_shortcut_owner, game.App_Input_Context.Focused_Ui)
 
 	filtered := game.app_ui_simulation_filter_input(&ui, &ctx, input)
-	testing.expect(t, !filtered.toggle_ui)
 	testing.expect(t, !filtered.actions.toggle_ui.pressed)
 	testing.expect(t, ui.frame_actions.toggle_ui.pressed)
 	testing.expect_value(t, ui.frame_actions.toggle_ui.owner, game.Input_Action_Source.Controller)
@@ -95,6 +95,7 @@ test_controller_deck_space_claim_reaches_ui_but_not_shell_or_simulation :: proc(
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = false
 	ui.slime_controller.panel_open = false
@@ -106,11 +107,10 @@ test_controller_deck_space_claim_reaches_ui_but_not_shell_or_simulation :: proc(
 		window_width = 1280,
 		window_height = 720,
 		key_space = true,
-		pause = true,
-		actions = {pause = {pressed = true, owner = .Mouse_Keyboard}},
+		actions = {pause = {pressed = true, owner = .Mouse_Keyboard}, control_deck = {pressed = true, owner = .Mouse_Keyboard}},
 	})
 	testing.expect(t, !filtered.key_space)
-	testing.expect(t, !filtered.pause)
+	testing.expect(t, !filtered.actions.pause.pressed)
 	testing.expect(t, ctx.input.key_space)
 	testing.expect_value(t, ui.simulation_shell.show_ui, show_ui_before)
 
@@ -127,6 +127,7 @@ test_semantic_control_deck_action_opens_deck_without_legacy_space_fields :: proc
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 	ui.slime_controller.deck_visible = false
 
@@ -156,13 +157,13 @@ test_semantic_shoulder_focus_claim_routes_to_controller_deck :: proc(t: ^testing
 	ui: game.App_Ui_State
 	settings := game.settings_default()
 	game.app_ui_init(&ui, settings)
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Slime_Mold
 
 	input := game.Ui_Frame_Input{
 		window_width = 1280,
 		window_height = 720,
 		active_device = .Controller,
-		focus_next = true,
 		actions = {focus_next = {pressed = true, owner = .Controller}},
 		controller_left = {0.8, 0.4},
 	}
@@ -181,6 +182,7 @@ test_engaged_edit_captures_outside_pointer_before_simulation :: proc(t: ^testing
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Gray_Scott
 	ctx.focused = 7
 	ctx.focus_edit_id = 7
@@ -191,14 +193,13 @@ test_engaged_edit_captures_outside_pointer_before_simulation :: proc(t: ^testing
 		mouse_pos = {640, 360},
 		mouse_down = true,
 		mouse_pressed = true,
-		primary_down = true,
-		primary_pressed = true,
+		actions = {primary = {down = true, pressed = true, owner = .Mouse_Keyboard}},
 	})
 	testing.expect_value(t, ui.input_route.pointer_owner, game.App_Input_Context.Value_Edit)
 	testing.expect(t, !filtered.mouse_down)
 	testing.expect(t, !filtered.mouse_pressed)
-	testing.expect(t, !filtered.primary_down)
-	testing.expect(t, !filtered.primary_pressed)
+	testing.expect(t, !filtered.actions.primary.down)
+	testing.expect(t, !filtered.actions.primary.pressed)
 	testing.expect(t, !ui.simulation_shell.mouse_pressed)
 }
 
@@ -396,6 +397,7 @@ test_mouse_canvas_click_releases_controller_ui_focus :: proc(t: ^testing.T) {
 	defer uifw.gui_destroy(&ctx)
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
+	defer game.app_ui_destroy(&ui)
 	ui.mode = .Particle_Life
 	state := game.simulation_controller_ui_state(&ui)
 	state.deck_visible = true

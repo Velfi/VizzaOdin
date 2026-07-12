@@ -280,6 +280,16 @@ mcp_bridge_call_application_tool :: proc(bridge: ^Mcp_Bridge, id, name, line: st
 		return mcp_bridge_tool_text(id, "{\"ok\":true,\"queued\":\"close\"}"), true
 	case "screenshot":
 		return mcp_bridge_screenshot(id, bridge, line), true
+	case "resize_window":
+		width, width_ok := mcp_bridge_extract_number_field(line, "width")
+		height, height_ok := mcp_bridge_extract_number_field(line, "height")
+		if !width_ok || !height_ok || width < 320 || height < 240 {
+			return mcp_bridge_error(id, -32602, "resize_window requires width >= 320 and height >= 240"), true
+		}
+		if !mcp_bridge_enqueue_command(bridge, Mcp_Command{kind = .Resize_Window, x = width, y = height}) {
+			return mcp_bridge_queue_error(id, bridge), true
+		}
+		return mcp_bridge_tool_text(id, "{\"ok\":true,\"queued\":\"resize_window\"}"), true
 	case:
 		return "", false
 	}
@@ -303,57 +313,39 @@ mcp_bridge_json_string_array :: proc(items: []string) -> string {
 }
 
 mcp_bridge_list_modes_json :: proc() -> string {
-	modes := [?]string {
-		"Main_Menu",
-		"Slime_Mold",
-		"Gray_Scott",
-		"Particle_Life",
-		"Flow_Field",
-		"Pellets",
-		"Gradient_Editor",
-		"Voronoi_CA",
-		"Moire",
-		"Vectors",
-		"Primordial",
-		"Options",
-		"How_To_Play",
-		"Theme_Preview",
+	modes: [16]string
+	simulations: [16]string
+	mode_count := 0
+	simulation_count := 0
+	modes[mode_count] = "Main_Menu"
+	mode_count += 1
+	for index in 0 ..< feature_count() {
+		descriptor, ok := feature_descriptor_at(index)
+		if !ok do continue
+		name := fmt.tprintf("%v", descriptor.mode)
+		modes[mode_count] = name
+		mode_count += 1
+		simulations[simulation_count] = name
+		simulation_count += 1
 	}
-	simulations := [?]string {
-		"Slime_Mold",
-		"Gray_Scott",
-		"Particle_Life",
-		"Flow_Field",
-		"Pellets",
-		"Gradient_Editor",
-		"Voronoi_CA",
-		"Moire",
-		"Vectors",
-		"Primordial",
+	shell_modes := [?]string{"Options", "How_To_Play", "Theme_Preview"}
+	for name in shell_modes {
+		modes[mode_count] = name
+		mode_count += 1
 	}
 	return fmt.tprintf(
 		"{{\"ok\":true,\"modes\":%s,\"simulations\":%s}}",
-		mcp_bridge_json_string_array(modes[:]),
-		mcp_bridge_json_string_array(simulations[:]),
+		mcp_bridge_json_string_array(modes[:mode_count]),
+		mcp_bridge_json_string_array(simulations[:simulation_count]),
 	)
 }
 
 mcp_bridge_list_builtin_presets_json :: proc(mode: App_Mode) -> string {
-	names: []string
-	#partial switch mode {
-	case .Gray_Scott:
-		names = GRAY_SCOTT_BUILTIN_PRESET_NAMES[:]
-	case .Particle_Life:
-		names = PARTICLE_LIFE_BUILTIN_PRESET_NAMES[:]
-	case .Slime_Mold:
-		names = SLIME_BUILTIN_PRESET_NAMES[:]
-	case .Flow_Field, .Pellets, .Voronoi_CA, .Vectors, .Primordial:
-		names = REMAINING_DEFAULT_BUILTIN_PRESET_NAMES[:]
-	case .Moire:
-		names = MOIRE_BUILTIN_PRESET_NAMES[:]
-	case:
+	descriptor, ok := feature_descriptor_by_mode(mode)
+	if !ok || descriptor.builtin_preset_names == nil {
 		return fmt.tprintf("{{\"ok\":true,\"mode\":\"%v\",\"count\":0,\"presets\":[]}}", mode)
 	}
+	names := descriptor.builtin_preset_names()
 	return fmt.tprintf(
 		"{{\"ok\":true,\"mode\":\"%v\",\"count\":%d,\"presets\":%s}}",
 		mode,

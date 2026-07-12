@@ -40,21 +40,18 @@ struct GridParams {
     uint _pad2;
 };
 
-struct GridCell {
-    uint particle_count;
-    uint[64] particle_indices;
-};
-
 [[vk::binding(0, 0)]]
 RWStructuredBuffer<Particle> particles;
 [[vk::binding(1, 0)]]
 ConstantBuffer<DensityParams> params;
 [[vk::binding(2, 0)]]
-StructuredBuffer<GridCell> grid;
+StructuredBuffer<uint> particle_indices;
 [[vk::binding(3, 0)]]
 ConstantBuffer<GridParams> grid_params;
 [[vk::binding(4, 0)]]
 StructuredBuffer<uint> grid_counts;
+[[vk::binding(5, 0)]]
+StructuredBuffer<uint> grid_offsets;
 
 uint2 world_to_grid(float2 pos) {
     let normalized_pos = (pos + float2(1.0, 1.0)) * 0.5;
@@ -107,9 +104,10 @@ float compute_density(Particle particle, uint particle_index) {
             let cx = (int(center_cell.x) + dx + int(grid_params.grid_width)) % int(grid_params.grid_width);
             let cy = (int(center_cell.y) + dy + int(grid_params.grid_height)) % int(grid_params.grid_height);
             let cell_index = grid_coord_to_index(uint2(uint(cx), uint(cy)));
-            let count = min(grid_counts[cell_index], 64);
+            let count = grid_counts[cell_index];
+            let start = grid_offsets[cell_index];
             for (var k = 0; k < count; k++) {
-                let i = grid[cell_index].particle_indices[k];
+                let i = particle_indices[start + k];
                 if (i == particle_index) { continue; }
 
                 let other = particles[i];

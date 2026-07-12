@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "document_id": "options",
+  "nodes": [
+    {"id": "root", "kind": "panel"},
+    {"id": "heading", "parent": "root", "kind": "text", "text": "Options"},
+    {"id": "options_slot", "parent": "root", "kind": "slot", "binding": "options_slot"}
+  ],
+  "bindings": [{"id": "options_slot", "kind": "slot", "required": true}],
+  "constraints": [
+    {"left": "root.width", "relation": "equal", "right": "viewport.width", "constant": -48, "strength": "required"},
+    {"left": "root.height", "relation": "equal", "right": "viewport.height", "constant": -48, "strength": "required"},
+    {"left": "root.center_x", "relation": "equal", "right": "viewport.center_x", "strength": "required"},
+    {"left": "root.center_y", "relation": "equal", "right": "viewport.center_y", "strength": "required"}
+  ]
+}

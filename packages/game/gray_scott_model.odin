@@ -183,6 +183,9 @@ Gray_Scott_Settings :: struct {
 	blur_radius: f32,
 	blur_sigma: f32,
 	paused: bool,
+	seed_noise: Noise_Settings,
+	seed_density: f32,
+	seed_amplitude: f32,
 }
 
 Gray_Scott_Randomize_Undo :: struct {
@@ -197,6 +200,10 @@ Gray_Scott_Randomize_Undo :: struct {
 }
 
 Gray_Scott_Runtime_State :: struct {
+	canvas_tool: Canvas_Tool_State,
+	render_ready: bool,
+	render_width: i32,
+	render_height: i32,
 	nutrient_upload_pending: bool,
 	simulation_time: f32,
 	frame_index: u64,
@@ -226,10 +233,21 @@ Gray_Scott_Runtime_State :: struct {
 }
 
 Gray_Scott_Simulation :: struct {
-	canvas_tool: Canvas_Tool_State,
-	settings: Gray_Scott_Settings,
-	runtime: Gray_Scott_Runtime_State,
-	gpu: Gray_Scott_Gpu_State,
+	settings: ^Gray_Scott_Settings,
+	using runtime: ^Gray_Scott_Runtime_State,
+	// Opaque bridge to descriptor-owned renderer storage. Product code never
+	// dereferences or serializes this transient handle.
+	render_runtime: rawptr,
+}
+
+gray_scott_bind_product_instance :: proc(sim: ^Gray_Scott_Simulation, instance: ^Feature_Instance) -> bool {
+	if sim == nil do return false
+	settings, settings_ok := feature_instance_settings(instance, Gray_Scott_Settings)
+	runtime, runtime_ok := feature_instance_runtime(instance, Gray_Scott_Runtime_State)
+	if !settings_ok || !runtime_ok do return false
+	sim.settings = settings
+	sim.runtime = runtime
+	return true
 }
 
 gray_scott_default_settings :: proc() -> Gray_Scott_Settings {
@@ -258,7 +276,14 @@ gray_scott_default_settings :: proc() -> Gray_Scott_Settings {
 			blur_radius = 5.0,
 			blur_sigma = 2.0,
 			paused = false,
+			seed_noise = noise_settings_default(.Simplex),
+			seed_density = 0.65,
+			seed_amplitude = 0.35,
 		}
+	settings.seed_noise.frequency = 5.0
+	settings.seed_noise.fractal_mode = .FBM
+	settings.seed_noise.fractal_mode_index = int(Noise_Fractal_Mode.FBM)
+	settings.seed_noise.octaves = 4
 	color_scheme_name_set(&settings.color_scheme, "MATPLOTLIB_prism")
 	write_fixed_string(settings.nutrient_image_path[:], "config/gray_scott_nutrient.png")
 	return settings
@@ -282,8 +307,11 @@ gray_scott_apply_builtin_preset :: proc(sim: ^Gray_Scott_Simulation, index: int)
 }
 
 gray_scott_init :: proc(sim: ^Gray_Scott_Simulation, width, height: i32) {
-	sim.settings = gray_scott_default_settings()
-	sim.runtime = {
+	if sim == nil || sim.settings == nil || sim.runtime == nil do return
+	sim.settings^ = gray_scott_default_settings()
+	sim.runtime^ = {
+		render_width = width,
+		render_height = height,
 		seed = 0x6d2b79f5,
 		pending_seed_mode = GRAY_SCOTT_MODE_INITIAL_SEED,
 		camera_zoom = 1,
@@ -294,7 +322,6 @@ gray_scott_init :: proc(sim: ^Gray_Scott_Simulation, width, height: i32) {
 	gray_scott_apply_builtin_preset(sim, sim.runtime.current_preset_index)
 	sim.runtime.pending_seed_mode = GRAY_SCOTT_MODE_NOISE_SEED
 	sim.runtime.nutrient_upload_pending = true
-	sim.gpu = {state_index = 0, width = width, height = height}
 }
 
 gray_scott_request_nutrient_upload :: proc(sim: ^Gray_Scott_Simulation) {
@@ -380,9 +407,9 @@ gray_scott_nutrient_image_value :: proc(source: [^]u8, source_width, source_heig
 
 
 gray_scott_resize :: proc(sim: ^Gray_Scott_Simulation, width, height: i32) {
-	sim.gpu.width = width
-	sim.gpu.height = height
-	sim.gpu.ready = false
+	sim.runtime.render_width = width
+	sim.runtime.render_height = height
+	sim.runtime.render_ready = false
 }
 
 gray_scott_step :: proc(sim: ^Gray_Scott_Simulation, dt: f32) {
@@ -492,7 +519,7 @@ gray_scott_apply_frame_input :: proc(sim: ^Gray_Scott_Simulation, input: Ui_Fram
 	sim.runtime.paint_active = true
 	sim.runtime.paint_x, sim.runtime.paint_y = gray_scott_screen_to_texture(sim, input.mouse_pos, input.window_width, input.window_height)
 	tool := canvas_tool_selected(&tool_set, &sim.canvas_tool)
-	secondary := button == 2 || input.secondary_down
+	secondary := button == 2 || input.actions.secondary.down
 	if sim.canvas_tool.selected_slot == 0 {
 		sim.runtime.paint_button = secondary ? 2 : 0
 	} else {

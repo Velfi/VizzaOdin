@@ -1,10 +1,11 @@
-package game
+package render_vk
 
 import engine "../engine"
 import vk "vendor:vulkan"
 
-// Ui_Render_Sink lets simulation presentation request a UI overlay without
-// depending on a concrete renderer adapter.
+// Renderer-local callback used when a feature presentation pass needs the UI
+// overlay inserted between its own draw phases. It is deliberately not part of
+// the product API because command buffers and image extents are Vulkan details.
 Ui_Render_Sink :: struct {
 	userdata: rawptr,
 	draw: proc(rawptr, ^engine.Vk_Context, vk.CommandBuffer, vk.Extent2D),

@@ -102,10 +102,6 @@ primordial_gpu_ensure :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Con
 		primordial_upload_background_params(gpu, frame_slot, settings)
 		primordial_upload_blit_params(gpu, frame_slot)
 	}
-	if !primordial_create_trace_render_pass(gpu, vk_ctx) {
-		primordial_gpu_destroy(gpu, vk_ctx)
-		return false
-	}
 	if !primordial_create_sampler(gpu, vk_ctx) {
 		primordial_gpu_destroy(gpu, vk_ctx)
 		return false
@@ -137,17 +133,17 @@ primordial_gpu_ensure :: proc(gpu: ^Primordial_Gpu_State, vk_ctx: ^engine.Vk_Con
 		primordial_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
-	if !primordial_create_render_pipeline_for_pass(gpu, vk_ctx, gpu.trace_render_pass, &gpu.trace_particle_pipeline) {
+	if !primordial_create_render_pipeline_for_pass(gpu, vk_ctx, &gpu.trace_particle_pipeline) {
 		engine.log_error("primordial_gpu_ensure: trace particle pipeline creation failed")
 		primordial_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
-	if !primordial_create_fade_pipeline(gpu, vk_ctx, gpu.trace_render_pass, &gpu.fade_pipeline) {
+	if !primordial_create_fade_pipeline(gpu, vk_ctx, &gpu.fade_pipeline) {
 		engine.log_error("primordial_gpu_ensure: fade pipeline creation failed")
 		primordial_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
-	if !primordial_create_fade_pipeline(gpu, vk_ctx, vk_ctx.render_pass, &gpu.blit_pipeline) {
+	if !primordial_create_fade_pipeline(gpu, vk_ctx, &gpu.blit_pipeline) {
 		engine.log_error("primordial_gpu_ensure: blit pipeline creation failed")
 		primordial_gpu_destroy(gpu, vk_ctx)
 		return false
@@ -344,7 +340,7 @@ primordial_upload_blit_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: in
 }
 
 primordial_write_step_params :: proc(gpu: ^Primordial_Gpu_State, frame_slot: int, sim: ^Remaining_Sim_State, dt: f32, width, height: f32) {
-	settings := &sim.primordial
+	settings := sim.primordial
 	if gpu.sim_params_buffers[frame_slot].mapped != nil {
 		params := cast(^Primordial_Sim_Params)gpu.sim_params_buffers[frame_slot].mapped
 		params^ = {
@@ -605,8 +601,10 @@ primordial_create_background_pipeline :: proc(gpu: ^Primordial_Gpu_State, vk_ctx
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = 1, pAttachments = &blend_attachment}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = u32(len(dynamic_states)), pDynamicStates = raw_data(dynamic_states[:])}
+	rendering := engine.vk_pipeline_rendering_info(&vk_ctx.swapchain_format)
 	info := vk.GraphicsPipelineCreateInfo {
 		sType = .GRAPHICS_PIPELINE_CREATE_INFO,
+		pNext = &rendering,
 		stageCount = 2,
 		pStages = raw_data(stages[:]),
 		pVertexInputState = &vertex_input,
@@ -617,8 +615,6 @@ primordial_create_background_pipeline :: proc(gpu: ^Primordial_Gpu_State, vk_ctx
 		pColorBlendState = &blend,
 		pDynamicState = &dynamic_state,
 		layout = gpu.background_pipeline.layout,
-		renderPass = vk_ctx.render_pass,
-		subpass = 0,
 	}
 	result := vk.CreateGraphicsPipelines(vk_ctx.device, vk.PipelineCache(0), 1, &info, nil, &gpu.background_pipeline.pipeline)
 	if result != .SUCCESS {

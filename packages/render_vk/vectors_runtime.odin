@@ -119,8 +119,8 @@ vectors_gpu_dispatch_field :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_C
 	engine.vk_cmd_count_descriptor_bind(vk_ctx)
 	vk.CmdDispatch(cmd, (gpu.instance_count + 63) / 64, 1, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
-	barrier := vk.MemoryBarrier{sType = .MEMORY_BARRIER, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.VERTEX_ATTRIBUTE_READ}}
-	vk.CmdPipelineBarrier(cmd, {.COMPUTE_SHADER}, {.VERTEX_INPUT}, {}, 1, &barrier, 0, nil, 0, nil)
+	barrier := vk.MemoryBarrier2{sType = .MEMORY_BARRIER_2, srcAccessMask = {.SHADER_WRITE}, dstAccessMask = {.VERTEX_ATTRIBUTE_READ}}
+	engine.vk_cmd_pipeline_barrier2(cmd, {.COMPUTE_SHADER}, {.VERTEX_INPUT}, {}, 1, &barrier, 0, nil, 0, nil)
 	engine.vk_cmd_count_pipeline_barrier(vk_ctx)
 }
 

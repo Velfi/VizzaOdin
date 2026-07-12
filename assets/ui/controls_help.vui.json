@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "document_id": "controls_help",
+  "nodes": [
+    {"id": "root", "kind": "panel"},
+    {"id": "heading", "parent": "root", "kind": "text", "text": "Controls"},
+    {"id": "content", "parent": "root", "kind": "scroll", "layout": {"height": 520}},
+    {"id": "content_slot", "parent": "content", "kind": "slot", "binding": "content_slot"},
+    {"id": "close", "parent": "root", "kind": "button", "text": "Back to Menu", "action": "close"}
+  ],
+  "bindings": [
+    {"id": "content_slot", "kind": "slot", "required": true},
+    {"id": "close", "kind": "action", "required": true}
+  ],
+  "constraints": [
+    {"left": "root.width", "relation": "equal", "right": "viewport.width", "constant": -48, "strength": "required"},
+    {"left": "root.height", "relation": "equal", "right": "viewport.height", "constant": -48, "strength": "required"},
+    {"left": "root.center_x", "relation": "equal", "right": "viewport.center_x", "strength": "required"},
+    {"left": "root.center_y", "relation": "equal", "right": "viewport.center_y", "strength": "required"}
+  ]
+}

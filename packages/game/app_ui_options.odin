@@ -1,20 +1,18 @@
 package game
 
 import uifw "../ui"
-import engine "../engine"
-
 import "core:fmt"
 import "core:math"
 import "core:c"
 import sdl "vendor:sdl3"
 
-app_ui_draw_theme_preview :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, vk_ctx: ^engine.Vk_Context) {
+app_ui_draw_theme_preview :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, viewport: uifw.Vec2) {
 	if ui.component_fixture != .None {
 		app_ui_draw_component_fixture(ui, gui)
 		return
 	}
-	width := f32(vk_ctx.swapchain_extent.width)
-	height := f32(vk_ctx.swapchain_extent.height)
+	width := viewport.x
+	height := viewport.y
 	margin := f32(28)
 	panel := uifw.Rect{margin, margin, max(width - margin * 2, 0), max(height - margin * 2, 0)}
 	uifw.gui_panel_begin(gui, panel)
