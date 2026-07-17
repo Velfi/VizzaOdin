@@ -116,6 +116,8 @@ The checked-in Steam targets are:
 
 - App ID: `4945920`
 - macOS depot: `4945922`
+- Playtest App ID: `4946320`
+- Playtest all-platform depot: `4946321`
 
 Install the Steamworks SDK at `~/steam_sdk`, or set `STEAM_SDK_ROOT` or
 `STEAM_SDK_LOCATION` to the SDK root.

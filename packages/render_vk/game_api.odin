@@ -11,6 +11,7 @@ FEATURE_ID_GRAY_SCOTT :: game.FEATURE_ID_GRAY_SCOTT
 FEATURE_ID_PARTICLE_LIFE :: game.FEATURE_ID_PARTICLE_LIFE
 FEATURE_ID_FLOW_FIELD :: game.FEATURE_ID_FLOW_FIELD
 FEATURE_ID_PELLETS :: game.FEATURE_ID_PELLETS
+FEATURE_ID_ST_FLIP :: game.FEATURE_ID_ST_FLIP
 FEATURE_ID_GRADIENT_EDITOR :: game.FEATURE_ID_GRADIENT_EDITOR
 FEATURE_ID_VORONOI :: game.FEATURE_ID_VORONOI
 FEATURE_ID_MOIRE :: game.FEATURE_ID_MOIRE
@@ -37,6 +38,12 @@ Main_Menu_Preview_Slot :: game.Main_Menu_Preview_Slot
 Moire_Settings :: game.Moire_Settings
 Particle_Life_Simulation :: game.Particle_Life_Simulation
 Pellets_Settings :: game.Pellets_Settings
+ST_Flip_Settings :: game.ST_Flip_Settings
+ST_Flip_Runtime_State :: game.ST_Flip_Runtime_State
+ST_Flip_Simulation :: game.ST_Flip_Simulation
+ST_Flip_Particle :: game.ST_Flip_Particle
+ST_Flip_Sim_Params :: game.ST_Flip_Sim_Params
+ST_Flip_Present_Params :: game.ST_Flip_Present_Params
 Post_Processing_Settings :: game.Post_Processing_Settings
 Primordial_Settings :: game.Primordial_Settings
 Remaining_Sim_State :: game.Remaining_Sim_State
@@ -318,8 +325,6 @@ slime_camera_uniform_for_state :: game.slime_camera_uniform_for_state
 PELLETS_BACKGROUND_FRAGMENT_FALLBACK_SPV :: game.PELLETS_BACKGROUND_FRAGMENT_FALLBACK_SPV
 PELLETS_BACKGROUND_SHADER_SOURCE :: game.PELLETS_BACKGROUND_SHADER_SOURCE
 PELLETS_BACKGROUND_VERTEX_FALLBACK_SPV :: game.PELLETS_BACKGROUND_VERTEX_FALLBACK_SPV
-PELLETS_DENSITY_FALLBACK_SPV :: game.PELLETS_DENSITY_FALLBACK_SPV
-PELLETS_DENSITY_SHADER_SOURCE :: game.PELLETS_DENSITY_SHADER_SOURCE
 PELLETS_ENTRY :: game.PELLETS_ENTRY
 PELLETS_FRAGMENT_ENTRY :: game.PELLETS_FRAGMENT_ENTRY
 PELLETS_FRAGMENT_SOURCE_ENTRY :: game.PELLETS_FRAGMENT_SOURCE_ENTRY
@@ -352,7 +357,6 @@ PELLETS_VERTEX_ENTRY :: game.PELLETS_VERTEX_ENTRY
 PELLETS_VERTEX_SOURCE_ENTRY :: game.PELLETS_VERTEX_SOURCE_ENTRY
 PELLETS_WORKGROUP_SIZE :: game.PELLETS_WORKGROUP_SIZE
 Pellets_Background_Params :: game.Pellets_Background_Params
-Pellets_Density_Params :: game.Pellets_Density_Params
 Pellets_Fade_Params :: game.Pellets_Fade_Params
 Pellets_Grid_Params :: game.Pellets_Grid_Params
 Pellets_Particle :: game.Pellets_Particle

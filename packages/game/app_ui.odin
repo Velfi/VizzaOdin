@@ -13,6 +13,7 @@ App_Mode :: enum {
 	Particle_Life,
 	Flow_Field,
 	Pellets,
+	ST_FLIP,
 	Gradient_Editor,
 	Voronoi_CA,
 	Moire,
@@ -115,6 +116,8 @@ App_Ui_State :: struct {
 	preview_gray_scott: Gray_Scott_Simulation,
 	particle_life: Particle_Life_Simulation,
 	preview_particle_life: Particle_Life_Simulation,
+	st_flip: ST_Flip_Simulation,
+	preview_st_flip: ST_Flip_Simulation,
 	mode: App_Mode,
 	previous_mode: App_Mode,
 	mode_transition_phase: Mode_Transition_Phase,
@@ -232,6 +235,7 @@ APP_SIMULATION_NAMES := [?]string {
 	"Particle Life",
 	"Flow Field",
 	"Pellets",
+	"ST-FLIP",
 	"Gradient Editor",
 	"Voronoi",
 	"Moire",
@@ -245,6 +249,7 @@ APP_SIMULATION_DESCRIPTIONS := [?]string {
 	"Multi-species particles",
 	"Vector-field trails",
 	"2D particle physics",
+	"Spatiotemporal liquid",
 	"Color gradient tool",
 	"Nearest-site regions",
 	"Interference patterns",
@@ -258,6 +263,7 @@ APP_SIMULATION_LONG_DESCRIPTIONS := [?]string {
 	"Colored particle species attract and repel each other to form living clusters and orbiting structures.",
 	"Particles trace a changing vector field, revealing flow direction through layered motion trails.",
 	"Lightweight 2D particle physics with density, collisions, and image-like emergent texture.",
+	"Free-surface liquid sampled across space and time for coherent motion at unusually large time steps.",
 	"Build and inspect color ramps used by the simulations and their post-processing passes.",
 	"Drifting Voronoi sites split the canvas into nearest-region fields with color-map controls.",
 	"Interference patterns from layered wave fields, offsets, and procedural image sampling.",
@@ -271,6 +277,7 @@ APP_SIMULATION_CATEGORIES := [?]string {
 	"particles",
 	"field",
 	"physics",
+	"fluid",
 	"tool",
 	"geometry",
 	"wave",
@@ -400,7 +407,9 @@ app_ui_init :: proc(ui: ^App_Ui_State, settings: App_Settings, theme_preview := 
 	if !gray_scott_bind_product_instance(&ui.gray_scott, feature_instance_set_get(&ui.feature_instances, .Gray_Scott)) ||
 	   !gray_scott_bind_product_instance(&ui.preview_gray_scott, feature_instance_set_get(&ui.feature_instances, .Gray_Scott, true)) ||
 	   !particle_life_bind_product_instance(&ui.particle_life, feature_instance_set_get(&ui.feature_instances, .Particle_Life)) ||
-	   !particle_life_bind_product_instance(&ui.preview_particle_life, feature_instance_set_get(&ui.feature_instances, .Particle_Life, true)) {
+	   !particle_life_bind_product_instance(&ui.preview_particle_life, feature_instance_set_get(&ui.feature_instances, .Particle_Life, true)) ||
+	   !st_flip_bind_product_instance(&ui.st_flip, feature_instance_set_get(&ui.feature_instances, .ST_FLIP)) ||
+	   !st_flip_bind_product_instance(&ui.preview_st_flip, feature_instance_set_get(&ui.feature_instances, .ST_FLIP, true)) {
 		feature_instance_set_destroy(&ui.feature_instances)
 		return false
 	}
@@ -539,7 +548,7 @@ app_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, documents: ^uifw.
 		app_ui_draw_options_document(ui, gui, documents, viewport, worker)
 	case .How_To_Play:
 		app_ui_draw_how_to_play_document(ui, gui, documents, viewport)
-	case .Slime_Mold, .Gray_Scott, .Particle_Life, .Flow_Field, .Pellets, .Gradient_Editor, .Voronoi_CA, .Moire, .Vectors, .Primordial:
+	case .Slime_Mold, .Gray_Scott, .Particle_Life, .Flow_Field, .Pellets, .ST_FLIP, .Gradient_Editor, .Voronoi_CA, .Moire, .Vectors, .Primordial:
 		app_ui_draw_simulation_document(ui, gui, documents, viewport, worker)
 	case .Theme_Preview:
 		app_ui_draw_theme_preview(ui, gui, viewport)

@@ -26,6 +26,7 @@ Preset_Fieldset_Builtin_Kind :: enum {
 	Gray_Scott,
 	Particle_Life,
 	Remaining,
+	ST_Flip,
 }
 
 Preset_Fieldset_Builtin_Context :: struct {
@@ -34,6 +35,7 @@ Preset_Fieldset_Builtin_Context :: struct {
 	particle_life: ^Particle_Life_Simulation,
 	remaining: ^Remaining_Sim_State,
 	remaining_kind: Remaining_Sim_Kind,
+	st_flip: ^ST_Flip_Simulation,
 }
 
 preset_fieldset_draw :: proc(
@@ -189,6 +191,10 @@ preset_fieldset_apply_builtin :: proc(builtin_context: Preset_Fieldset_Builtin_C
 	case .Remaining:
 		if builtin_context.remaining != nil {
 			remaining_sim_apply_builtin_preset(builtin_context.remaining, builtin_context.remaining_kind, index)
+		}
+	case .ST_Flip:
+		if builtin_context.st_flip != nil {
+			_ = feature_apply_builtin_st_flip(builtin_context.st_flip.settings, builtin_context.st_flip.runtime, index)
 		}
 	case:
 	}
@@ -387,6 +393,7 @@ preset_feature_id_for_directory :: proc(directory: string) -> (Feature_Id, bool)
 	case "moire": return FEATURE_ID_MOIRE, true
 	case "vectors": return FEATURE_ID_VECTORS, true
 	case "primordial": return FEATURE_ID_PRIMORDIAL, true
+	case "st_flip": return FEATURE_ID_ST_FLIP, true
 	case: return {}, false
 	}
 }

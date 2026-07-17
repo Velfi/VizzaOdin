@@ -94,6 +94,11 @@ Slime_Background_Mode :: game.Slime_Background_Mode
 Slime_Mask_Pattern :: game.Slime_Mask_Pattern
 Slime_Mask_Target :: game.Slime_Mask_Target
 Slime_Settings :: game.Slime_Settings
+ST_Flip_Settings :: game.ST_Flip_Settings
+ST_Flip_Initial_Condition :: game.ST_Flip_Initial_Condition
+ST_Flip_Interaction_Mode :: game.ST_Flip_Interaction_Mode
+st_flip_default_settings :: game.st_flip_default_settings
+st_flip_validate_settings :: game.st_flip_validate_settings
 Ui_To_Render_Command :: game.Ui_To_Render_Command
 Ui_To_Render_Queue :: game.Ui_To_Render_Queue
 Vector_Background_Mode :: game.Vector_Background_Mode

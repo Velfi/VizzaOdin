@@ -1,0 +1,16 @@
+"AppBuild"
+{
+	"AppID" "__APPID__"
+	"Desc" "__DESC__"
+
+	"Preview" "__PREVIEW__"
+	"SetLive" "__SETLIVE__"
+
+	"ContentRoot" "__CONTENT_ROOT__"
+	"BuildOutput" "__BUILD_OUTPUT__"
+
+	"Depots"
+	{
+		"__DEPOT_PLAYTEST__" "depot_build_playtest.vdf"
+	}
+}

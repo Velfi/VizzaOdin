@@ -871,6 +871,45 @@ test_pellets_caps_each_rendered_frame_to_one_stable_step :: proc(t: ^testing.T) 
 }
 
 @(test)
+test_pellets_semi_implicit_euler_updates_velocity_before_position :: proc(t: ^testing.T) {
+	position, velocity := rendervk.pellets_semi_implicit_euler({1, 2}, {3, 4}, {2, -2}, 0.5, 0.8)
+	testing.expect(t, math.abs(velocity.x - 3.2) < 0.00001)
+	testing.expect(t, math.abs(velocity.y - 2.4) < 0.00001)
+	testing.expect(t, math.abs(position.x - 2.6) < 0.00001)
+	testing.expect(t, math.abs(position.y - 3.2) < 0.00001)
+}
+
+@(test)
+test_pellets_toroidal_delta_uses_shortest_wrapped_distance :: proc(t: ^testing.T) {
+	delta := rendervk.pellets_toroidal_delta({0.95, -0.95}, {-0.95, 0.95})
+	testing.expect(t, math.abs(delta.x - 0.1) < 0.00001)
+	testing.expect(t, math.abs(delta.y + 0.1) < 0.00001)
+}
+
+@(test)
+test_pellets_density_contribution_respects_radius_and_zero_neighbor_case :: proc(t: ^testing.T) {
+	testing.expect_value(t, rendervk.pellets_density_contribution(1, 0.5), f32(0))
+	testing.expect(t, math.abs(rendervk.pellets_density_contribution(0.25, 1) - f32(0.8)) < 0.00001)
+	zero := rendervk.pellets_bounded_separation({}, 0, 0, 1, 0.01)
+	testing.expect_value(t, zero, [2]f32{})
+}
+
+@(test)
+test_pellets_separation_is_bounded_by_particle_size :: proc(t: ^testing.T) {
+	separation := rendervk.pellets_bounded_separation({3, 4}, 10, 2, 10, 0.01)
+	length := math.sqrt(separation.x * separation.x + separation.y * separation.y)
+	testing.expect(t, math.abs(length - f32(0.008)) < 0.00001)
+}
+
+@(test)
+test_pellets_cancelling_overlap_directions_do_not_create_singularity :: proc(t: ^testing.T) {
+	separation := rendervk.pellets_bounded_separation({0, 0}, 0.02, 2, 1, 0.01)
+	testing.expect_value(t, separation, [2]f32{})
+	testing.expect(t, !math.is_nan(separation.x))
+	testing.expect(t, !math.is_nan(separation.y))
+}
+
+@(test)
 test_primordial_zero_seed_uses_nonzero_rng_state :: proc(t: ^testing.T) {
 	rng := rendervk.primordial_rng_seed(0)
 	first := rendervk.primordial_next_random01(&rng)

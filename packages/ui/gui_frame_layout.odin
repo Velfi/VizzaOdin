@@ -380,6 +380,13 @@ gui_profile_snapshot :: proc() -> Gui_Profile_Snapshot {
 
 gui_end_frame :: proc(ctx: ^Gui_Context) {
 	gui_draw_combo_popup_overlay(ctx)
+	// A combobox can disappear when its containing tab or panel changes.  Its
+	// popup ID must not survive that transition: controller Back treats any
+	// open panel as the widget's responsibility, so a stale ID would prevent
+	// the containing tab from ever closing.
+	if ctx.open_panel != GUI_ID_NONE && !ctx.combo_popup_visible {
+		ctx.open_panel = GUI_ID_NONE
+	}
 	gui_draw_notice_overlay(ctx)
 	gui_draw_tooltip_overlay(ctx)
 	gui_semantic_finalize(ctx)

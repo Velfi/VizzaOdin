@@ -46,6 +46,7 @@ RENDER_FEATURE_DESCRIPTORS := [?]Render_Feature_Descriptor {
 	{FEATURE_ID_PARTICLE_LIFE, .Particle_Life, render_feature_step_particle_life, render_feature_present_particle_life, size_of(Particle_Life_Gpu_State), align_of(Particle_Life_Gpu_State), render_feature_initialize_zeroed, render_feature_destroy_particle_life, render_feature_preview_step_particle_life, render_feature_preview_present_particle_life, render_feature_bind_particle_life, render_feature_post_processing_particle_life, nil, nil, nil, nil, .Vertex_Buffer},
 	{FEATURE_ID_FLOW_FIELD, .Flow_Field, render_feature_step_flow, render_feature_present_flow, size_of(Flow_Gpu_State), align_of(Flow_Gpu_State), render_feature_initialize_zeroed, render_feature_destroy_flow, render_feature_preview_step_flow, render_feature_preview_present_flow, render_feature_bind_flow, render_feature_post_processing_flow, nil, render_feature_reset_flow, render_feature_destroy_flow, render_feature_preview_prepare_flow, .Storage_Image},
 	{FEATURE_ID_PELLETS, .Pellets, render_feature_step_pellets, render_feature_present_pellets, size_of(Pellets_Gpu_State), align_of(Pellets_Gpu_State), render_feature_initialize_zeroed, render_feature_destroy_pellets, render_feature_preview_step_pellets, render_feature_preview_present_pellets, render_feature_bind_pellets, render_feature_post_processing_pellets, render_feature_invalidate_pellets, render_feature_reset_pellets, render_feature_destroy_pellets, render_feature_preview_prepare_pellets, .Vertex_Buffer},
+	{FEATURE_ID_ST_FLIP, .ST_FLIP, render_feature_step_st_flip, render_feature_present_st_flip, size_of(ST_Flip_Gpu_State), align_of(ST_Flip_Gpu_State), render_feature_initialize_zeroed, render_feature_destroy_st_flip, render_feature_preview_step_st_flip, render_feature_preview_present_st_flip, render_feature_bind_st_flip, render_feature_post_processing_st_flip, render_feature_invalidate_st_flip, render_feature_reset_st_flip, render_feature_destroy_st_flip, nil, .Vertex_Buffer},
 	{FEATURE_ID_GRADIENT_EDITOR, .Gradient_Editor, render_feature_step_none, render_feature_present_clear, 0, 0, nil, nil, nil, nil, render_feature_bind_none, nil, nil, nil, nil, nil, .Storage_Image},
 	{FEATURE_ID_VORONOI, .Voronoi_CA, render_feature_step_voronoi, render_feature_present_voronoi, size_of(Voronoi_Gpu_State), align_of(Voronoi_Gpu_State), render_feature_initialize_zeroed, render_feature_destroy_voronoi, render_feature_preview_step_voronoi, render_feature_preview_present_voronoi, render_feature_bind_voronoi, render_feature_post_processing_voronoi, render_feature_invalidate_voronoi, render_feature_reset_voronoi, render_feature_destroy_voronoi, render_feature_preview_prepare_voronoi, .Storage_Image},
 	{FEATURE_ID_MOIRE, .Moire, render_feature_step_moire, render_feature_present_moire, size_of(Moire_Gpu_State), align_of(Moire_Gpu_State), render_feature_initialize_zeroed, render_feature_destroy_moire, render_feature_preview_step_moire, render_feature_preview_present_moire, render_feature_bind_moire, nil, nil, render_feature_reset_moire, render_feature_destroy_moire, render_feature_preview_prepare_moire, .Storage_Image},
@@ -73,6 +74,7 @@ render_feature_bind_gray_scott :: proc(ctx: ^Render_Context, graph: ^Render_Grap
 render_feature_bind_particle_life :: proc(ctx: ^Render_Context, graph: ^Render_Graph, resource: Render_Resource_Handle, preview: bool) -> bool {sim := preview ? render_context_particle_life(ctx, true) : render_context_particle_life(ctx); return sim != nil && render_feature_bind_buffer(ctx, graph, resource, particle_life_gpu(sim).particle_buffer.handle)}
 render_feature_bind_flow :: proc(ctx: ^Render_Context, graph: ^Render_Graph, resource: Render_Resource_Handle, preview: bool) -> bool {gpu := preview ? render_context_flow_gpu(ctx, true) : render_context_flow_gpu(ctx); return gpu != nil && render_feature_bind_image(ctx, graph, resource, gpu.trail_image.handle, gpu.trail_image.layout)}
 render_feature_bind_pellets :: proc(ctx: ^Render_Context, graph: ^Render_Graph, resource: Render_Resource_Handle, preview: bool) -> bool {gpu := preview ? render_context_pellets_gpu(ctx, true) : render_context_pellets_gpu(ctx); return gpu != nil && render_feature_bind_buffer(ctx, graph, resource, gpu.particle_buffer.handle)}
+render_feature_bind_st_flip :: proc(ctx: ^Render_Context, graph: ^Render_Graph, resource: Render_Resource_Handle, preview: bool) -> bool {gpu := render_context_st_flip_gpu(ctx, preview); return gpu != nil && gpu.particle_buffer.handle != vk.Buffer(0) && render_feature_bind_buffer(ctx, graph, resource, gpu.particle_buffer.handle)}
 render_feature_bind_voronoi :: proc(ctx: ^Render_Context, graph: ^Render_Graph, resource: Render_Resource_Handle, preview: bool) -> bool {gpu := preview ? render_context_voronoi_gpu(ctx, true) : render_context_voronoi_gpu(ctx); if gpu == nil do return false; image := gpu.jfa_result_is_scratch ? gpu.jfa_scratch_image : gpu.jfa_image; return render_feature_bind_image(ctx, graph, resource, image.handle, image.layout)}
 render_feature_bind_moire :: proc(ctx: ^Render_Context, graph: ^Render_Graph, resource: Render_Resource_Handle, preview: bool) -> bool {gpu := preview ? render_context_moire_gpu(ctx, true) : render_context_moire_gpu(ctx); return gpu != nil && render_feature_bind_image(ctx, graph, resource, gpu.images[gpu.state_index].handle, gpu.images[gpu.state_index].layout)}
 render_feature_bind_vectors :: proc(ctx: ^Render_Context, graph: ^Render_Graph, resource: Render_Resource_Handle, preview: bool) -> bool {gpu := preview ? render_context_vectors_gpu(ctx, true) : render_context_vectors_gpu(ctx); return gpu != nil && render_feature_bind_image(ctx, graph, resource, gpu.field_image.handle, gpu.field_image.layout)}
@@ -118,6 +120,7 @@ render_context_vectors_gpu :: proc(ctx: ^Render_Context, preview := false) -> ^V
 render_context_moire_gpu :: proc(ctx: ^Render_Context, preview := false) -> ^Moire_Gpu_State {return render_context_feature_runtime(ctx, .Moire, preview, Moire_Gpu_State)}
 render_context_primordial_gpu :: proc(ctx: ^Render_Context, preview := false) -> ^Primordial_Gpu_State {return render_context_feature_runtime(ctx, .Primordial, preview, Primordial_Gpu_State)}
 render_context_pellets_gpu :: proc(ctx: ^Render_Context, preview := false) -> ^Pellets_Gpu_State {return render_context_feature_runtime(ctx, .Pellets, preview, Pellets_Gpu_State)}
+render_context_st_flip_gpu :: proc(ctx: ^Render_Context, preview := false) -> ^ST_Flip_Gpu_State {return render_context_feature_runtime(ctx, .ST_FLIP, preview, ST_Flip_Gpu_State)}
 render_context_flow_gpu :: proc(ctx: ^Render_Context, preview := false) -> ^Flow_Gpu_State {return render_context_feature_runtime(ctx, .Flow_Field, preview, Flow_Gpu_State)}
 render_context_slime_gpu :: proc(ctx: ^Render_Context, preview := false) -> ^Slime_Gpu_State {return render_context_feature_runtime(ctx, .Slime_Mold, preview, Slime_Gpu_State)}
 render_context_voronoi_gpu :: proc(ctx: ^Render_Context, preview := false) -> ^Voronoi_Gpu_State {return render_context_feature_runtime(ctx, .Voronoi_CA, preview, Voronoi_Gpu_State)}
@@ -191,11 +194,13 @@ render_feature_instance_init :: proc(instance: ^Render_Feature_Instance, mode: A
 render_feature_initialize_zeroed :: proc(runtime: rawptr) -> bool {return runtime != nil}
 render_feature_invalidate_slime :: proc(runtime: rawptr) {if runtime != nil do (cast(^Slime_Gpu_State)runtime).needs_reset = true}
 render_feature_invalidate_pellets :: proc(runtime: rawptr) {if runtime != nil do (cast(^Pellets_Gpu_State)runtime).ready = false}
+render_feature_invalidate_st_flip :: proc(runtime: rawptr) {if runtime != nil do (cast(^ST_Flip_Gpu_State)runtime).ready = false}
 render_feature_invalidate_voronoi :: proc(runtime: rawptr) {if runtime != nil do (cast(^Voronoi_Gpu_State)runtime).needs_rebuild = true}
 render_feature_invalidate_primordial :: proc(runtime: rawptr) {if runtime != nil do (cast(^Primordial_Gpu_State)runtime).ready = false}
 render_feature_reset_slime :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Context) {_ = vk_ctx; render_feature_invalidate_slime(runtime)}
 render_feature_reset_flow :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Context) {if runtime != nil do flow_gpu_destroy(cast(^Flow_Gpu_State)runtime, vk_ctx)}
 render_feature_reset_pellets :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Context) {_ = vk_ctx; render_feature_invalidate_pellets(runtime)}
+render_feature_reset_st_flip :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Context) {if runtime != nil do st_flip_gpu_destroy(cast(^ST_Flip_Gpu_State)runtime, vk_ctx)}
 render_feature_reset_voronoi :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Context) {_ = vk_ctx; render_feature_invalidate_voronoi(runtime)}
 render_feature_reset_moire :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Context) {if runtime != nil do moire_gpu_destroy(cast(^Moire_Gpu_State)runtime, vk_ctx)}
 render_feature_reset_vectors :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Context) {if runtime != nil do vectors_gpu_destroy(cast(^Vectors_Gpu_State)runtime, vk_ctx)}
@@ -243,6 +248,7 @@ render_feature_destroy_voronoi :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Conte
 	voronoi_gpu_destroy(cast(^Voronoi_Gpu_State)runtime, vk_ctx)
 }
 render_feature_destroy_pellets :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Context) {pellets_gpu_destroy(cast(^Pellets_Gpu_State)runtime, vk_ctx)}
+render_feature_destroy_st_flip :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Context) {st_flip_gpu_destroy(cast(^ST_Flip_Gpu_State)runtime, vk_ctx)}
 render_feature_destroy_primordial :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Context) {primordial_gpu_destroy(cast(^Primordial_Gpu_State)runtime, vk_ctx)}
 render_feature_destroy_flow :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Context) {flow_gpu_destroy(cast(^Flow_Gpu_State)runtime, vk_ctx)}
 render_feature_destroy_slime :: proc(runtime: rawptr, vk_ctx: ^engine.Vk_Context) {slime_gpu_destroy(cast(^Slime_Gpu_State)runtime, vk_ctx)}
@@ -308,6 +314,18 @@ render_feature_preview_step_pellets :: proc(ctx: ^Render_Context, palette_name: 
 	return true
 }
 
+render_feature_preview_step_st_flip :: proc(ctx: ^Render_Context, palette_name: string, dt: f32) -> bool {
+	if ctx == nil || ctx.app_ui == nil || render_context_st_flip_gpu(ctx, true) == nil do return false
+	preview := &ctx.app_ui.preview_st_flip
+	preview.settings^ = ctx.app_ui.st_flip.settings^
+	preview.settings.particle_count = min(preview.settings.particle_count, u32(32_768))
+	preview.settings.grid_height = 72
+	preview.settings.paused = false
+	color_scheme_name_set(&preview.settings.color_scheme, palette_name)
+	st_flip_gpu_step(render_context_st_flip_gpu(ctx, true), ctx.vk_ctx, ctx.frame.command_buffer, preview, dt, MAIN_MENU_SIM_PREVIEW_WIDTH, MAIN_MENU_SIM_PREVIEW_HEIGHT)
+	return render_context_st_flip_gpu(ctx, true).ready
+}
+
 render_feature_preview_step_voronoi :: proc(ctx: ^Render_Context, palette_name: string, dt: f32) -> bool {
 	if render_context_voronoi_gpu(ctx, true) == nil || ctx.app_ui == nil do return false
 	preview := &ctx.app_ui.preview_voronoi_ca
@@ -356,6 +374,7 @@ render_feature_preview_present_slime :: proc(ctx: ^Render_Context, viewport: vk.
 render_feature_preview_present_particle_life :: proc(ctx: ^Render_Context, viewport: vk.Viewport, scissor: vk.Rect2D) -> bool {if render_context_particle_life(ctx, true) == nil do return false; particle_life_gpu_draw_prepared_viewport(render_context_particle_life(ctx, true), ctx.vk_ctx, ctx.frame, viewport, scissor); return true}
 render_feature_preview_present_flow :: proc(ctx: ^Render_Context, viewport: vk.Viewport, scissor: vk.Rect2D) -> bool {if render_context_flow_gpu(ctx, true) == nil do return false; flow_gpu_draw_prepared_viewport(render_context_flow_gpu(ctx, true), ctx.vk_ctx, ctx.frame, viewport, scissor); return true}
 render_feature_preview_present_pellets :: proc(ctx: ^Render_Context, viewport: vk.Viewport, scissor: vk.Rect2D) -> bool {if render_context_pellets_gpu(ctx, true) == nil || !render_context_pellets_gpu(ctx, true).ready do return false; pellets_gpu_draw_scene_viewport(render_context_pellets_gpu(ctx, true), ctx.vk_ctx, ctx.frame.command_buffer, int(ctx.frame.frame_index), &render_context_pellets_gpu(ctx, true).background_pipeline, &render_context_pellets_gpu(ctx, true).render_pipeline, viewport, scissor); return true}
+render_feature_preview_present_st_flip :: proc(ctx: ^Render_Context, viewport: vk.Viewport, scissor: vk.Rect2D) -> bool {if ctx == nil || render_context_st_flip_gpu(ctx, true) == nil || !render_context_st_flip_gpu(ctx, true).ready do return false; st_flip_gpu_present_viewport(render_context_st_flip_gpu(ctx, true), ctx.vk_ctx, ctx.frame, viewport, scissor); return true}
 render_feature_preview_present_voronoi :: proc(ctx: ^Render_Context, viewport: vk.Viewport, scissor: vk.Rect2D) -> bool {if render_context_voronoi_gpu(ctx, true) == nil do return false; voronoi_gpu_draw_prepared_viewport(render_context_voronoi_gpu(ctx, true), ctx.vk_ctx, ctx.frame, viewport, scissor); return true}
 render_feature_preview_present_moire :: proc(ctx: ^Render_Context, viewport: vk.Viewport, scissor: vk.Rect2D) -> bool {if render_context_moire_gpu(ctx, true) == nil do return false; moire_gpu_draw_prepared_viewport(render_context_moire_gpu(ctx, true), ctx.vk_ctx, ctx.frame, viewport, scissor); return true}
 render_feature_preview_present_vectors :: proc(ctx: ^Render_Context, viewport: vk.Viewport, scissor: vk.Rect2D) -> bool {if render_context_vectors_gpu(ctx, true) == nil do return false; vectors_gpu_draw_prepared_viewport(render_context_vectors_gpu(ctx, true), ctx.vk_ctx, ctx.frame, viewport, scissor); return true}
@@ -447,6 +466,12 @@ render_feature_step_pellets :: proc(ctx: ^Render_Context, dt: f32) -> bool {
 			pellets_gpu_step(render_context_pellets_gpu(ctx), ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.pellets, steps.delta_time)
 		}
 	}
+	return true
+}
+
+render_feature_step_st_flip :: proc(ctx: ^Render_Context, dt: f32) -> bool {
+	if ctx == nil || ctx.app_ui == nil || render_context_st_flip_gpu(ctx) == nil do return false
+	st_flip_gpu_step(render_context_st_flip_gpu(ctx), ctx.vk_ctx, ctx.frame.command_buffer, &ctx.app_ui.st_flip, dt * ctx.app_ui.st_flip.settings.simulation_speed, ctx.vk_ctx.swapchain_extent.width, ctx.vk_ctx.swapchain_extent.height)
 	return true
 }
 
@@ -553,6 +578,16 @@ render_feature_present_pellets :: proc(ctx: ^Render_Context, draw_ui: bool, ui_s
 		pellets_gpu_present(render_context_pellets_gpu(ctx), ctx.vk_ctx, ctx.frame, &ctx.app_ui.pellets, draw_ui ? ui_sink : nil)
 		if draw_ui do ctx.backend.last_ui_overlay_seconds = time.duration_seconds(time.tick_diff(start, time.tick_now()))
 	}
+	render_context_apply_scene_post_processing(ctx)
+	return true
+}
+
+render_feature_present_st_flip :: proc(ctx: ^Render_Context, draw_ui: bool, ui_sink: ^Ui_Render_Sink) -> bool {
+	_ = ui_sink
+	engine.vk_cmd_begin_swapchain_render_pass(ctx.vk_ctx, ctx.frame, uifw.Color{0.01, 0.012, 0.016, 1})
+	if render_context_st_flip_gpu(ctx) != nil do st_flip_gpu_present_viewport(render_context_st_flip_gpu(ctx), ctx.vk_ctx, ctx.frame, {x=0,y=0,width=f32(ctx.vk_ctx.swapchain_extent.width),height=f32(ctx.vk_ctx.swapchain_extent.height),minDepth=0,maxDepth=1}, {offset={0,0},extent=ctx.vk_ctx.swapchain_extent})
+	if draw_ui do render_feature_draw_ui(ctx)
+	engine.vk_cmd_end_swapchain_render_pass(ctx.frame)
 	render_context_apply_scene_post_processing(ctx)
 	return true
 }

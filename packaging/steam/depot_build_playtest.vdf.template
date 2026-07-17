@@ -1,0 +1,22 @@
+"DepotBuild"
+{
+	"DepotID" "__DEPOT_PLAYTEST__"
+
+	"FileMapping"
+	{
+		"LocalPath" "windows/*"
+		"DepotPath" "."
+		"Recursive" "1"
+	}
+
+	"FileMapping"
+	{
+		"LocalPath" "macos/*"
+		"DepotPath" "."
+		"Recursive" "1"
+	}
+
+	"FileExclusion" "*.pdb"
+	"FileExclusion" "*.DS_Store"
+	"FileExclusion" "steam_appid.txt"
+}

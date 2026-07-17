@@ -404,6 +404,8 @@ mcp_bridge_configure_simulation :: proc(id: string, bridge: ^Mcp_Bridge, tool_na
 		return mcp_bridge_configure_particle_life(id, bridge, line)
 	case .Flow_Field:
 		return mcp_bridge_configure_flow_field(id, bridge, line)
+	case .ST_FLIP:
+		return mcp_bridge_configure_st_flip(id, bridge, line)
 	case:
 		kind: Remaining_Sim_Kind
 		if !mcp_bridge_remaining_kind_from_mode(mode, &kind) {
@@ -411,6 +413,31 @@ mcp_bridge_configure_simulation :: proc(id: string, bridge: ^Mcp_Bridge, tool_na
 		}
 		return mcp_bridge_configure_remaining_sim(id, bridge, kind, line)
 	}
+}
+
+mcp_bridge_configure_st_flip :: proc(id: string, bridge: ^Mcp_Bridge, line: string) -> string {
+	reset, hide_ui, set_mode := mcp_bridge_capture_flags(line)
+	settings := st_flip_default_settings()
+	mcp_bridge_apply_color_scheme_fields(line, &settings.color_scheme, &settings.color_scheme_reversed)
+	if value, ok := mcp_bridge_extract_number_field(line, "particle_count"); ok {settings.particle_count = u32(max(value, 1))}
+	if value, ok := mcp_bridge_extract_number_field(line, "grid_height"); ok {settings.grid_height = u32(max(value, 1))}
+	if value, ok := mcp_bridge_extract_number_field(line, "target_cfl"); ok {settings.target_cfl = value}
+	if value, ok := mcp_bridge_extract_number_field(line, "simulation_speed"); ok {settings.simulation_speed = value}
+	if value, ok := mcp_bridge_extract_number_field(line, "gravity"); ok {settings.gravity = value}
+	if value, ok := mcp_bridge_extract_number_field(line, "flip_ratio"); ok {settings.flip_ratio = value}
+	if value, ok := mcp_bridge_extract_number_field(line, "jitter_strength"); ok {settings.jitter_strength = value}
+	if value, ok := mcp_bridge_extract_number_field(line, "phase_steepness"); ok {settings.phase_steepness = value}
+	if value, ok := mcp_bridge_extract_number_field(line, "pressure_iterations"); ok {settings.pressure_iterations = u32(max(value, 1))}
+	if value, ok := mcp_bridge_extract_number_field(line, "render_smoothing"); ok {settings.render_smoothing = value}
+	if value, ok := mcp_bridge_extract_number_field(line, "random_seed"); ok {settings.random_seed = u32(max(value, 0))}
+	if value, ok := mcp_bridge_extract_bool_field(line, "paused"); ok {settings.paused = value}
+	if name := mcp_bridge_extract_string_field(line, "initial_condition"); len(name) > 0 {
+		switch name {case "Pool", "pool": settings.initial_condition=.Pool; settings.initial_condition_index=1; case "Twin Drops", "twin_drops": settings.initial_condition=.Twin_Drops; settings.initial_condition_index=2; case "Empty", "empty": settings.initial_condition=.Empty; settings.initial_condition_index=3; case: settings.initial_condition=.Dam_Break; settings.initial_condition_index=0}
+	}
+	st_flip_validate_settings(&settings)
+	cmd := Mcp_Command{kind=.Configure_ST_Flip, st_flip_settings=settings, st_flip_reset=reset, st_flip_hide_ui=hide_ui, st_flip_set_mode=set_mode}
+	if !mcp_bridge_enqueue_command(bridge, cmd) do return mcp_bridge_queue_error(id, bridge)
+	return mcp_bridge_tool_text(id, fmt.tprintf("{{\"ok\":true,\"queued\":\"configure_simulation\",\"mode\":\"ST_FLIP\",\"reset\":%v,\"hide_ui\":%v,\"set_mode\":%v}}", reset, hide_ui, set_mode))
 }
 
 mcp_bridge_configure_remaining_sim :: proc(id: string, bridge: ^Mcp_Bridge, kind: Remaining_Sim_Kind, line: string) -> string {

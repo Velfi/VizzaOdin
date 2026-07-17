@@ -2466,12 +2466,13 @@ test_render_main_menu_preview_size_for_mode_ignores_swapchain_clip :: proc(t: ^t
 
 @(test)
 test_render_main_menu_preview_warm_policy_covers_all_supported_live_modes :: proc(t: ^testing.T) {
-	testing.expect_value(t, rendervk.render_main_menu_preview_supported_mode_count(), u32(9))
+	testing.expect_value(t, rendervk.render_main_menu_preview_supported_mode_count(), u32(10))
 	testing.expect(t, game.app_ui_live_preview_supported(.Slime_Mold))
 	testing.expect(t, game.app_ui_live_preview_supported(.Gray_Scott))
 	testing.expect(t, game.app_ui_live_preview_supported(.Particle_Life))
 	testing.expect(t, game.app_ui_live_preview_supported(.Flow_Field))
 	testing.expect(t, game.app_ui_live_preview_supported(.Pellets))
+	testing.expect(t, game.app_ui_live_preview_supported(.ST_FLIP))
 	testing.expect(t, game.app_ui_live_preview_supported(.Voronoi_CA))
 	testing.expect(t, game.app_ui_live_preview_supported(.Moire))
 	testing.expect(t, game.app_ui_live_preview_supported(.Vectors))

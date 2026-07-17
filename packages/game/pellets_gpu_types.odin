@@ -7,7 +7,6 @@ PELLETS_GRID_PREFIX_BLOCKS_SHADER_SOURCE :: "assets/shaders/simulations/pellets/
 PELLETS_GRID_PREFIX_ADD_SHADER_SOURCE :: "assets/shaders/simulations/pellets/shaders/grid_prefix_add.slang"
 PELLETS_GRID_SCATTER_SHADER_SOURCE :: "assets/shaders/simulations/pellets/shaders/grid_scatter.slang"
 PELLETS_PHYSICS_SHADER_SOURCE :: "assets/shaders/simulations/pellets/shaders/physics_compute.slang"
-PELLETS_DENSITY_SHADER_SOURCE :: "assets/shaders/simulations/pellets/shaders/density_compute.slang"
 PELLETS_BACKGROUND_SHADER_SOURCE :: "assets/shaders/simulations/pellets/shaders/background_render.slang"
 PELLETS_RENDER_SHADER_SOURCE :: "assets/shaders/simulations/pellets/shaders/particle_render.slang"
 PELLETS_TRAIL_FADE_VERTEX_SHADER_SOURCE :: "assets/shaders/simulations/pellets/shaders/trail_fade_vertex.slang"
@@ -20,7 +19,6 @@ PELLETS_GRID_PREFIX_BLOCKS_FALLBACK_SPV :: "build/shaders/simulations/pellets/sh
 PELLETS_GRID_PREFIX_ADD_FALLBACK_SPV :: "build/shaders/simulations/pellets/shaders/grid_prefix_add"
 PELLETS_GRID_SCATTER_FALLBACK_SPV :: "build/shaders/simulations/pellets/shaders/grid_scatter"
 PELLETS_PHYSICS_FALLBACK_SPV :: "build/shaders/simulations/pellets/shaders/physics_compute"
-PELLETS_DENSITY_FALLBACK_SPV :: "build/shaders/simulations/pellets/shaders/density_compute"
 PELLETS_BACKGROUND_VERTEX_FALLBACK_SPV :: "build/shaders/simulations/pellets/shaders/background_render_vertex"
 PELLETS_BACKGROUND_FRAGMENT_FALLBACK_SPV :: "build/shaders/simulations/pellets/shaders/background_render_fragment"
 PELLETS_RENDER_VERTEX_FALLBACK_SPV :: "build/shaders/simulations/pellets/shaders/particle_render_vertex"
@@ -57,12 +55,7 @@ Pellets_Physics_Params :: struct #align(16) {
 	density_damping_enabled: u32,
 	overlap_resolution_strength: f32,
 	frame_index, coloring_mode: u32,
-}
-
-Pellets_Density_Params :: struct #align(16) {
-	particle_count: u32,
 	density_radius: f32,
-	coloring_mode, _padding: u32,
 }
 
 Pellets_Render_Params :: struct #align(16) {

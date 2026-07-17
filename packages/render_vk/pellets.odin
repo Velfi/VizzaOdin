@@ -6,6 +6,33 @@ import uifw "../ui"
 import "core:math"
 import vk "vendor:vulkan"
 
+pellets_semi_implicit_euler :: proc(position, velocity, acceleration: [2]f32, dt, damping: f32) -> ([2]f32, [2]f32) {
+	next_velocity := velocity + acceleration * dt
+	next_velocity *= damping
+	return position + next_velocity * dt, next_velocity
+}
+
+pellets_toroidal_delta :: proc(from, to: [2]f32) -> [2]f32 {
+	delta := to - from
+	if math.abs(delta.x) > 1 do delta.x -= math.sign(delta.x) * 2
+	if math.abs(delta.y) > 1 do delta.y -= math.sign(delta.y) * 2
+	return delta
+}
+
+pellets_density_contribution :: proc(distance_squared, radius: f32) -> f32 {
+	if distance_squared < 0 || distance_squared >= radius * radius do return 0
+	return 1 / (1 + distance_squared)
+}
+
+pellets_bounded_separation :: proc(direction: [2]f32, total_overlap: f32, overlap_count: u32, strength, particle_size: f32) -> [2]f32 {
+	length_squared := direction.x * direction.x + direction.y * direction.y
+	if overlap_count == 0 || total_overlap <= particle_size * 0.003 || length_squared <= 1e-12 do return {}
+	unit := direction / f32(math.sqrt(length_squared))
+	average_overlap := total_overlap / f32(overlap_count)
+	correction := min(average_overlap * strength * 1.5, particle_size * 0.8)
+	return unit * correction
+}
+
 pellets_gpu_ensure :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, settings: ^Pellets_Settings) -> bool {
 	target_count := max(settings.particle_count, 1)
 	cell_size := max(settings.particle_size * 3, 0.01)
@@ -47,7 +74,6 @@ pellets_gpu_ensure :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 	}
 	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
 		if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Pellets_Physics_Params)), {.UNIFORM_BUFFER}, &gpu.physics_params_buffers[frame_slot]) ||
-		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Pellets_Density_Params)), {.UNIFORM_BUFFER}, &gpu.density_params_buffers[frame_slot]) ||
 		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Pellets_Render_Params)), {.UNIFORM_BUFFER}, &gpu.render_params_buffers[frame_slot]) ||
 		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Pellets_Fade_Params)), {.UNIFORM_BUFFER}, &gpu.trail_fade_params_buffers[frame_slot]) ||
 		   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(size_of(Pellets_Background_Params)), {.UNIFORM_BUFFER}, &gpu.background_params_buffers[frame_slot]) ||
@@ -79,8 +105,7 @@ pellets_gpu_ensure :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 	   !pellets_create_compute_pipeline(vk_ctx, gpu.grid_prefix_blocks_shader.handle, gpu.grid_prefix_set_layout, &gpu.grid_prefix_blocks_pipeline) ||
 	   !pellets_create_compute_pipeline(vk_ctx, gpu.grid_prefix_add_shader.handle, gpu.grid_prefix_set_layout, &gpu.grid_prefix_add_pipeline) ||
 	   !pellets_create_compute_pipeline(vk_ctx, gpu.grid_scatter_shader.handle, gpu.grid_scatter_set_layout, &gpu.grid_scatter_pipeline) ||
-	   !pellets_create_compute_pipeline(vk_ctx, gpu.physics_shader.handle, gpu.physics_set_layout, &gpu.physics_pipeline) ||
-	   !pellets_create_compute_pipeline(vk_ctx, gpu.density_shader.handle, gpu.density_set_layout, &gpu.density_pipeline) {
+	   !pellets_create_compute_pipeline(vk_ctx, gpu.physics_shader.handle, gpu.physics_set_layout, &gpu.physics_pipeline) {
 		pellets_gpu_destroy(gpu, vk_ctx)
 		return false
 	}
@@ -120,7 +145,6 @@ pellets_load_shaders :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context
 	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_GRID_PREFIX_ADD_SHADER_SOURCE, PELLETS_GRID_PREFIX_ADD_FALLBACK_SPV, .Compute, PELLETS_SOURCE_ENTRY, &gpu.grid_prefix_add_shader) &&
 	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_GRID_SCATTER_SHADER_SOURCE, PELLETS_GRID_SCATTER_FALLBACK_SPV, .Compute, PELLETS_SOURCE_ENTRY, &gpu.grid_scatter_shader) &&
 	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_PHYSICS_SHADER_SOURCE, PELLETS_PHYSICS_FALLBACK_SPV, .Compute, PELLETS_SOURCE_ENTRY, &gpu.physics_shader) &&
-	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_DENSITY_SHADER_SOURCE, PELLETS_DENSITY_FALLBACK_SPV, .Compute, PELLETS_SOURCE_ENTRY, &gpu.density_shader) &&
 	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_BACKGROUND_SHADER_SOURCE, PELLETS_BACKGROUND_VERTEX_FALLBACK_SPV, .Vertex, PELLETS_VERTEX_SOURCE_ENTRY, &gpu.background_vertex_shader) &&
 	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_BACKGROUND_SHADER_SOURCE, PELLETS_BACKGROUND_FRAGMENT_FALLBACK_SPV, .Fragment, PELLETS_FRAGMENT_SOURCE_ENTRY, &gpu.background_fragment_shader) &&
 	       engine.vk_load_shader_module_with_fallback(vk_ctx, PELLETS_RENDER_SHADER_SOURCE, PELLETS_RENDER_VERTEX_FALLBACK_SPV, .Vertex, PELLETS_VERTEX_SOURCE_ENTRY, &gpu.render_vertex_shader) &&
@@ -210,14 +234,6 @@ pellets_write_static_params_size :: proc(gpu: ^Pellets_Gpu_State, frame_slot: in
 			tile_count = tile_count,
 		}
 	}
-	if gpu.density_params_buffers[frame_slot].mapped != nil {
-		params := cast(^Pellets_Density_Params)gpu.density_params_buffers[frame_slot].mapped
-		params^ = {
-			particle_count = gpu.particle_count,
-			density_radius = settings.density_radius,
-			coloring_mode = u32(settings.foreground_index),
-		}
-	}
 	if gpu.background_params_buffers[frame_slot].mapped != nil {
 		params := cast(^Pellets_Background_Params)gpu.background_params_buffers[frame_slot].mapped
 		params^ = {
@@ -268,6 +284,7 @@ pellets_write_physics_params :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk
 		overlap_resolution_strength = settings.overlap_resolution_strength,
 		frame_index = gpu.frame_index,
 		coloring_mode = u32(settings.foreground_color_mode),
+		density_radius = settings.density_radius,
 	}
 }
 
@@ -302,15 +319,6 @@ pellets_create_descriptors :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 		{binding = 5, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
 	}
 	if !pellets_create_set_layout(vk_ctx, physics_bindings[:], &gpu.physics_set_layout) {return false}
-	density_bindings := [6]vk.DescriptorSetLayoutBinding{
-		{binding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-		{binding = 5, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, stageFlags = {.COMPUTE}},
-	}
-	if !pellets_create_set_layout(vk_ctx, density_bindings[:], &gpu.density_set_layout) {return false}
 	background_bindings := [2]vk.DescriptorSetLayoutBinding{
 		{binding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
 		{binding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
@@ -340,16 +348,15 @@ pellets_create_descriptors :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 		{type = .SAMPLED_IMAGE, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
 		{type = .SAMPLER, descriptorCount = 4 * engine.MAX_FRAMES_IN_FLIGHT},
 	}
-	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 12 * engine.MAX_FRAMES_IN_FLIGHT}
+	pool_info := vk.DescriptorPoolCreateInfo{sType = .DESCRIPTOR_POOL_CREATE_INFO, poolSizeCount = u32(len(pool_sizes)), pPoolSizes = raw_data(pool_sizes[:]), maxSets = 11 * engine.MAX_FRAMES_IN_FLIGHT}
 	if vk.CreateDescriptorPool(vk_ctx.device, &pool_info, nil, &gpu.descriptor_pool) != .SUCCESS {return false}
 	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
-		layouts := [12]vk.DescriptorSetLayout{
+		layouts := [11]vk.DescriptorSetLayout{
 			gpu.grid_clear_set_layout,
 			gpu.grid_populate_set_layout,
 			gpu.grid_prefix_set_layout,
 			gpu.grid_scatter_set_layout,
 			gpu.physics_set_layout,
-			gpu.density_set_layout,
 			gpu.background_set_layout,
 			gpu.render_set_layout,
 			gpu.trail_fade_set_layout,
@@ -357,7 +364,7 @@ pellets_create_descriptors :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 			gpu.trail_blit_set_layout,
 			gpu.trail_blit_set_layout,
 		}
-		sets: [12]vk.DescriptorSet
+		sets: [11]vk.DescriptorSet
 		alloc := vk.DescriptorSetAllocateInfo{sType = .DESCRIPTOR_SET_ALLOCATE_INFO, descriptorPool = gpu.descriptor_pool, descriptorSetCount = u32(len(layouts)), pSetLayouts = raw_data(layouts[:])}
 		if vk.AllocateDescriptorSets(vk_ctx.device, &alloc, raw_data(sets[:])) != .SUCCESS {return false}
 		gpu.grid_clear_sets[frame_slot] = sets[0]
@@ -365,13 +372,12 @@ pellets_create_descriptors :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 		gpu.grid_prefix_sets[frame_slot] = sets[2]
 		gpu.grid_scatter_sets[frame_slot] = sets[3]
 		gpu.physics_sets[frame_slot] = sets[4]
-		gpu.density_sets[frame_slot] = sets[5]
-		gpu.background_sets[frame_slot] = sets[6]
-		gpu.render_sets[frame_slot] = sets[7]
-		gpu.trail_fade_sets[frame_slot][0] = sets[8]
-		gpu.trail_fade_sets[frame_slot][1] = sets[9]
-		gpu.trail_blit_sets[frame_slot][0] = sets[10]
-		gpu.trail_blit_sets[frame_slot][1] = sets[11]
+		gpu.background_sets[frame_slot] = sets[5]
+		gpu.render_sets[frame_slot] = sets[6]
+		gpu.trail_fade_sets[frame_slot][0] = sets[7]
+		gpu.trail_fade_sets[frame_slot][1] = sets[8]
+		gpu.trail_blit_sets[frame_slot][0] = sets[9]
+		gpu.trail_blit_sets[frame_slot][1] = sets[10]
 	}
 	pellets_update_descriptors(gpu, vk_ctx)
 	return true
@@ -396,7 +402,6 @@ pellets_update_descriptors_for_slot :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^en
 	cursors_info := vk.DescriptorBufferInfo{buffer = gpu.grid_cursors_buffer.handle, offset = 0, range = gpu.grid_cursors_buffer.size}
 	block_sums_info := vk.DescriptorBufferInfo{buffer = gpu.grid_block_sums_buffer.handle, offset = 0, range = gpu.grid_block_sums_buffer.size}
 	physics_info := vk.DescriptorBufferInfo{buffer = gpu.physics_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Pellets_Physics_Params))}
-	density_info := vk.DescriptorBufferInfo{buffer = gpu.density_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Pellets_Density_Params))}
 	render_info := vk.DescriptorBufferInfo{buffer = gpu.render_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Pellets_Render_Params))}
 	background_params_info := vk.DescriptorBufferInfo{buffer = gpu.background_params_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of(Pellets_Background_Params))}
 	background_color_info := vk.DescriptorBufferInfo{buffer = gpu.background_color_buffers[frame_slot].handle, offset = 0, range = vk.DeviceSize(size_of([4]f32))}
@@ -407,7 +412,6 @@ pellets_update_descriptors_for_slot :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^en
 	grid_prefix_set := gpu.grid_prefix_sets[frame_slot]
 	grid_scatter_set := gpu.grid_scatter_sets[frame_slot]
 	physics_set := gpu.physics_sets[frame_slot]
-	density_set := gpu.density_sets[frame_slot]
 	background_set := gpu.background_sets[frame_slot]
 	render_set := gpu.render_sets[frame_slot]
 	writes := [?]vk.WriteDescriptorSet{
@@ -432,12 +436,6 @@ pellets_update_descriptors_for_slot :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^en
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = physics_set, dstBinding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &grid_params_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = physics_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &counts_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = physics_set, dstBinding = 5, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &offsets_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &density_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 2, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &grid_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 3, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &grid_params_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 4, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &counts_info},
-		{sType = .WRITE_DESCRIPTOR_SET, dstSet = density_set, dstBinding = 5, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &offsets_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &background_params_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = background_set, dstBinding = 1, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, pBufferInfo = &background_color_info},
 		{sType = .WRITE_DESCRIPTOR_SET, dstSet = render_set, dstBinding = 0, descriptorType = .STORAGE_BUFFER, descriptorCount = 1, pBufferInfo = &particle_info},

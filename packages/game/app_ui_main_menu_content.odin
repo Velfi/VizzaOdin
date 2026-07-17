@@ -38,14 +38,16 @@ app_ui_mode_for_simulation_index :: proc(index: int) -> App_Mode {
 	case 4:
 		return .Pellets
 	case 5:
-		return .Gradient_Editor
+		return .ST_FLIP
 	case 6:
-		return .Voronoi_CA
+		return .Gradient_Editor
 	case 7:
-		return .Moire
+		return .Voronoi_CA
 	case 8:
-		return .Vectors
+		return .Moire
 	case 9:
+		return .Vectors
+	case 10:
 		return .Primordial
 	case:
 		return .Main_Menu

@@ -15,7 +15,7 @@ Simulation_Controller_Ui_State :: struct {
 	pending_panel_focus: bool,
 }
 
-SIMULATION_CONTROLLER_STATE_COUNT :: 8
+SIMULATION_CONTROLLER_STATE_COUNT :: 9
 
 // The deck is ordered by impact: establish a result quickly, shape the defining
 // behavior, then expose direct interaction and lower-frequency utilities.
@@ -29,6 +29,10 @@ PARTICLE_LIFE_SECTION_FORCES :: 102
 PARTICLE_LIFE_SECTION_POPULATION :: 103
 PARTICLE_LIFE_SECTION_ADVANCED :: 104
 MOIRE_SECTION_PATTERN :: 102
+ST_FLIP_SECTION_FLUID :: 102
+ST_FLIP_SECTION_TIME :: 103
+ST_FLIP_SECTION_BRUSH :: 104
+ST_FLIP_SECTION_ADVANCED :: 105
 
 GRAY_SCOTT_CONTROLLER_TABS := [?]string{"Presets", "Look", "Pattern", "Mask", "Brush", "Camera"}
 GRAY_SCOTT_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, GRAY_SCOTT_SECTION_PATTERN, GRAY_SCOTT_SECTION_MASK, 4, 7}
@@ -46,6 +50,8 @@ VECTORS_CONTROLLER_TABS := [?]string{"Presets", "Look", "Field", "Probe"}
 VECTORS_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 3, 8}
 PRIMORDIAL_CONTROLLER_TABS := [?]string{"Presets", "Look", "Motion", "Population", "Brush"}
 PRIMORDIAL_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, 6, 5, 3}
+ST_FLIP_CONTROLLER_TABS := [?]string{"Presets", "Look", "Fluid", "Time", "Brush", "Advanced"}
+ST_FLIP_CONTROLLER_SECTIONS := [?]int{CONTROLLER_SECTION_PRESETS, CONTROLLER_SECTION_LOOK, ST_FLIP_SECTION_FLUID, ST_FLIP_SECTION_TIME, ST_FLIP_SECTION_BRUSH, ST_FLIP_SECTION_ADVANCED}
 
 simulation_controller_ui_init :: proc(state: ^Simulation_Controller_Ui_State) {
 	state^ = {deck_visible = false, panel_open = false}
@@ -62,6 +68,7 @@ simulation_controller_ui_state_index :: proc(mode: App_Mode) -> (int, bool) {
 	case .Moire: return 5, true
 	case .Vectors: return 6, true
 	case .Primordial: return 7, true
+	case .ST_FLIP: return 8, true
 	case: return 0, false
 	}
 }
@@ -81,6 +88,7 @@ simulation_controller_ui_tabs :: proc(mode: App_Mode) -> []string {
 	case .Moire: return MOIRE_CONTROLLER_TABS[:]
 	case .Vectors: return VECTORS_CONTROLLER_TABS[:]
 	case .Primordial: return PRIMORDIAL_CONTROLLER_TABS[:]
+	case .ST_FLIP: return ST_FLIP_CONTROLLER_TABS[:]
 	case: return nil
 	}
 }
@@ -96,6 +104,7 @@ simulation_controller_ui_section :: proc(mode: App_Mode, tab_index: int) -> int 
 	case .Moire: sections = MOIRE_CONTROLLER_SECTIONS[:]
 	case .Vectors: sections = VECTORS_CONTROLLER_SECTIONS[:]
 	case .Primordial: sections = PRIMORDIAL_CONTROLLER_SECTIONS[:]
+	case .ST_FLIP: sections = ST_FLIP_CONTROLLER_SECTIONS[:]
 	case: return tab_index
 	}
 	if tab_index < 0 || tab_index >= len(sections) {return tab_index}
@@ -127,6 +136,8 @@ simulation_controller_ui_tab_icon :: proc(label: string) -> uifw.Ui_Controller_I
 	if label == "Probe" {return .Brush}
 	if label == "Flow" {return .Flow}
 	if label == "Motion" {return .Motion}
+	if label == "Fluid" {return .Physics}
+	if label == "Time" {return .Flow}
 	return .World
 }
 
@@ -342,6 +353,13 @@ simulation_controller_ui_context_hint :: proc(state: ^Simulation_Controller_Ui_S
 simulation_controller_ui_draw_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, rect: uifw.Rect, worker: ^Product_Context) {
 	state := simulation_controller_ui_state(ui)
 	section := simulation_controller_ui_section(ui.mode, state.active_index)
+	if ui.mode == .ST_FLIP {
+		// ST-FLIP palettes can place pure white or saturated colors behind the
+		// panel. Give controls a contrast-stable surface instead of relying on
+		// the translucent simulation chrome used by darker visualizations.
+		uifw.gui_round_rect(gui, rect, 10, {0.025, 0.03, 0.045, 0.96})
+		uifw.gui_round_stroke(gui, rect, 10, {1, 1, 1, 0.18}, max(gui.style.border_width, 1))
+	}
 	uifw.gui_push_id(gui, fmt.tprintf("simulation_controller_section_%d", section))
 	defer uifw.gui_pop_id(gui)
 	panel_region := simulation_controller_ui_region_id(gui, "panel")
@@ -376,7 +394,7 @@ simulation_controller_ui_draw_panel :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Co
 	}
 }
 
-simulation_controller_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, gray: ^Gray_Scott_Simulation = nil, particle: ^Particle_Life_Simulation = nil, remaining: ^Remaining_Sim_State = nil, width, height: f32, worker: ^Product_Context) {
+simulation_controller_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, gray: ^Gray_Scott_Simulation = nil, particle: ^Particle_Life_Simulation = nil, st_flip: ^ST_Flip_Simulation = nil, remaining: ^Remaining_Sim_State = nil, width, height: f32, worker: ^Product_Context) {
 	if !simulation_controller_ui_enabled(ui) {return}
 	state := simulation_controller_ui_state(ui)
 	tabs := simulation_controller_ui_tabs(ui.mode)
@@ -391,6 +409,7 @@ simulation_controller_ui_draw :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context,
 	}
 	if gray != nil {_ = color_scheme_editor_draw_modal(gui, &ui.color_scheme_editor, &gray.settings.color_scheme); preset_save_dialog_draw(gui, &gray.runtime.preset_fieldset, worker, "gray_scott")}
 	if particle != nil {_ = color_scheme_editor_draw_modal(gui, &ui.color_scheme_editor, &particle.settings.color_scheme); preset_save_dialog_draw(gui, &particle.runtime.preset_ui, worker, "particle_life")}
+	if st_flip != nil {_ = color_scheme_editor_draw_modal(gui, &ui.color_scheme_editor, &st_flip.settings.color_scheme); preset_save_dialog_draw(gui, &st_flip.runtime.preset_ui, worker, "st_flip")}
 }
 
 simulation_controller_ui_end_frame :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context) {

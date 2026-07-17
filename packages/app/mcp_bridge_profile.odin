@@ -439,6 +439,8 @@ mcp_bridge_app_mode_from_name :: proc(name: string, out: ^App_Mode) -> bool {
 		out^ = .Flow_Field
 	case "Pellets", "pellets":
 		out^ = .Pellets
+	case "ST_FLIP", "st_flip", "ST-FLIP":
+		out^ = .ST_FLIP
 	case "Gradient_Editor", "gradient_editor":
 		out^ = .Gradient_Editor
 	case "Voronoi", "voronoi", "Voronoi_CA", "voronoi_ca":

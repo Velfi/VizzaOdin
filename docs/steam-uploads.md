@@ -1,7 +1,8 @@
 # Steam Build Uploads
 
-Vizza publishes the Windows build and macOS app bundle to Steam AppID `4945920` using
-`steamcmd` and the VDF scripts in [`packaging/steam/`](../packaging/steam/).
+Vizza publishes the Windows build and macOS app bundle to the main Steam AppID
+`4945920` and Playtest AppID `4946320` using `steamcmd` and the VDF scripts in
+[`packaging/steam/`](../packaging/steam/).
 The driver is [`scripts/steam-upload.sh`](../scripts/steam-upload.sh).
 
 ## One-Time Setup
@@ -27,6 +28,12 @@ The checked-in defaults are:
 | Windows  | `4945921` | `STEAM_DEPOT_WINDOWS` |
 | macOS    | `4945922` | `STEAM_DEPOT_MACOS` |
 
+The Playtest child app uses one all-platform depot:
+
+| App | App ID | Depot ID | Env overrides |
+| --- | --- | --- | --- |
+| Vizza Playtest | `4946320` | `4946321` | `STEAM_PLAYTEST_APP_ID`, `STEAM_PLAYTEST_DEPOT` |
+
 In Steamworks for app `4945920`:
 
 1. Open **SteamPipe -> Depots** and confirm depots `4945921` and `4945922` exist.
@@ -39,6 +46,11 @@ In Steamworks for app `4945920`:
 
 After step 6, the depot should no longer show the warning that it is not
 referenced by any packages.
+
+Repeat the package check for Playtest app `4946320`: depot `4946321` must be
+attached to the Playtest package and to the developer comp package used by the
+test account. The Playtest depot deliberately contains both `Vizza.exe` and
+`Vizza.app`; Steam's OS-specific launch options select the correct executable.
 
 ### 3. Build Account And Steam Guard
 
@@ -79,8 +91,8 @@ scripts/steam-upload.sh --beta 0.1.0
 
 This downloads both `vizza-v0.1.0-macos.zip` and
 `vizza-v0.1.0-windows-x64.zip`, stages `Vizza.app` and `Vizza.exe` under their
-platform content roots, renders both depot VDFs, and runs
-`steamcmd +run_app_build`.
+platform content roots, renders the main and Playtest VDFs, and runs both app
+builds in one `steamcmd` session. A preview covers both apps without uploading.
 
 `--beta` promotes the build to the branch named `beta`. If the branch has a
 different name in Steamworks, set `STEAM_BETA_BRANCH=...`.
@@ -88,11 +100,18 @@ different name in Steamworks, set `STEAM_BETA_BRANCH=...`.
 Create the branch from the app's **Builds** page in Steamworks before the first
 upload that tries to set it live.
 
+The Playtest build is uploaded without promotion by default, even when `--beta`
+promotes the main build. This avoids assuming that the Playtest has the same
+branch. Set `STEAM_PLAYTEST_BRANCH=branch-name` to promote it automatically, or
+promote its build manually on the Playtest's Builds page. Steam does not let an
+uploader set the `default` branch live; promote that branch in Steamworks.
+
 Use `--branch NAME` for a custom branch. Omit `--beta` and `--branch` to upload
 without promoting. Promote later at:
 
 ```text
 https://partner.steamgames.com/apps/builds/4945920
+https://partner.steamgames.com/apps/builds/4946320
 ```
 
 To stage a local package instead:
@@ -108,7 +127,10 @@ scripts/steam-upload.sh --local --preview 0.1.0
 - `Login Failure: Invalid Login Auth Code`: Steam Guard token expired or was
   rotated. Re-run the bootstrap login and enter the new code.
 - `ERROR! Failed to get application info`: the build account is missing
-  publish-build permissions for AppID `4945920`.
+  publish-build permissions for AppID `4945920` or Playtest AppID `4946320`.
+- `ERROR! Depot 4946321 not found in app 4946320`: verify the Playtest depot ID
+  under **SteamPipe -> Depots**. If Steamworks assigned a different ID, set
+  `STEAM_PLAYTEST_DEPOT` or update `packaging/steam/targets.env`.
 - `ERROR! Depot N not found in app M`: depot ID mismatch. Verify Steamworks
   depots and override `STEAM_DEPOT_WINDOWS` or `STEAM_DEPOT_MACOS` if needed.
 - `ERROR! Failed to commit build for AppID 4945920 : Failure`: SteamPipe

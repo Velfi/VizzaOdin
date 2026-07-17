@@ -15,6 +15,7 @@ render_feature_post_processing_particle_life :: proc(ctx: ^Render_Context, out: 
 render_feature_post_processing_slime :: proc(ctx: ^Render_Context, out: ^Post_Processing_Settings) -> bool {if ctx == nil || ctx.app_ui == nil || out == nil do return false; out^ = ctx.app_ui.slime_mold.slime.post_processing; return true}
 render_feature_post_processing_flow :: proc(ctx: ^Render_Context, out: ^Post_Processing_Settings) -> bool {if ctx == nil || ctx.app_ui == nil || out == nil do return false; out^ = ctx.app_ui.flow_field.flow.post_processing; return true}
 render_feature_post_processing_pellets :: proc(ctx: ^Render_Context, out: ^Post_Processing_Settings) -> bool {if ctx == nil || ctx.app_ui == nil || out == nil do return false; out^ = ctx.app_ui.pellets.pellets.post_processing; return true}
+render_feature_post_processing_st_flip :: proc(ctx: ^Render_Context, out: ^Post_Processing_Settings) -> bool {if ctx == nil || ctx.app_ui == nil || out == nil do return false; out^ = ctx.app_ui.st_flip.settings.post_processing; return true}
 render_feature_post_processing_voronoi :: proc(ctx: ^Render_Context, out: ^Post_Processing_Settings) -> bool {if ctx == nil || ctx.app_ui == nil || out == nil do return false; out^ = ctx.app_ui.voronoi_ca.voronoi.post_processing; return true}
 render_feature_post_processing_primordial :: proc(ctx: ^Render_Context, out: ^Post_Processing_Settings) -> bool {if ctx == nil || ctx.app_ui == nil || out == nil do return false; out^ = ctx.app_ui.primordial.primordial.post_processing; return true}
 

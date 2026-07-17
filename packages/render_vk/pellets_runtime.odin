@@ -69,7 +69,6 @@ pellets_gpu_step :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, cm
 	grid_clear_set := gpu.grid_clear_sets[frame_slot]
 	grid_populate_set := gpu.grid_populate_sets[frame_slot]
 	physics_set := gpu.physics_sets[frame_slot]
-	density_set := gpu.density_sets[frame_slot]
 	profile_frame := engine.Vk_Frame{frame_index = u32(frame_slot)}
 	engine.gpu_profiler_begin_pass(vk_ctx, cmd, profile_frame, .Pellets_Grid_Clear)
 	vk.CmdBindPipeline(cmd, .COMPUTE, gpu.grid_clear_pipeline.pipeline)
@@ -122,17 +121,6 @@ pellets_gpu_step :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context, cm
 	vk.CmdDispatch(cmd, particle_groups, 1, 1)
 	engine.vk_cmd_count_compute_dispatch(vk_ctx)
 	engine.gpu_profiler_end_pass(vk_ctx, cmd, profile_frame, .Pellets_Physics)
-	pellets_dispatch_barrier(vk_ctx, cmd, {.COMPUTE_SHADER})
-	if sim.pellets.foreground_color_mode == .Density {
-		engine.gpu_profiler_begin_pass(vk_ctx, cmd, profile_frame, .Pellets_Density)
-		vk.CmdBindPipeline(cmd, .COMPUTE, gpu.density_pipeline.pipeline)
-		engine.vk_cmd_count_pipeline_bind(vk_ctx)
-		vk.CmdBindDescriptorSets(cmd, .COMPUTE, gpu.density_pipeline.layout, 0, 1, &density_set, 0, nil)
-		engine.vk_cmd_count_descriptor_bind(vk_ctx)
-		vk.CmdDispatch(cmd, particle_groups, 1, 1)
-		engine.vk_cmd_count_compute_dispatch(vk_ctx)
-		engine.gpu_profiler_end_pass(vk_ctx, cmd, profile_frame, .Pellets_Density)
-	}
 	pellets_dispatch_barrier(vk_ctx, cmd, {.VERTEX_SHADER, .FRAGMENT_SHADER})
 }
 
@@ -316,7 +304,6 @@ pellets_gpu_destroy :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context)
 	pellets_destroy_compute_pipeline(vk_ctx, &gpu.grid_prefix_add_pipeline)
 	pellets_destroy_compute_pipeline(vk_ctx, &gpu.grid_scatter_pipeline)
 	pellets_destroy_compute_pipeline(vk_ctx, &gpu.physics_pipeline)
-	pellets_destroy_compute_pipeline(vk_ctx, &gpu.density_pipeline)
 	engine.vk_destroy_graphics_pipeline(vk_ctx, &gpu.background_pipeline)
 	engine.vk_destroy_graphics_pipeline(vk_ctx, &gpu.render_pipeline)
 	engine.vk_destroy_graphics_pipeline(vk_ctx, &gpu.trail_background_pipeline)
@@ -336,7 +323,6 @@ pellets_gpu_destroy :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context)
 	if gpu.grid_prefix_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.grid_prefix_set_layout, nil)}
 	if gpu.grid_scatter_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.grid_scatter_set_layout, nil)}
 	if gpu.physics_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.physics_set_layout, nil)}
-	if gpu.density_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.density_set_layout, nil)}
 	if gpu.background_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.background_set_layout, nil)}
 	if gpu.render_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.render_set_layout, nil)}
 	if gpu.trail_fade_set_layout != vk.DescriptorSetLayout(0) {vk.DestroyDescriptorSetLayout(vk_ctx.device, gpu.trail_fade_set_layout, nil)}
@@ -350,7 +336,6 @@ pellets_gpu_destroy :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context)
 	engine.vk_destroy_buffer(vk_ctx, &gpu.lut_buffer)
 	for frame_slot in 0 ..< engine.MAX_FRAMES_IN_FLIGHT {
 		engine.vk_destroy_buffer(vk_ctx, &gpu.physics_params_buffers[frame_slot])
-		engine.vk_destroy_buffer(vk_ctx, &gpu.density_params_buffers[frame_slot])
 		engine.vk_destroy_buffer(vk_ctx, &gpu.background_params_buffers[frame_slot])
 		engine.vk_destroy_buffer(vk_ctx, &gpu.background_color_buffers[frame_slot])
 		engine.vk_destroy_buffer(vk_ctx, &gpu.render_params_buffers[frame_slot])
@@ -364,7 +349,6 @@ pellets_gpu_destroy :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_Context)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.grid_prefix_add_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.grid_scatter_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.physics_shader)
-	engine.vk_destroy_shader_module(vk_ctx, &gpu.density_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.background_vertex_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.background_fragment_shader)
 	engine.vk_destroy_shader_module(vk_ctx, &gpu.render_vertex_shader)

@@ -126,6 +126,20 @@ mcp_bridge_drain_commands :: proc(bridge: ^Mcp_Bridge, app: ^App_State) {
 				hide_cmd.kind = .Hide_Ui
 				_ = engine.queue_try_push(&app.ui_to_render, hide_cmd)
 			}
+		case .Configure_ST_Flip:
+			if cmd.st_flip_set_mode {
+				mode_cmd := Ui_To_Render_Command{kind=.Set_App_Mode, app_mode=.ST_FLIP}
+				_ = engine.queue_try_push(&app.ui_to_render, mode_cmd)
+			}
+			_ = mcp_enqueue_feature_command(app, .ST_FLIP, FEATURE_COMMAND_APPLY_SETTINGS, &cmd.st_flip_settings)
+			if cmd.st_flip_reset {
+				reset: Feature_Reset_Command
+				_ = mcp_enqueue_feature_command(app, .ST_FLIP, FEATURE_COMMAND_RESET, &reset)
+			}
+			if cmd.st_flip_hide_ui {
+				hide_cmd := Ui_To_Render_Command{kind=.Hide_Ui}
+				_ = engine.queue_try_push(&app.ui_to_render, hide_cmd)
+			}
 		case .Configure_Remaining_Sim:
 			if cmd.remaining_set_mode {
 				mode_cmd: Ui_To_Render_Command

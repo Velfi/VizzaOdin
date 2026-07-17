@@ -181,7 +181,7 @@ app_ui_video_recording_button_label :: proc(ui: ^App_Ui_State) -> string {
 
 app_ui_mode_allows_video_recording :: proc(mode: App_Mode) -> bool {
 	#partial switch mode {
-	case .Slime_Mold, .Gray_Scott, .Particle_Life, .Flow_Field, .Pellets, .Voronoi_CA, .Moire, .Vectors, .Primordial:
+	case .Slime_Mold, .Gray_Scott, .Particle_Life, .Flow_Field, .Pellets, .ST_FLIP, .Voronoi_CA, .Moire, .Vectors, .Primordial:
 		return true
 	case:
 		return false

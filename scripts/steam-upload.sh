@@ -32,6 +32,8 @@
 #   STEAM_BUILD_PASSWORD If set, passed to steamcmd on stdin; otherwise
 #                        steamcmd prompts interactively.
 #   STEAM_BETA_BRANCH    Used with --beta. Default: beta.
+#   STEAM_PLAYTEST_BRANCH Branch to set live on the Playtest app. Default:
+#                         empty (upload without promoting).
 #   packaging/steam/targets.env — default AppID / depot IDs.
 
 set -euo pipefail
@@ -56,7 +58,7 @@ while [[ $# -gt 0 ]]; do
 				exit 1
 			fi
 			BRANCH="$2"; shift 2 ;;
-		-h|--help)     sed -n '3,35p' "$0"; exit 0 ;;
+		-h|--help)     sed -n '3,38p' "$0"; exit 0 ;;
 		-*)            echo "unknown flag: $1" >&2; exit 1 ;;
 		*)
 			if [[ -n "$VERSION" ]]; then
@@ -98,6 +100,9 @@ fi
 STEAM_APP_ID="${STEAM_APP_ID:-4945920}"
 STEAM_DEPOT_WINDOWS="${STEAM_DEPOT_WINDOWS:-4945921}"
 STEAM_DEPOT_MACOS="${STEAM_DEPOT_MACOS:-4945922}"
+STEAM_PLAYTEST_APP_ID="${STEAM_PLAYTEST_APP_ID:-4946320}"
+STEAM_PLAYTEST_DEPOT="${STEAM_PLAYTEST_DEPOT:-4946321}"
+STEAM_PLAYTEST_BRANCH="${STEAM_PLAYTEST_BRANCH:-}"
 
 validate_app_id () {
 	local label="$1"
@@ -120,6 +125,8 @@ validate_depot_id () {
 validate_app_id "main" "$STEAM_APP_ID"
 validate_depot_id "Windows" "$STEAM_DEPOT_WINDOWS"
 validate_depot_id "macOS" "$STEAM_DEPOT_MACOS"
+validate_app_id "Playtest" "$STEAM_PLAYTEST_APP_ID"
+validate_depot_id "Playtest" "$STEAM_PLAYTEST_DEPOT"
 
 if [[ ! -d "$STEAM_SDK_ROOT" ]]; then
 	echo "error: STEAM_SDK_ROOT does not exist: $STEAM_SDK_ROOT" >&2
@@ -402,6 +409,31 @@ render_target_vdfs "main" \
 	"$BRANCH" \
 	"Vizza ${TAG}"
 
+render_playtest_vdfs () {
+	local target_scripts="$SCRIPTS/playtest"
+	local target_output="$OUTPUT/playtest"
+
+	mkdir -p "$target_scripts" "$target_output"
+
+	sed \
+		-e "s|__APPID__|${STEAM_PLAYTEST_APP_ID}|g" \
+		-e "s|__DESC__|Vizza Playtest ${TAG}|g" \
+		-e "s|__PREVIEW__|${PREVIEW}|g" \
+		-e "s|__SETLIVE__|${STEAM_PLAYTEST_BRANCH}|g" \
+		-e "s|__CONTENT_ROOT__|${CONTENT}|g" \
+		-e "s|__BUILD_OUTPUT__|${target_output}|g" \
+		-e "s|__DEPOT_PLAYTEST__|${STEAM_PLAYTEST_DEPOT}|g" \
+		"packaging/steam/app_build_playtest.vdf.template" > "$target_scripts/app_build.vdf"
+
+	sed \
+		-e "s|__DEPOT_PLAYTEST__|${STEAM_PLAYTEST_DEPOT}|g" \
+		"packaging/steam/depot_build_playtest.vdf.template" > "$target_scripts/depot_build_playtest.vdf"
+
+	echo "Rendered Playtest VDFs (AppID $STEAM_PLAYTEST_APP_ID, setlive=${STEAM_PLAYTEST_BRANCH:-<none>}) in $target_scripts"
+}
+
+render_playtest_vdfs
+
 # ─────────────────────────── steamcmd ───────────────────────────
 LOGIN_ARGS=()
 PIPE_PASSWORD=0
@@ -417,6 +449,7 @@ fi
 
 STEAMCMD_ARGS=(
 	+run_app_build "$SCRIPTS/main/app_build.vdf"
+	+run_app_build "$SCRIPTS/playtest/app_build.vdf"
 	+quit
 )
 
@@ -426,9 +459,11 @@ if [[ $PREVIEW -eq 1 ]]; then
 else
 	echo "── REAL BUILD ──"
 	echo "  main:     AppID $STEAM_APP_ID → branch ${BRANCH:-<none — promote in partner UI>}"
+	echo "  playtest: AppID $STEAM_PLAYTEST_APP_ID → branch ${STEAM_PLAYTEST_BRANCH:-<none — promote in partner UI>}"
 fi
 echo "  macOS depot: $STEAM_DEPOT_MACOS"
 echo "  Windows depot: $STEAM_DEPOT_WINDOWS"
+echo "  Playtest depot: $STEAM_PLAYTEST_DEPOT (Windows + macOS)"
 echo "  staging:     $STAGING"
 echo "  steamcmd:    $STEAMCMD"
 echo
@@ -444,8 +479,12 @@ else
 fi
 
 validate_steam_output () {
-	local target_output="$OUTPUT/main"
-	local app_log="$target_output/app_build_${STEAM_APP_ID}.log"
+	local target_label="$1"
+	local app_id="$2"
+	local target_output="$OUTPUT/$target_label"
+	shift 2
+	local depot_ids=("$@")
+	local app_log="$target_output/app_build_${app_id}.log"
 	local error_lines
 	local depot_files
 	local build_id
@@ -457,14 +496,20 @@ validate_steam_output () {
 	fi
 
 	local depot_id depot_label depot_log
-	for depot_id in "$STEAM_DEPOT_WINDOWS" "$STEAM_DEPOT_MACOS"; do
-		[[ "$depot_id" == "$STEAM_DEPOT_WINDOWS" ]] && depot_label="windows" || depot_label="macos"
+	for depot_id in "${depot_ids[@]}"; do
+		if [[ "$target_label" == "playtest" ]]; then
+			depot_label="playtest"
+		elif [[ "$depot_id" == "$STEAM_DEPOT_WINDOWS" ]]; then
+			depot_label="windows"
+		else
+			depot_label="macos"
+		fi
 		depot_log="$target_output/depot_build_${depot_id}.log"
 		if [[ -f "$depot_log" ]]; then
 			depot_files="$(sed -n 's/.*Found \([0-9][0-9]*\) files (.*) for depot.*/\1/p' "$depot_log" | tail -1)"
 			if [[ -n "$depot_files" && "$depot_files" -eq 0 ]]; then
 				echo "error: SteamPipe found zero files for depot $depot_id." >&2
-				echo "       Check ContentRoot/FileMapping in $SCRIPTS/main/depot_build_${depot_label}.vdf." >&2
+				echo "       Check ContentRoot/FileMapping in $SCRIPTS/$target_label/depot_build_${depot_label}.vdf." >&2
 				exit 1
 			fi
 		fi
@@ -477,7 +522,7 @@ validate_steam_output () {
 			echo >&2
 			echo "Steam built the depot manifest but failed to commit the app build." >&2
 			echo "That leaves Steam with an installable app but no mounted depots, so it reports Vizza.app as missing." >&2
-			echo "Check Steamworks: the target branch exists, depots $STEAM_DEPOT_WINDOWS and $STEAM_DEPOT_MACOS are attached to the app packages, and the build account can set builds live." >&2
+			echo "Check Steamworks: the target branch exists, depots ${depot_ids[*]} are attached to the app packages, and the build account can set builds live for AppID $app_id." >&2
 		fi
 		exit 1
 	fi
@@ -488,7 +533,7 @@ validate_steam_output () {
 			echo "Steam build created: $build_id"
 		fi
 	fi
-	for depot_id in "$STEAM_DEPOT_WINDOWS" "$STEAM_DEPOT_MACOS"; do
+	for depot_id in "${depot_ids[@]}"; do
 		if [[ -f "$target_output/depot_build_${depot_id}.vdf" ]]; then
 			depot_manifest="$(awk '/"manifest"/ { gsub(/"/, "", $2); print $2 }' "$target_output/depot_build_${depot_id}.vdf" | tail -1)"
 			if [[ -n "$depot_manifest" ]]; then
@@ -498,14 +543,17 @@ validate_steam_output () {
 	done
 }
 
-validate_steam_output
+validate_steam_output "main" "$STEAM_APP_ID" "$STEAM_DEPOT_WINDOWS" "$STEAM_DEPOT_MACOS"
+validate_steam_output "playtest" "$STEAM_PLAYTEST_APP_ID" "$STEAM_PLAYTEST_DEPOT"
 
 echo
 echo "Done. Logs in: $OUTPUT"
 if [[ $PREVIEW -eq 0 ]]; then
 	echo "View builds:"
 	echo "  main: https://partner.steamgames.com/apps/builds/${STEAM_APP_ID}"
+	echo "  playtest: https://partner.steamgames.com/apps/builds/${STEAM_PLAYTEST_APP_ID}"
 	echo
 	echo "If Steam installs this build with 0 mounted depots, fix Steamworks packages:"
 	echo "  add depots ${STEAM_DEPOT_WINDOWS} and ${STEAM_DEPOT_MACOS} to the developer comp and release/store packages, then publish Steamworks changes."
+	echo "  add depot ${STEAM_PLAYTEST_DEPOT} to the Playtest package and developer comp package, then publish Steamworks changes."
 fi

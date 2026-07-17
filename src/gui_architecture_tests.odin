@@ -969,6 +969,31 @@ test_gui_combobox_filters_and_selects_with_enter :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_gui_combobox_disappearing_with_its_tab_releases_open_panel :: proc(t: ^testing.T) {
+	ctx: uifw.Gui_Context
+	uifw.gui_init(&ctx)
+	defer uifw.gui_destroy(&ctx)
+
+	options := [?]string{"Ink", "Stir", "Vortex"}
+	current := 0
+	query: [32]u8
+
+	uifw.gui_begin_frame(&ctx, {mouse_pos = {10, 10}, mouse_pressed = true, mouse_released = true})
+	uifw.gui_layout_begin(&ctx, {0, 0, 220, 220}, .Column, 0, 44)
+	_ = uifw.gui_combobox(&ctx, "Tool", "tool", &current, options[:], query[:])
+	uifw.gui_layout_end(&ctx)
+	uifw.gui_end_frame(&ctx)
+	testing.expect(t, ctx.open_panel != uifw.GUI_ID_NONE)
+
+	// Simulate switching to another controller tab, where the combobox is no
+	// longer drawn. End-of-frame cleanup must release its popup ownership so B
+	// can close the containing tab on the following frame.
+	uifw.gui_begin_frame(&ctx, {})
+	uifw.gui_end_frame(&ctx)
+	testing.expect_value(t, ctx.open_panel, uifw.GUI_ID_NONE)
+}
+
+@(test)
 test_gui_combobox_scrolls_hidden_options :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
