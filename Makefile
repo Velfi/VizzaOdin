@@ -65,7 +65,7 @@ endif
 endif
 STEAM_REDIST_SRC := $(STEAM_SDK_LOCATION)/redistributable_bin/$(STEAM_REDIST_SUBDIR)/$(STEAM_REDIST_FILE)
 ODIN_FLAGS ?= -o:none
-ODIN_FLAGS += $(ZELDA_ENGINE_COLLECTION)
+override ODIN_FLAGS += $(ZELDA_ENGINE_COLLECTION)
 
 .PHONY: help run run-macos-vulkan build build-steam run-steam copy-steam-redist check check-boundaries test perf-particle-life fmt clean distclean shaders deps install-slangc mcp mcp-macos-vulkan theme-preview theme-preview-mcp ui-component profile-ui-trace package-macos steam-upload-preview ui-font-atlas tomlc17 textshape
 
