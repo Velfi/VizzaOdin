@@ -5,6 +5,7 @@ param(
 	[string]$Version = $env:VERSION,
 	[string]$BuildDir = $env:BUILD_DIR,
 	[string]$DistDir = $env:DIST_DIR,
+	[string]$ZeldaEngineRoot = $(if ($env:ZELDA_ENGINE_ROOT) { $env:ZELDA_ENGINE_ROOT } else { "" }),
 	[string]$VcpkgRoot = $(if ($env:VIZZA_VCPKG_ROOT) { $env:VIZZA_VCPKG_ROOT } else { $env:VCPKG_ROOT }),
 	[string]$VcpkgTriplet = $(if ($env:VCPKG_DEFAULT_TRIPLET) { $env:VCPKG_DEFAULT_TRIPLET } else { "x64-windows" }),
 	[string]$OdinFlags = $(if ($env:ODIN_FLAGS) { $env:ODIN_FLAGS } else { "-o:speed" }),
@@ -27,12 +28,16 @@ if (-not $BuildDir) {
 if (-not $DistDir) {
 	$DistDir = Join-Path $RootDir "dist"
 }
+if (-not $ZeldaEngineRoot) {
+	$ZeldaEngineRoot = Join-Path $RootDir "../zelda-engine"
+}
 if (-not $VcpkgRoot) {
 	$VcpkgRoot = "C:\vcpkg"
 }
 
 $BuildDir = [System.IO.Path]::GetFullPath($BuildDir)
 $DistDir = [System.IO.Path]::GetFullPath($DistDir)
+$ZeldaEngineRoot = [System.IO.Path]::GetFullPath($ZeldaEngineRoot)
 $VcpkgInstalledDir = if ($env:VCPKG_INSTALLED_DIR) { $env:VCPKG_INSTALLED_DIR } else { Join-Path $VcpkgRoot "installed\$VcpkgTriplet" }
 $VcpkgIncludeDir = Join-Path $VcpkgInstalledDir "include"
 $VcpkgLibDir = Join-Path $VcpkgInstalledDir "lib"
@@ -68,6 +73,7 @@ function Write-BuildDiagnostics {
 	Write-Host "PowerShell: $($PSVersionTable.PSVersion)"
 	Write-Host "Host architecture: $env:PROCESSOR_ARCHITECTURE"
 	Write-Host "Repository: $RootDir"
+	Write-Host "Zelda Engine: $ZeldaEngineRoot"
 	Write-Host "Build directory: $BuildDir"
 	Write-Host "vcpkg root: $VcpkgRoot"
 	Write-Host "vcpkg triplet: $VcpkgTriplet"
@@ -168,9 +174,10 @@ function Build-Tomlc17 {
 
 function Build-Textshape {
 	$objDir = Join-Path $BuildDir "windows-obj"
-	$src = Join-Path $RootDir "third_party/textshape/textshape.c"
+	$textshapeDir = Join-Path $ZeldaEngineRoot "third_party/textshape"
+	$src = Join-Path $textshapeDir "textshape.c"
 	$obj = Join-Path $objDir "textshape.obj"
-	$lib = Join-Path $RootDir "third_party/textshape/textshape.lib"
+	$lib = Join-Path $textshapeDir "textshape.lib"
 	$harfbuzzInclude = Join-Path $VcpkgIncludeDir "harfbuzz"
 	$freetypeInclude = Join-Path $VcpkgIncludeDir "freetype2"
 
@@ -226,6 +233,7 @@ function Build-App {
 	$linkerFlags = "/LIBPATH:$VcpkgLibDir harfbuzz.lib freetype.lib"
 	$args = @("build", "src")
 	$args += Split-Flags $OdinFlags
+	$args += "-collection:zelda_engine=$(Join-Path $ZeldaEngineRoot 'packages')"
 	$args += "-show-system-calls"
 	$args += "-extra-linker-flags:$linkerFlags"
 	$args += "-out:$outExe"
@@ -537,6 +545,9 @@ if (-not $Version) {
 }
 
 foreach ($requiredPath in @(
+	(Join-Path $ZeldaEngineRoot "packages/engine"),
+	(Join-Path $ZeldaEngineRoot "packages/ui"),
+	(Join-Path $ZeldaEngineRoot "third_party/textshape/textshape.c"),
 	$VcpkgIncludeDir,
 	$VcpkgLibDir,
 	$VcpkgBinDir,
@@ -558,7 +569,7 @@ try {
 	Build-Textshape
 	Write-LibraryDiagnostics @(
 		(Join-Path $RootDir "third_party/tomlc17/src/tomlc17.lib"),
-		(Join-Path $RootDir "third_party/textshape/textshape.lib")
+		(Join-Path $ZeldaEngineRoot "third_party/textshape/textshape.lib")
 	)
 	Build-Shaders
 	$builtExe = Build-App
