@@ -1,6 +1,6 @@
 package app
 
-import engine "../engine"
+import engine "zelda_engine:engine"
 import rendervk "../render_vk"
 
 import base64 "core:encoding/base64"
@@ -349,7 +349,7 @@ mcp_bridge_screenshot :: proc(id: string, bridge: ^Mcp_Bridge, line: string) -> 
 	if value, has_value := mcp_bridge_extract_number_field(line, "output_height"); has_value {
 		output_height = u32(max(value, 1))
 	}
-	qoi_bytes, width, height, sequence, ok := engine.screenshot_state_copy_qoi_resized(bridge.screenshot, max_width, max_height, scale, output_width, output_height, context.temp_allocator)
+	png_bytes, width, height, sequence, ok := engine.screenshot_state_copy_png_resized(bridge.screenshot, max_width, max_height, scale, output_width, output_height, context.temp_allocator)
 	if !ok {
 		return mcp_bridge_error(id, -32000, "no rendered frame is available yet")
 	}
@@ -359,29 +359,29 @@ mcp_bridge_screenshot :: proc(id: string, bridge: ^Mcp_Bridge, line: string) -> 
 		output_path = mcp_bridge_extract_string_field(line, "path")
 	}
 	if len(output_path) > 0 {
-		if os.write_entire_file(output_path, qoi_bytes) != nil {
+		if os.write_entire_file(output_path, png_bytes) != nil {
 			return mcp_bridge_error(id, -32000, "failed to write screenshot output path")
 		}
 		return mcp_bridge_tool_text(id, fmt.tprintf(
-			"{{\"ok\":true,\"format\":\"qoi\",\"mime\":\"image/qoi\",\"width\":%d,\"height\":%d,\"sequence\":%d,\"bytes\":%d,\"output_path\":\"%s\"}}",
+			"{{\"ok\":true,\"format\":\"png\",\"mime\":\"image/png\",\"width\":%d,\"height\":%d,\"sequence\":%d,\"bytes\":%d,\"output_path\":\"%s\"}}",
 			width,
 			height,
 			sequence,
-			len(qoi_bytes),
+			len(png_bytes),
 			mcp_bridge_json_escape(output_path),
 		))
 	}
 
-	encoded, err := base64.encode(qoi_bytes, allocator = context.temp_allocator)
+	encoded, err := base64.encode(png_bytes, allocator = context.temp_allocator)
 	if err != nil {
 		return mcp_bridge_error(id, -32000, "failed to encode screenshot")
 	}
 	return mcp_bridge_tool_text(id, fmt.tprintf(
-		"{{\"ok\":true,\"format\":\"qoi\",\"mime\":\"image/qoi\",\"width\":%d,\"height\":%d,\"sequence\":%d,\"bytes\":%d,\"data_url\":\"data:image/qoi;base64,%s\"}}",
+		"{{\"ok\":true,\"format\":\"png\",\"mime\":\"image/png\",\"width\":%d,\"height\":%d,\"sequence\":%d,\"bytes\":%d,\"data_url\":\"data:image/png;base64,%s\"}}",
 		width,
 		height,
 		sequence,
-		len(qoi_bytes),
+		len(png_bytes),
 		encoded,
 	))
 }

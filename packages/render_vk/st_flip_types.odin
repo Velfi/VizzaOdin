@@ -1,6 +1,6 @@
 package render_vk
 
-import engine "../engine"
+import engine "zelda_engine:engine"
 import vk "vendor:vulkan"
 
 // GPU-owned state only. The concrete buffers and pipelines are added as the

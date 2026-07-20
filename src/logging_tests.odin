@@ -1,7 +1,7 @@
 package main
 
 import host "../packages/app"
-import engine "../packages/engine"
+import engine "zelda_engine:engine"
 
 import "core:os"
 import "core:strings"
@@ -11,6 +11,12 @@ import "core:testing"
 test_crash_log_default_path_uses_local_app_data :: proc(t: ^testing.T) {
 	path := host.crash_log_default_path("C:/Users/steamuser/AppData/Local")
 	testing.expect_value(t, path, "C:/Users/steamuser/AppData/Local/VizzaOdin/logs/vizza.log")
+}
+
+@(test)
+test_crash_log_macos_default_path_uses_library_logs :: proc(t: ^testing.T) {
+	path := host.crash_log_macos_default_path("/Users/player")
+	testing.expect_value(t, path, "/Users/player/Library/Logs/VizzaOdin/vizza.log")
 }
 
 @(test)

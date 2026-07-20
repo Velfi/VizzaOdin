@@ -1,6 +1,6 @@
 package main
 
-import engine "../../packages/engine"
+import engine "zelda_engine:engine"
 import game "../../packages/game"
 import render_vk "../../packages/render_vk"
 

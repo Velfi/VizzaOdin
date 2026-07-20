@@ -11,9 +11,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-VERSION="$(awk -F '"' '/^APP_VERSION ::/ {print $2; exit}' packages/engine/version.odin)"
+VERSION="$(awk -F '"' '/^APP_VERSION ::/ {print $2; exit}' packages/app/version.odin)"
 if [[ -z "${VERSION}" ]]; then
-	echo "error: could not read APP_VERSION from packages/engine/version.odin" >&2
+	echo "error: could not read APP_VERSION from packages/app/version.odin" >&2
 	exit 1
 fi
 TAG="v${VERSION}"

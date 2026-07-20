@@ -1,7 +1,7 @@
 package render_vk
 
-import engine "../engine"
-import uifw "../ui"
+import engine "zelda_engine:engine"
+import uifw "zelda_engine:ui"
 
 import "core:math"
 import vk "vendor:vulkan"
@@ -79,7 +79,7 @@ voronoi_create_image :: proc(gpu: ^Voronoi_Gpu_State, vk_ctx: ^engine.Vk_Context
 	memory_type, ok := engine.vk_find_memory_type(vk_ctx, req.memoryTypeBits, {.DEVICE_LOCAL})
 	if !ok {return false}
 	alloc := vk.MemoryAllocateInfo{sType = .MEMORY_ALLOCATE_INFO, allocationSize = req.size, memoryTypeIndex = memory_type}
-	if vk.AllocateMemory(vk_ctx.device, &alloc, nil, &image.memory) != .SUCCESS {return false}
+	if !engine.vk_allocate_memory_checked(vk_ctx, &alloc, "voronoi image", &image.memory) {return false}
 	if vk.BindImageMemory(vk_ctx.device, image.handle, image.memory, 0) != .SUCCESS {return false}
 	view_info := vk.ImageViewCreateInfo{sType = .IMAGE_VIEW_CREATE_INFO, image = image.handle, viewType = .D2, format = VORONOI_IMAGE_FORMAT, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
 	return vk.CreateImageView(vk_ctx.device, &view_info, nil, &image.view) == .SUCCESS

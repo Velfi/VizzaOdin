@@ -1,7 +1,7 @@
 package render_vk
 
-import uifw "../ui"
-import engine "../engine"
+import uifw "zelda_engine:ui"
+import engine "zelda_engine:engine"
 
 import "core:math"
 import "core:time"
@@ -278,8 +278,16 @@ render_main_menu_preview_size_for_rect :: proc(rect_width, rect_height: f32) -> 
 }
 
 render_main_menu_preview_size_for_mode :: proc(ctx: ^Render_Context, mode: App_Mode) -> (u32, u32) {
-	_ = ctx
-	_ = mode
+	if ctx == nil || ctx.app_ui == nil {
+		return MAIN_MENU_SIM_PREVIEW_WIDTH, MAIN_MENU_SIM_PREVIEW_HEIGHT
+	}
+	count := min(ctx.app_ui.main_menu_preview_slot_count, MAIN_MENU_PREVIEW_SLOT_CAP)
+	for i in 0 ..< count {
+		slot := ctx.app_ui.main_menu_preview_slots[i]
+		if slot.mode == mode {
+			return render_main_menu_preview_size_for_slot(slot)
+		}
+	}
 	return MAIN_MENU_SIM_PREVIEW_WIDTH, MAIN_MENU_SIM_PREVIEW_HEIGHT
 }
 

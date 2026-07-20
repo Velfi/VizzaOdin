@@ -70,7 +70,7 @@ render_worker_dispatch_feature_image :: proc(state: ^Render_Worker_State, runtim
 		runtime.app_ui.vectors.vectors.vector_field_type = .Image
 		runtime.app_ui.vectors.vectors.vector_field_index = int(Vector_Field_Type.Image)
 		write_fixed_string(runtime.app_ui.vectors.vectors.image_path[:], path)
-		ok := vectors_gpu_load_image_path(render_worker_vectors_gpu(runtime), path, runtime.app_ui.vectors.vectors)
+		ok := vectors_gpu_load_image_path(render_worker_vectors_gpu(runtime), &runtime.vk_ctx, path, runtime.app_ui.vectors.vectors)
 		render_worker_publish_preset_result(state, ok, ok ? "Loaded Vectors image" : "Failed to load Vectors image")
 	case .Moire:
 		runtime.app_ui.moire.moire.image_mode_enabled = true
@@ -117,7 +117,7 @@ render_worker_restore_feature_images :: proc(runtime: ^Render_Worker_Runtime, mo
 		if len(path) > 0 do return moire_gpu_load_image_path(render_worker_moire_gpu(runtime), &runtime.vk_ctx, path, runtime.app_ui.moire.moire)
 	case .Vectors:
 		path := fixed_string(runtime.app_ui.vectors.vectors.image_path[:])
-		if len(path) > 0 do return vectors_gpu_load_image_path(render_worker_vectors_gpu(runtime), path, runtime.app_ui.vectors.vectors)
+		if len(path) > 0 do return vectors_gpu_load_image_path(render_worker_vectors_gpu(runtime), &runtime.vk_ctx, path, runtime.app_ui.vectors.vectors)
 	case .Slime_Mold:
 		settings := runtime.app_ui.slime_mold.slime
 		gpu := render_worker_slime_gpu(runtime)

@@ -1,6 +1,6 @@
 package render_vk
 
-import engine "../engine"
+import engine "zelda_engine:engine"
 import vk "vendor:vulkan"
 
 SLIME_IMAGE_FORMAT :: vk.Format(.R8G8B8A8_UNORM)

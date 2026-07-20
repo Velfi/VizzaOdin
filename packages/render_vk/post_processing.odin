@@ -1,6 +1,6 @@
 package render_vk
 
-import engine "../engine"
+import engine "zelda_engine:engine"
 
 import vk "vendor:vulkan"
 
@@ -140,7 +140,7 @@ post_processing_create_source_image :: proc(gpu: ^Post_Processing_Gpu_State, vk_
 		return false
 	}
 	alloc := vk.MemoryAllocateInfo{sType = .MEMORY_ALLOCATE_INFO, allocationSize = req.size, memoryTypeIndex = memory_type}
-	if vk.AllocateMemory(vk_ctx.device, &alloc, nil, &gpu.source.memory) != .SUCCESS {
+	if !engine.vk_allocate_memory_checked(vk_ctx, &alloc, "post processing image", &gpu.source.memory) {
 		return false
 	}
 	if vk.BindImageMemory(vk_ctx.device, gpu.source.image, gpu.source.memory, 0) != .SUCCESS {

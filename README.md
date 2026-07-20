@@ -210,11 +210,11 @@ MCP, profiling, and UI preview workflows.
 - `packages/app`: executable composition and command-line policy
 - `packages/game`: Vizza simulations, product policy, and product command/event
   payloads
-- `packages/engine`: queues, Vulkan context/resources, shader lookup,
+- `../zelda-engine/packages/engine`: queues, Vulkan context/resources, shader lookup,
   screenshots, logging, and profiling
 - `packages/render_vk`: Vulkan render graph, simulation render adapters, and
   lowering for renderer-neutral UI commands
-- `packages/ui`: renderer-agnostic immediate-mode UI primitives and widgets
+- `../zelda-engine/packages/ui`: renderer-agnostic immediate-mode UI primitives and widgets
 - `assets`: Slang shaders, LUTs, fonts, and app media
 - `docs`: architecture, release, MCP, profiling, and dependency notes
 

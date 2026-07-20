@@ -309,7 +309,14 @@ settings_app_config_path :: proc() -> string {
 		buf: [1024]u8
 		local_app_data := os.get_env_buf(buf[:], "LOCALAPPDATA")
 		if len(local_app_data) > 0 {
-			return fmt.tprintf("%s/VizzaOdin/config/app.toml", local_app_data)
+			return fmt.tprintf("%s/Vizza/config/app.toml", local_app_data)
+		}
+	}
+	when ODIN_OS == .Darwin {
+		buf: [1024]u8
+		home_directory := os.get_env_buf(buf[:], "HOME")
+		if len(home_directory) > 0 {
+			return fmt.tprintf("%s/Library/Application Support/Vizza/config/app.toml", home_directory)
 		}
 	}
 	return "config/app.toml"

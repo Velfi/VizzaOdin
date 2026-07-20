@@ -2,7 +2,8 @@
 
 ## Dependency direction
 
-VizzaOdin uses five package roles:
+VizzaOdin consumes two reusable framework packages from the sibling
+`../zelda-engine` Odin collection and keeps three product packages locally:
 
 ```text
 src/main -> app -> game
@@ -39,7 +40,7 @@ camera semantics, controls, palettes, simulation behavior, and renderer-neutral
 shader ABI. Vulkan handles and resource lifecycle state belong in `render_vk`,
 never in product settings or runtime models.
 
-### `packages/engine`
+### `../zelda-engine/packages/engine`
 
 The engine owns reusable mechanism: Vulkan resource operations, queues, asset
 access, logging, profiling, screenshots, and other facilities that could be
@@ -47,7 +48,7 @@ reused unchanged by a different visualization app. It must never import `game`
 or `app`, and it must not contain simulation names, modes, presets, or product
 navigation policy.
 
-### `packages/ui`
+### `../zelda-engine/packages/ui`
 
 UI owns renderer-neutral input, focus, layout, widgets, text, style, and draw
 commands. It must not import `engine`, `game`, or `app`. Vulkan lowering is not

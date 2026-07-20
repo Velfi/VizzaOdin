@@ -6,8 +6,8 @@ This is the native rendering path for VizzaOdin.
 
 The original bring-up milestones below are mostly complete in the current
 implementation: SDL3 creates the Vulkan window, Vulkan context/swapchain setup
-lives in `packages/engine/vk_context.odin`, the UI renderer lowers
-`packages/ui` draw commands through Vulkan, and Gray-Scott has a GPU compute and
+lives in `../zelda-engine/packages/engine/vk_context.odin`, the UI renderer lowers
+`../zelda-engine/packages/ui` draw commands through Vulkan, and Gray-Scott has a GPU compute and
 present path. The active roadmap is now about broadening simulation coverage,
 hardening editor-facing UI systems, and improving packaging/tooling.
 

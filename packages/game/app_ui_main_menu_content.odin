@@ -1,6 +1,6 @@
 package game
 
-import uifw "../ui"
+import uifw "zelda_engine:ui"
 import "core:fmt"
 
 app_ui_draw_particle_life :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim: ^Particle_Life_Simulation, viewport: uifw.Vec2, worker: ^Product_Context) {
@@ -26,7 +26,8 @@ app_ui_draw_particle_life :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, sim
 }
 
 app_ui_mode_for_simulation_index :: proc(index: int) -> App_Mode {
-	switch index {
+	if index < 0 || index >= len(APP_MAIN_MENU_SIMULATION_INDICES) do return .Main_Menu
+	switch app_ui_main_menu_simulation_registry_index(index) {
 	case 0:
 		return .Slime_Mold
 	case 1:
@@ -251,7 +252,8 @@ app_ui_draw_simulation_row :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bo
 	label_inset := max(theme.inner_gap, 22)
 	utility_reserve := max(gui.style.scrollbar_width + gui.style.scrollbar_gutter + gui.style.spacing_2, f32(28))
 	label_max_w := max(card.w - label_inset * 2 - utility_reserve, 1)
-	label_scale := app_ui_fit_sim_start_text_scale(gui, APP_SIMULATION_NAMES[index], gui.style.heading_text_scale * (card.h >= 96 ? f32(1.95) : f32(1.35)), label_max_w)
+	name := app_ui_main_menu_simulation_name(index)
+	label_scale := app_ui_fit_sim_start_text_scale(gui, name, gui.style.heading_text_scale * (card.h >= 96 ? f32(1.95) : f32(1.35)), label_max_w)
 	label_h := uifw.GUI_FONT_LOGICAL_HEIGHT * label_scale
 	label := uifw.Rect{
 		card.x + label_inset,
@@ -259,7 +261,7 @@ app_ui_draw_simulation_row :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, bo
 		label_max_w,
 		label_h,
 	}
-	uifw.gui_text_aligned_font(gui, label, APP_SIMULATION_NAMES[index], theme.text, .Left, .SimStart, label_scale)
+	uifw.gui_text_aligned_font(gui, label, name, theme.text, .Left, .SimStart, label_scale)
 	uifw.gui_scissor_end(gui)
 
 	if control.focused {

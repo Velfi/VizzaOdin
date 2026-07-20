@@ -1,7 +1,7 @@
 package render_vk
 
-import engine "../engine"
-import uifw "../ui"
+import engine "zelda_engine:engine"
+import uifw "zelda_engine:ui"
 
 import "core:fmt"
 import "core:math"
@@ -149,7 +149,12 @@ particle_life_consume_product_requests :: proc(sim: ^Particle_Life_Simulation) {
 	if sim.runtime.preserve_particles_requested && particle_life_gpu(sim).particle_buffer.mapped != nil && particle_life_gpu(sim).uploaded_particle_count > 0 && particle_life_gpu(sim).uploaded_particle_count == particle_life_target_particle_count(sim.settings^) && particle_life_gpu(sim).uploaded_species_count == particle_life_target_species_count(sim.settings^) {
 		particle_life_clear_preserved_particles(sim)
 		count := int(particle_life_gpu(sim).uploaded_particle_count)
-		sim.runtime.preserved_particles = make([]Particle_Life_Particle, count)
+		preserved, alloc_err := make([]Particle_Life_Particle, count)
+		if alloc_err != nil {
+			sim.runtime.preserve_particles_requested = false
+			return
+		}
+		sim.runtime.preserved_particles = preserved
 		particles := (cast([^]Particle_Life_Particle)particle_life_gpu(sim).particle_buffer.mapped)[:count]
 		copy(sim.runtime.preserved_particles, particles)
 	}

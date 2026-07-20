@@ -1,6 +1,6 @@
 package render_vk
 
-import engine "../engine"
+import engine "zelda_engine:engine"
 import vk "vendor:vulkan"
 
 PELLETS_RETIRED_TRAIL_TARGET_CAP :: 4

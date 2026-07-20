@@ -1,6 +1,6 @@
 package game
 
-import uifw "../ui"
+import uifw "zelda_engine:ui"
 GRAY_SCOTT_STEP_SHADER_SOURCE :: "assets/shaders/gray_scott_step.slang"
 GRAY_SCOTT_PRESENT_SHADER_SOURCE :: "assets/shaders/gray_scott_present.slang"
 GRAY_SCOTT_VERTEX_SHADER_SOURCE :: GRAY_SCOTT_PRESENT_SHADER_SOURCE

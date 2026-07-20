@@ -1,7 +1,7 @@
 package render_vk
 
-import uifw "../ui"
-import engine "../engine"
+import uifw "zelda_engine:ui"
+import engine "zelda_engine:engine"
 
 import vk "vendor:vulkan"
 import "core:bytes"
@@ -118,7 +118,7 @@ ui_renderer_create_backdrop_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Con
 		allocationSize = req.size,
 		memoryTypeIndex = memory_type,
 	}
-	if vk.AllocateMemory(ctx.device, &alloc, nil, &texture.memory) != .SUCCESS {
+	if !engine.vk_allocate_memory_checked(ctx, &alloc, "ui texture", &texture.memory) {
 		log_error("ui_renderer_create_backdrop_texture: image memory allocation failed index=", index)
 		ui_renderer_destroy_texture(ctx, texture)
 		return false

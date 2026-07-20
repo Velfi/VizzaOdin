@@ -1,6 +1,6 @@
 package app
 
-import engine "../engine"
+import engine "zelda_engine:engine"
 
 import "core:fmt"
 import "core:os"
@@ -20,6 +20,13 @@ crash_log_default_path :: proc(local_app_data: string) -> string {
 		return fmt.tprintf("%s/vizza.log", exe_dir)
 	}
 	return "vizza.log"
+}
+
+crash_log_macos_default_path :: proc(home_directory: string) -> string {
+	if len(home_directory) > 0 {
+		return fmt.tprintf("%s/Library/Logs/VizzaOdin/vizza.log", home_directory)
+	}
+	return crash_log_default_path("")
 }
 
 crash_log_rotate :: proc(path: string) {
@@ -72,11 +79,44 @@ crash_log_init :: proc() {
 			engine.log_info("startup: executable=", exe)
 		}
 		engine.log_info("startup: args=", os.args)
+	} else when ODIN_OS == .Darwin {
+		home_buf: [2048]u8
+		home_directory := os.get_env_buf(home_buf[:], "HOME")
+		path_buf: [2048]u8
+		configured_path := os.get_env_buf(path_buf[:], "VIZZA_LOG_PATH")
+		path := configured_path
+		if len(path) == 0 {
+			path = crash_log_macos_default_path(home_directory)
+		}
+
+		if len(home_directory) > 0 && len(configured_path) == 0 {
+			log_dir := fmt.tprintf("%s/Library/Logs/VizzaOdin", home_directory)
+			if os.make_directory_all(log_dir) != nil {
+				path = crash_log_default_path("")
+			}
+		}
+
+		crash_log_rotate(path)
+		file, err := os.open(path, {.Write, .Create, .Append})
+		if err != nil {
+			return
+		}
+
+		crash_log_file = file
+		engine.log_set_file(file)
+		engine.log_info("\n--- Vizza startup: time=", time.now(), " log=", path, " ---")
+		if cwd, cwd_err := os.get_working_directory(context.temp_allocator); cwd_err == nil {
+			engine.log_info("startup: cwd=", cwd)
+		}
+		if exe, exe_err := os.get_executable_path(context.temp_allocator); exe_err == nil {
+			engine.log_info("startup: executable=", exe)
+		}
+		engine.log_info("startup: args=", os.args)
 	}
 }
 
 crash_log_shutdown :: proc(exit_code: int) {
-	when ODIN_OS == .Windows {
+	when ODIN_OS == .Windows || ODIN_OS == .Darwin {
 		if crash_log_file == nil {
 			return
 		}

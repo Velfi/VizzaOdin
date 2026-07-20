@@ -1,7 +1,7 @@
 package app
 
-import uifw "../ui"
-import engine "../engine"
+import uifw "zelda_engine:ui"
+import engine "zelda_engine:engine"
 
 import "base:runtime"
 import "core:c"
@@ -172,9 +172,6 @@ app_run :: proc(config: App_Run_Config = {}) -> int {
 	engine.log_info("app_run: loading settings path=", settings_path)
 	settings_loaded: bool
 	app.settings, settings_loaded = settings_load_app(settings_path)
-	if !settings_loaded && settings_path != "config/app.toml" {
-		app.settings, _ = settings_load_app("config/app.toml")
-	}
 	engine.log_info("app_run: settings_loaded=", settings_loaded)
 	steam_config := steam_config_resolve(app.settings, config)
 	steam_state := steam_client_init(&app.steam, steam_config)

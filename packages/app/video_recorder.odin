@@ -1,6 +1,6 @@
 package app
 
-import engine "../engine"
+import engine "zelda_engine:engine"
 
 import "base:runtime"
 import "core:c"

@@ -1,9 +1,9 @@
 package main
 
-import engine "../packages/engine"
+import engine "zelda_engine:engine"
 import game "../packages/game"
 import host "../packages/app"
-import uifw "../packages/ui"
+import uifw "zelda_engine:ui"
 
 import "core:testing"
 

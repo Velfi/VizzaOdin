@@ -1,7 +1,7 @@
 package render_vk
 
-import uifw "../ui"
-import engine "../engine"
+import uifw "zelda_engine:ui"
+import engine "zelda_engine:engine"
 
 import "core:math"
 import "core:time"
@@ -408,7 +408,7 @@ render_transient_image_create :: proc(vk_ctx: ^engine.Vk_Context, resource: ^Ren
 	memory_type, found := engine.vk_find_memory_type(vk_ctx, requirements.memoryTypeBits, {.DEVICE_LOCAL})
 	if !found {render_transient_image_destroy(vk_ctx, out); return false}
 	allocation := vk.MemoryAllocateInfo{sType = .MEMORY_ALLOCATE_INFO, allocationSize = requirements.size, memoryTypeIndex = memory_type}
-	if vk.AllocateMemory(vk_ctx.device, &allocation, nil, &out.memory) != .SUCCESS {render_transient_image_destroy(vk_ctx, out); return false}
+	if !engine.vk_allocate_memory_checked(vk_ctx, &allocation, "transient render image", &out.memory) {render_transient_image_destroy(vk_ctx, out); return false}
 	if vk.BindImageMemory(vk_ctx.device, out.handle, out.memory, 0) != .SUCCESS {render_transient_image_destroy(vk_ctx, out); return false}
 	view_info := vk.ImageViewCreateInfo{sType = .IMAGE_VIEW_CREATE_INFO, image = out.handle, viewType = .D2, format = resource.format, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
 	if vk.CreateImageView(vk_ctx.device, &view_info, nil, &out.view) != .SUCCESS {render_transient_image_destroy(vk_ctx, out); return false}

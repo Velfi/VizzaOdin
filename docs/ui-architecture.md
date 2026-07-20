@@ -40,8 +40,8 @@ ui/
   editor      visual editor app, inspectors, timeline/state preview
 ```
 
-The current implementation lives in `packages/ui/gui.odin`, with Vulkan draw
-lowering in `packages/engine/ui_renderer.odin`. It is still a single package
+The current implementation lives in `../zelda-engine/packages/ui/gui.odin`, with Vulkan draw
+lowering in `packages/render_vk/ui_renderer.odin`. It is still a single package
 surface rather than the split module layout above.
 
 ## Frame Pipeline

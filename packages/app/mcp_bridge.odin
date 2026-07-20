@@ -1,7 +1,7 @@
 package app
 
-import uifw "../ui"
-import engine "../engine"
+import uifw "zelda_engine:ui"
+import engine "zelda_engine:engine"
 import rendervk "../render_vk"
 
 import "core:c"
@@ -379,7 +379,7 @@ mcp_bridge_handle_jsonrpc :: proc(bridge: ^Mcp_Bridge, line: string) -> string {
 		return fmt.tprintf(
 			"{{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{{\"tools\":{{}}}},\"serverInfo\":{{\"name\":\"vizzaodin\",\"version\":\"%s\"}}}}}}",
 			id,
-			engine.APP_VERSION,
+			APP_VERSION,
 		)
 	}
 	if strings.contains(line, "\"method\":\"notifications/initialized\"") || strings.contains(line, "\"method\": \"notifications/initialized\"") {

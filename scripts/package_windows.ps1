@@ -126,7 +126,7 @@ function Read-MakeVariable {
 }
 
 function Get-AppVersion {
-	$versionFile = Join-Path $RootDir "packages/engine/version.odin"
+	$versionFile = Join-Path $RootDir "packages/app/version.odin"
 	if (Test-Path $versionFile) {
 		foreach ($line in Get-Content -Path $versionFile) {
 			if ($line -match '^APP_VERSION :: "([^"]+)"') {

@@ -2,9 +2,9 @@ package main
 
 import game "../packages/game"
 import host "../packages/app"
-import engine "../packages/engine"
+import engine "zelda_engine:engine"
 import rendervk "../packages/render_vk"
-import uifw "../packages/ui"
+import uifw "zelda_engine:ui"
 
 import "core:testing"
 

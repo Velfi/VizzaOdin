@@ -13,7 +13,7 @@
 #   1. Verify the working tree is clean and on main.
 #   2. For stable releases only: compile .changes/*.md into CHANGELOG.md
 #      (pre-releases skip this; fragments accumulate until the stable release).
-#   3. Update the runtime version constants in packages/engine/version.odin.
+#   3. Update the product version constants in packages/app/version.odin.
 #   4. Commit the version bump and changelog changes.
 #   5. Create an annotated v<version> tag.
 #   6. Push the commit and tag to origin, which triggers .github/workflows/release.yml.
@@ -87,7 +87,7 @@ import pathlib
 import sys
 
 version, major, minor, patch = sys.argv[1:5]
-path = pathlib.Path("packages/engine/version.odin")
+path = pathlib.Path("packages/app/version.odin")
 text = (
     "package engine\n\n"
     f'APP_VERSION :: "{version}"\n'
@@ -98,7 +98,7 @@ text = (
 path.write_text(text, encoding="utf-8")
 PY
 
-git add packages/engine/version.odin
+git add packages/app/version.odin
 if [[ "$IS_PRERELEASE" != true ]]; then
 	git add CHANGELOG.md
 	git add -u .changes

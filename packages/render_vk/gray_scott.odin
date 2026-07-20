@@ -1,7 +1,7 @@
 package render_vk
 
-import uifw "../ui"
-import engine "../engine"
+import uifw "zelda_engine:ui"
+import engine "zelda_engine:engine"
 
 import vk "vendor:vulkan"
 import "core:c"
@@ -154,7 +154,7 @@ gray_scott_create_image_resource :: proc(sim: ^Gray_Scott_Simulation, vk_ctx: ^e
 		allocationSize = req.size,
 		memoryTypeIndex = memory_type,
 	}
-	if vk.AllocateMemory(vk_ctx.device, &alloc_info, nil, &gray_scott_gpu(sim).storage[index].memory) != .SUCCESS {
+	if !engine.vk_allocate_memory_checked(vk_ctx, &alloc_info, "gray scott image", &gray_scott_gpu(sim).storage[index].memory) {
 		vk.DestroyImage(vk_ctx.device, gray_scott_gpu(sim).storage[index].handle, nil)
 		gray_scott_gpu(sim).storage[index].handle = vk.Image(0)
 		return false

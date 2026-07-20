@@ -22,7 +22,7 @@ shared_canvas_tool_selector :: proc(ctx: ^uifw.Gui_Context, set: ^Canvas_Tool_Se
 	if selected.valid {uifw.gui_label(ctx, fmt.tprintf("Primary: %s   Secondary: %s", selected.primary_label, selected.secondary_label))}
 }
 
-import uifw "../ui"
+import uifw "zelda_engine:ui"
 
 import "core:fmt"
 

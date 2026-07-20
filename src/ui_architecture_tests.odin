@@ -2,9 +2,9 @@ package main
 
 import game "../packages/game"
 import host "../packages/app"
-import engine "../packages/engine"
+import engine "zelda_engine:engine"
 import rendervk "../packages/render_vk"
-import uifw "../packages/ui"
+import uifw "zelda_engine:ui"
 
 import "core:math"
 import "core:fmt"
@@ -1984,7 +1984,7 @@ test_app_ui_main_menu_preview_slots_skip_gradient_editor :: proc(t: ^testing.T) 
 	ui: game.App_Ui_State
 	game.app_ui_init(&ui, game.settings_default())
 	defer game.app_ui_destroy(&ui)
-	ui.main_menu_scroll = 900
+	ui.main_menu_scroll = 0
 
 	vk_ctx: engine.Vk_Context
 	vk_ctx.swapchain_extent = {width = 1920, height = 1080}
@@ -2275,7 +2275,7 @@ test_app_ui_main_menu_instruction_strip_stays_outside_catalog_viewport :: proc(t
 }
 
 @(test)
-test_app_ui_main_menu_bottom_scroll_registers_primordial_live_preview :: proc(t: ^testing.T) {
+test_app_ui_main_menu_bottom_scroll_registers_voronoi_live_preview :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
 	defer uifw.gui_destroy(&ctx)
@@ -2293,13 +2293,13 @@ test_app_ui_main_menu_bottom_scroll_registers_primordial_live_preview :: proc(t:
 	game.app_ui_draw_main_menu(&ui, &ctx, {f32(vk_ctx.swapchain_extent.width), f32(vk_ctx.swapchain_extent.height)}, &worker)
 	uifw.gui_end_frame(&ctx)
 
-	saw_primordial := false
+	saw_voronoi := false
 	for i in 0 ..< ui.main_menu_preview_slot_count {
-		if ui.main_menu_preview_slots[i].mode == game.App_Mode.Primordial {
-			saw_primordial = true
+		if ui.main_menu_preview_slots[i].mode == game.App_Mode.Voronoi_CA {
+			saw_voronoi = true
 		}
 	}
-	testing.expect(t, saw_primordial)
+	testing.expect(t, saw_voronoi)
 }
 
 @(test)
@@ -2440,8 +2440,8 @@ test_render_main_menu_preview_size_for_mode_is_scroll_stable :: proc(t: ^testing
 	flow_width, flow_height := rendervk.render_main_menu_preview_size_for_mode(&render_ctx, .Flow_Field)
 	missing_width, missing_height := rendervk.render_main_menu_preview_size_for_mode(&render_ctx, .Gray_Scott)
 
-	testing.expect_value(t, flow_width, rendervk.MAIN_MENU_SIM_PREVIEW_WIDTH)
-	testing.expect_value(t, flow_height, rendervk.MAIN_MENU_SIM_PREVIEW_HEIGHT)
+	testing.expect_value(t, flow_width, u32(512))
+	testing.expect_value(t, flow_height, u32(256))
 	testing.expect_value(t, missing_width, rendervk.MAIN_MENU_SIM_PREVIEW_WIDTH)
 	testing.expect_value(t, missing_height, rendervk.MAIN_MENU_SIM_PREVIEW_HEIGHT)
 }
@@ -2460,8 +2460,8 @@ test_render_main_menu_preview_size_for_mode_ignores_swapchain_clip :: proc(t: ^t
 
 	width, height := rendervk.render_main_menu_preview_size_for_mode(&render_ctx, .Slime_Mold)
 
-	testing.expect_value(t, width, rendervk.MAIN_MENU_SIM_PREVIEW_WIDTH)
-	testing.expect_value(t, height, rendervk.MAIN_MENU_SIM_PREVIEW_HEIGHT)
+	testing.expect_value(t, width, u32(300))
+	testing.expect_value(t, height, u32(200))
 }
 
 @(test)

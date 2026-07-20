@@ -1,7 +1,7 @@
 package game
 
-import uifw "../ui"
-import engine "../engine"
+import uifw "zelda_engine:ui"
+import engine "zelda_engine:engine"
 
 import "core:fmt"
 

@@ -2,7 +2,7 @@ package main
 
 import game "../packages/game"
 import host "../packages/app"
-import uifw "../packages/ui"
+import uifw "zelda_engine:ui"
 
 import "core:testing"
 

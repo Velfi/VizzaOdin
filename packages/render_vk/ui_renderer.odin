@@ -1,7 +1,7 @@
 package render_vk
 
-import uifw "../ui"
-import engine "../engine"
+import uifw "zelda_engine:ui"
+import engine "zelda_engine:engine"
 
 import vk "vendor:vulkan"
 import "core:bytes"
@@ -219,9 +219,11 @@ ui_renderer_init :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Context) -> bool {
 			return false
 		}
 	}
-	renderer.text_shape_cache = make([]Ui_Text_Shape_Cache_Entry, UI_TEXT_SHAPE_CACHE_ENTRIES)
-	if renderer.text_shape_cache == nil {
+	text_shape_cache, alloc_err := make([]Ui_Text_Shape_Cache_Entry, UI_TEXT_SHAPE_CACHE_ENTRIES)
+	if alloc_err != nil {
 		log_warn("ui_renderer_init: text shape cache allocation failed; continuing without cache")
+	} else {
+		renderer.text_shape_cache = text_shape_cache
 	}
 	renderer.ready = true
 	return true
@@ -529,7 +531,7 @@ ui_renderer_create_owned_texture :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Contex
 		allocationSize = req.size,
 		memoryTypeIndex = memory_type,
 	}
-	if vk.AllocateMemory(ctx.device, &alloc, nil, &texture.memory) != .SUCCESS {
+	if !engine.vk_allocate_memory_checked(ctx, &alloc, "ui atlas", &texture.memory) {
 		log_error("ui_renderer_create_owned_texture: image memory allocation failed")
 		ui_renderer_destroy_texture(ctx, texture)
 		return false

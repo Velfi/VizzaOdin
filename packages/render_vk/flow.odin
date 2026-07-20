@@ -1,7 +1,7 @@
 package render_vk
 
-import engine "../engine"
-import uifw "../ui"
+import engine "zelda_engine:engine"
+import uifw "zelda_engine:ui"
 
 import "core:math"
 import vk "vendor:vulkan"
@@ -103,7 +103,7 @@ flow_create_image :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^engine.Vk_Context, imag
 	memory_type, ok := engine.vk_find_memory_type(vk_ctx, req.memoryTypeBits, {.DEVICE_LOCAL})
 	if !ok {return false}
 	alloc := vk.MemoryAllocateInfo{sType = .MEMORY_ALLOCATE_INFO, allocationSize = req.size, memoryTypeIndex = memory_type}
-	if vk.AllocateMemory(vk_ctx.device, &alloc, nil, &image.memory) != .SUCCESS {return false}
+	if !engine.vk_allocate_memory_checked(vk_ctx, &alloc, "flow image", &image.memory) {return false}
 	if vk.BindImageMemory(vk_ctx.device, image.handle, image.memory, 0) != .SUCCESS {return false}
 	view_info := vk.ImageViewCreateInfo{sType = .IMAGE_VIEW_CREATE_INFO, image = image.handle, viewType = .D2, format = FLOW_IMAGE_FORMAT, subresourceRange = {aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1}}
 	return vk.CreateImageView(vk_ctx.device, &view_info, nil, &image.view) == .SUCCESS
@@ -218,7 +218,21 @@ flow_gpu_load_vector_field_image_path :: proc(gpu: ^Flow_Gpu_State, vk_ctx: ^eng
 
 	target_width := int(max(gpu.trail_width, 1))
 	target_height := int(max(gpu.trail_height, 1))
-	pixels := make([]u8, int(target_width * target_height * 4))
+	byte_count, size_ok := engine.checked_mul_u64(u64(target_width), u64(target_height))
+	if !size_ok {
+		engine.vk_record_resource_error(vk_ctx, .Size_Overflow, "flow image staging", 0, 0)
+		return false
+	}
+	byte_count, size_ok = engine.checked_mul_u64(byte_count, 4)
+	if !size_ok || byte_count > u64(max(int)) {
+		engine.vk_record_resource_error(vk_ctx, .Size_Overflow, "flow image staging", byte_count, 0)
+		return false
+	}
+	pixels, alloc_err := make([]u8, int(byte_count))
+	if alloc_err != nil {
+		engine.vk_record_resource_error(vk_ctx, .Cpu_Out_Of_Memory, "flow image staging", byte_count, 0)
+		return false
+	}
 	defer delete(pixels)
 	source := raw_data(img.pixels.buf[:])
 	for y := 0; y < target_height; y += 1 {

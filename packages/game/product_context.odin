@@ -1,6 +1,6 @@
 package game
 
-import uifw "../ui"
+import uifw "zelda_engine:ui"
 
 // Product_Context is the narrow boundary exposed to Vizza UI and simulation
 // controls. It deliberately excludes SDL, Vulkan, threads, screenshots, and

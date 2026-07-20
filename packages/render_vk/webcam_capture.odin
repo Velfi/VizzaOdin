@@ -1,6 +1,6 @@
 package render_vk
 
-import engine "../engine"
+import engine "zelda_engine:engine"
 import sdl "vendor:sdl3"
 
 import "core:c"
@@ -35,7 +35,14 @@ webcam_frame_gray :: proc(frame: ^sdl.Surface, target_width, target_height, x, y
 }
 
 webcam_frame_rgba :: proc(frame: ^sdl.Surface, width, height: int, fit: Vector_Image_Fit_Mode, mirror_h, mirror_v, invert: bool) -> []u8 {
-	pixels := make([]u8, width * height * 4, context.temp_allocator)
+	if width <= 0 || height <= 0 do return nil
+	pixel_count, size_ok := engine.checked_mul_u64(u64(width), u64(height))
+	if !size_ok do return nil
+	byte_count: u64
+	byte_count, size_ok = engine.checked_mul_u64(pixel_count, 4)
+	if !size_ok || byte_count > u64(max(int)) do return nil
+	pixels, alloc_err := make([]u8, int(byte_count), context.temp_allocator)
+	if alloc_err != nil do return nil
 	for y in 0..<height {for x in 0..<width {
 		v := webcam_frame_gray(frame, width, height, x, y, fit, mirror_h, mirror_v, invert)
 		i := (y * width + x) * 4

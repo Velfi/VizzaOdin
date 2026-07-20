@@ -1,6 +1,6 @@
 package app
 
-import uifw "../ui"
+import uifw "zelda_engine:ui"
 
 import sdl "vendor:sdl3"
 

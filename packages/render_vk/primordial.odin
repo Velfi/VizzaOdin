@@ -1,7 +1,7 @@
 package render_vk
 
-import engine "../engine"
-import uifw "../ui"
+import engine "zelda_engine:engine"
+import uifw "zelda_engine:ui"
 
 import "core:math"
 import vk "vendor:vulkan"

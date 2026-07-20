@@ -1,7 +1,7 @@
 package render_vk
 
-import engine "../engine"
-import uifw "../ui"
+import engine "zelda_engine:engine"
+import uifw "zelda_engine:ui"
 
 import "core:fmt"
 import "core:math"
@@ -261,8 +261,8 @@ particle_life_create_trail_image :: proc(sim: ^Particle_Life_Simulation, vk_ctx:
 		allocationSize = req.size,
 		memoryTypeIndex = memory_type,
 	}
-	if result := vk.AllocateMemory(vk_ctx.device, &alloc, nil, &image.memory); result != .SUCCESS {
-		engine.log_error("particle_life_create_trail_image: AllocateMemory failed index=", index, " result=", result)
+	if !engine.vk_allocate_memory_checked(vk_ctx, &alloc, "particle life trail image", &image.memory) {
+		engine.log_error("particle_life_create_trail_image: allocation rejected or failed index=", index)
 		return false
 	}
 	if result := vk.BindImageMemory(vk_ctx.device, image.handle, image.memory, 0); result != .SUCCESS {

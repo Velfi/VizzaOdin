@@ -1,6 +1,6 @@
 package main
 
-import uifw "../packages/ui"
+import uifw "zelda_engine:ui"
 
 import "core:testing"
 

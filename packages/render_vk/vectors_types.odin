@@ -1,6 +1,6 @@
 package render_vk
 
-import engine "../engine"
+import engine "zelda_engine:engine"
 import vk "vendor:vulkan"
 
 // Renderer-owned Vectors state. Shader ABI records remain in game; Vulkan

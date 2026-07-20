@@ -1,7 +1,7 @@
 package game
 
-import uifw "../ui"
-import engine "../engine"
+import uifw "zelda_engine:ui"
+import engine "zelda_engine:engine"
 import "core:fmt"
 import "core:math"
 import sdl "vendor:sdl3"
@@ -243,6 +243,30 @@ APP_SIMULATION_NAMES := [?]string {
 	"Primordial",
 }
 
+// Main-menu positions map to the canonical feature registry above. Keep the
+// registry order stable while presenting simulations alphabetically.
+APP_MAIN_MENU_SIMULATION_INDICES := [?]int {
+	3,  // Flow Field
+	6,  // Gradient Editor
+	1,  // Gray-Scott
+	8,  // Moire
+	2,  // Particle Life
+	4,  // Pellets
+	10, // Primordial
+	0,  // Slime Mold
+	5,  // ST-FLIP
+	9,  // Vectors
+	7,  // Voronoi
+}
+
+app_ui_main_menu_simulation_registry_index :: proc(index: int) -> int {
+	return APP_MAIN_MENU_SIMULATION_INDICES[max(min(index, len(APP_MAIN_MENU_SIMULATION_INDICES) - 1), 0)]
+}
+
+app_ui_main_menu_simulation_name :: proc(index: int) -> string {
+	return APP_SIMULATION_NAMES[app_ui_main_menu_simulation_registry_index(index)]
+}
+
 APP_SIMULATION_DESCRIPTIONS := [?]string {
 	"Agent collaboration",
 	"Reaction-diffusion",
@@ -437,7 +461,7 @@ app_ui_init :: proc(ui: ^App_Ui_State, settings: App_Settings, theme_preview := 
 	for &state in ui.simulation_controllers {
 		simulation_controller_ui_init(&state)
 	}
-	ui.main_menu_selected = 0 // Slime Mold
+	ui.main_menu_selected = 0 // Flow Field (alphabetical main-menu order)
 	ui.main_menu_focus_slot = app_ui_main_menu_slot_for_simulation_index(ui.main_menu_selected)
 	ui.menu_position_index = option_index(settings.menu_position, MENU_POSITION_OPTIONS[:], 1)
 	ui.texture_filtering_index = option_index(settings.texture_filtering, TEXTURE_FILTERING_OPTIONS[:], 0)

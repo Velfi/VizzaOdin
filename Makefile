@@ -1,7 +1,9 @@
 APP := vizzaodin
 .DEFAULT_GOAL := run
 SRC := src
-ODIN_PACKAGES := $(SRC) packages/app packages/engine packages/game packages/render_vk packages/ui
+ZELDA_ENGINE_ROOT ?= ../zelda-engine
+ZELDA_ENGINE_COLLECTION := -collection:zelda_engine=$(abspath $(ZELDA_ENGINE_ROOT))/packages
+ODIN_PACKAGES := $(SRC) packages/app packages/game packages/render_vk
 BUILD_DIR := build
 SHADER_SRC := assets/shaders
 SHADER_BUILD := $(BUILD_DIR)/shaders
@@ -10,7 +12,7 @@ FONT_GENERATOR := scripts/generate_ui_font_bitmap.py
 FONT_SOURCE := assets/fonts/ZeldaSans-Regular-v1.otf
 FONT_BITMAP := assets/shaders/ui_font_bitmap.slang
 FONT_ATLAS := assets/fonts/ui_font_atlas.png
-FONT_METRICS := packages/ui/font_metrics.odin
+FONT_METRICS := $(ZELDA_ENGINE_ROOT)/packages/ui/font_metrics.odin
 FONT_LOGICAL_HEIGHT := 16
 FONT_ATLAS_CELL_WIDTH := 32
 FONT_ATLAS_CELL_HEIGHT := 32
@@ -22,7 +24,7 @@ TOMLC17_LIB := $(TOMLC17_DIR)/libtomlc17.a
 TOMLC17_REPO := https://github.com/cktan/tomlc17.git
 TOMLC17_REV ?= 91ba3cc1023364f6ff59afa87e10ecac7e9a1dce
 TOMLC17_STAMP := $(TOMLC17_ROOT)/.vizzaodin-rev
-TEXTSHAPE_DIR := third_party/textshape
+TEXTSHAPE_DIR := $(ZELDA_ENGINE_ROOT)/third_party/textshape
 TEXTSHAPE_LIB := $(TEXTSHAPE_DIR)/libtextshape.a
 TEXTSHAPE_CFLAGS := $(shell pkg-config --cflags harfbuzz freetype2 2>/dev/null)
 TEXTSHAPE_LIBS := $(shell pkg-config --libs harfbuzz freetype2 2>/dev/null)
@@ -63,6 +65,7 @@ endif
 endif
 STEAM_REDIST_SRC := $(STEAM_SDK_LOCATION)/redistributable_bin/$(STEAM_REDIST_SUBDIR)/$(STEAM_REDIST_FILE)
 ODIN_FLAGS ?= -o:none
+ODIN_FLAGS += $(ZELDA_ENGINE_COLLECTION)
 
 .PHONY: help run run-macos-vulkan build build-steam run-steam copy-steam-redist check check-boundaries test perf-particle-life fmt clean distclean shaders deps install-slangc mcp mcp-macos-vulkan theme-preview theme-preview-mcp ui-component profile-ui-trace package-macos steam-upload-preview ui-font-atlas tomlc17 textshape
 
@@ -155,13 +158,13 @@ steam-upload-preview:
 
 check: check-boundaries $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
 	bash ./scripts/check_vulkan13.sh
-	odin check $(SRC)
+	odin check $(SRC) $(ZELDA_ENGINE_COLLECTION)
 
 check-boundaries:
 	./scripts/check_package_boundaries.sh
 
 test: $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
-	odin test $(SRC) -extra-linker-flags:"$(TEXTSHAPE_LIBS)"
+	odin test $(SRC) $(ZELDA_ENGINE_COLLECTION) -extra-linker-flags:"$(TEXTSHAPE_LIBS)"
 
 perf-particle-life: shaders $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
 	mkdir -p $(BUILD_DIR)
@@ -200,6 +203,7 @@ shaders:
 
 fmt:
 	for pkg in $(ODIN_PACKAGES); do odin strip-semicolon $$pkg -no-entry-point; done
+	for pkg in $(ZELDA_ENGINE_ROOT)/packages/engine $(ZELDA_ENGINE_ROOT)/packages/ui; do odin strip-semicolon $$pkg -no-entry-point; done
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -1,7 +1,7 @@
 package render_vk
 
-import engine "../engine"
-import uifw "../ui"
+import engine "zelda_engine:engine"
+import uifw "zelda_engine:ui"
 
 import "core:math"
 import vk "vendor:vulkan"
@@ -546,7 +546,7 @@ pellets_create_trail_image :: proc(gpu: ^Pellets_Gpu_State, vk_ctx: ^engine.Vk_C
 		return false
 	}
 	alloc := vk.MemoryAllocateInfo{sType = .MEMORY_ALLOCATE_INFO, allocationSize = req.size, memoryTypeIndex = memory_type}
-	if vk.AllocateMemory(vk_ctx.device, &alloc, nil, &image.memory) != .SUCCESS {
+	if !engine.vk_allocate_memory_checked(vk_ctx, &alloc, "pellets image", &image.memory) {
 		return false
 	}
 	if vk.BindImageMemory(vk_ctx.device, image.handle, image.memory, 0) != .SUCCESS {

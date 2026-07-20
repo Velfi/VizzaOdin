@@ -1,6 +1,6 @@
 package render_vk
 
-import engine "../engine"
+import engine "zelda_engine:engine"
 import vk "vendor:vulkan"
 
 Particle_Life_Trail_Image :: struct {

@@ -2,12 +2,13 @@ package main
 
 import game "../packages/game"
 import host "../packages/app"
-import engine "../packages/engine"
+import engine "zelda_engine:engine"
 import rendervk "../packages/render_vk"
-import uifw "../packages/ui"
+import uifw "zelda_engine:ui"
 
 import "core:math"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
@@ -1175,6 +1176,39 @@ test_screenshot_state_can_return_smaller_qoi :: proc(t: ^testing.T) {
 	testing.expect_value(t, qoi_bytes[7], u8(1))
 	testing.expect_value(t, qoi_bytes[11], u8(1))
 	testing.expect_value(t, qoi_bytes[12], u8(3))
+}
+
+@(test)
+test_screenshot_state_can_return_resized_png :: proc(t: ^testing.T) {
+	state: engine.Screenshot_State
+	defer engine.screenshot_state_destroy(&state)
+
+	pixels := []u8{
+		255, 0, 0, 255, 0, 255, 0, 255,
+		0, 0, 255, 255, 255, 255, 255, 255,
+	}
+	testing.expect(t, engine.screenshot_state_publish_from_gpu_rgba(&state, pixels, 2, 2, vk.Format.R8G8B8A8_UNORM, 7))
+
+	png_bytes, width, height, sequence, ok := engine.screenshot_state_copy_png_sized(&state, 1, 1, 1)
+	defer delete(png_bytes)
+
+	testing.expect(t, ok)
+	testing.expect_value(t, width, u32(1))
+	testing.expect_value(t, height, u32(1))
+	testing.expect_value(t, sequence, u64(1))
+	testing.expect(t, len(png_bytes) >= 24)
+	png_signature := [8]u8{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	for value, index in png_signature {
+		testing.expect_value(t, png_bytes[index], value)
+	}
+	testing.expect_value(t, png_bytes[16], u8(0))
+	testing.expect_value(t, png_bytes[17], u8(0))
+	testing.expect_value(t, png_bytes[18], u8(0))
+	testing.expect_value(t, png_bytes[19], u8(1))
+	testing.expect_value(t, png_bytes[20], u8(0))
+	testing.expect_value(t, png_bytes[21], u8(0))
+	testing.expect_value(t, png_bytes[22], u8(0))
+	testing.expect_value(t, png_bytes[23], u8(1))
 }
 
 @(test)
@@ -3199,6 +3233,20 @@ test_app_settings_round_trip_options_fields :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_app_settings_path_uses_user_data_directory :: proc(t: ^testing.T) {
+	path := game.settings_app_config_path()
+	when ODIN_OS == .Darwin {
+		testing.expect(t, strings.contains(path, "/Library/Application Support/Vizza/config/app.toml"))
+		testing.expect(t, !strings.contains(path, "VizzaOdin"))
+		testing.expect(t, path != "config/app.toml")
+	}
+	when ODIN_OS == .Windows {
+		testing.expect(t, strings.contains(path, "/Vizza/config/app.toml") || path == "config/app.toml")
+		testing.expect(t, !strings.contains(path, "VizzaOdin"))
+	}
+}
+
+@(test)
 test_custom_keyboard_binding_config_recovers_from_duplicates_and_reserved_space :: proc(t: ^testing.T) {
 	path := "/tmp/vizzaodin_invalid_keyboard_bindings.toml"
 	text := "[input]\nkeyboard_shortcut_profile = \"Custom\"\nkeyboard_pause_binding = \"P\"\nkeyboard_toggle_ui_binding = \"Space\"\nkeyboard_help_binding = \"P\"\n"
@@ -3355,4 +3403,35 @@ test_refactored_dispatch_families_reject_unknown_inputs :: proc(t: ^testing.T) {
 		operation = game.Feature_Preset_File_Operation(255),
 	}
 	testing.expect(t, !host.render_worker_handle_preset_file_command(state, runtime, .Gray_Scott, invalid_preset))
+}
+
+@(test)
+test_resource_size_arithmetic_rejects_overflow :: proc(t: ^testing.T) {
+	value, ok := engine.checked_mul_u64(max(u64), 2)
+	testing.expect(t, !ok)
+	testing.expect_value(t, value, u64(0))
+	value, ok = engine.checked_add_u64(max(u64), 1)
+	testing.expect(t, !ok)
+	testing.expect_value(t, value, u64(0))
+	value, ok = engine.checked_mul_u64(4096, 4096)
+	testing.expect(t, ok)
+	testing.expect_value(t, value, u64(16_777_216))
+}
+
+@(test)
+test_webcam_frame_rgba_rejects_non_positive_dimensions :: proc(t: ^testing.T) {
+	testing.expect(t, rendervk.webcam_frame_rgba(nil, 0, 64, .Center, false, false, false) == nil)
+	testing.expect(t, rendervk.webcam_frame_rgba(nil, 64, -1, .Center, false, false, false) == nil)
+}
+
+@(test)
+test_gpu_heap_admission_preserves_headroom :: proc(t: ^testing.T) {
+	heap := engine.Gpu_Memory_Heap{usage = 500, ceiling = 1000}
+	available, ok := engine.gpu_heap_allocation_fits(heap, 400, 100)
+	testing.expect(t, ok)
+	testing.expect_value(t, available, u64(500))
+	_, ok = engine.gpu_heap_allocation_fits(heap, 401, 100)
+	testing.expect(t, !ok)
+	_, ok = engine.gpu_heap_allocation_fits(engine.Gpu_Memory_Heap{usage = 1000, ceiling = 1000}, 1, 0)
+	testing.expect(t, !ok)
 }

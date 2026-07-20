@@ -1,7 +1,7 @@
 package render_vk
 
-import engine "../engine"
-import uifw "../ui"
+import engine "zelda_engine:engine"
+import uifw "zelda_engine:ui"
 
 import "core:math"
 import vk "vendor:vulkan"
@@ -288,7 +288,7 @@ vectors_create_pipeline :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_Cont
 	return true
 }
 
-vectors_gpu_load_image_path :: proc(gpu: ^Vectors_Gpu_State, path: string, settings: ^Vectors_Settings) -> bool {
+vectors_gpu_load_image_path :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_Context, path: string, settings: ^Vectors_Settings) -> bool {
 	if len(path) == 0 {
 		gpu.image_loaded = false
 		return false
@@ -302,8 +302,13 @@ vectors_gpu_load_image_path :: proc(gpu: ^Vectors_Gpu_State, path: string, setti
 
 	source := raw_data(img.pixels.buf[:])
 	if len(gpu.image_data) != VECTORS_IMAGE_RESOLUTION * VECTORS_IMAGE_RESOLUTION {
+		image_data, alloc_err := make([]u8, VECTORS_IMAGE_RESOLUTION * VECTORS_IMAGE_RESOLUTION)
+		if alloc_err != nil {
+			engine.vk_record_resource_error(vk_ctx, .Cpu_Out_Of_Memory, "vectors image data", VECTORS_IMAGE_RESOLUTION * VECTORS_IMAGE_RESOLUTION, 0)
+			return false
+		}
 		delete(gpu.image_data)
-		gpu.image_data = make([]u8, VECTORS_IMAGE_RESOLUTION * VECTORS_IMAGE_RESOLUTION)
+		gpu.image_data = image_data
 	}
 	for y := 0; y < VECTORS_IMAGE_RESOLUTION; y += 1 {
 		for x := 0; x < VECTORS_IMAGE_RESOLUTION; x += 1 {
@@ -339,7 +344,11 @@ vectors_gpu_load_image_path :: proc(gpu: ^Vectors_Gpu_State, path: string, setti
 
 vectors_gpu_upload_field_image_if_needed :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^engine.Vk_Context) -> bool {
 	if !gpu.field_image_dirty || !gpu.image_loaded || len(gpu.image_data) != VECTORS_IMAGE_RESOLUTION * VECTORS_IMAGE_RESOLUTION {return true}
-	pixels := make([]u8, VECTORS_IMAGE_RESOLUTION * VECTORS_IMAGE_RESOLUTION * 4, context.temp_allocator)
+	pixels, alloc_err := make([]u8, VECTORS_IMAGE_RESOLUTION * VECTORS_IMAGE_RESOLUTION * 4, context.temp_allocator)
+	if alloc_err != nil {
+		engine.vk_record_resource_error(vk_ctx, .Cpu_Out_Of_Memory, "vectors image staging", VECTORS_IMAGE_RESOLUTION * VECTORS_IMAGE_RESOLUTION * 4, 0)
+		return false
+	}
 	for i in 0 ..< VECTORS_IMAGE_RESOLUTION * VECTORS_IMAGE_RESOLUTION {
 		v := gpu.image_data[i]
 		pixels[i * 4 + 0], pixels[i * 4 + 1], pixels[i * 4 + 2], pixels[i * 4 + 3] = v, v, v, 255
@@ -406,7 +415,7 @@ vectors_gpu_refresh_image_if_needed :: proc(gpu: ^Vectors_Gpu_State, vk_ctx: ^en
 	   gpu.image_invert_tone_uploaded == settings.image_invert_tone {
 		return
 	}
-	_ = vectors_gpu_load_image_path(gpu, path, settings)
+	_ = vectors_gpu_load_image_path(gpu, vk_ctx, path, settings)
 	_ = vectors_gpu_upload_field_image_if_needed(gpu, vk_ctx)
 }
 

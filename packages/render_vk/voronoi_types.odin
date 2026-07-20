@@ -1,6 +1,6 @@
 package render_vk
 
-import engine "../engine"
+import engine "zelda_engine:engine"
 import vk "vendor:vulkan"
 
 VORONOI_JFA_INIT_SHADER_SOURCE :: "assets/shaders/simulations/voronoi_ca/shaders/jfa_init.slang"

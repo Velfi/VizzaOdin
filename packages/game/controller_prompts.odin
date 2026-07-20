@@ -1,7 +1,7 @@
 package game
 
-import engine "../engine"
-import uifw "../ui"
+import engine "zelda_engine:engine"
+import uifw "zelda_engine:ui"
 
 Controller_Prompt_Icon :: enum {
 	Dpad,

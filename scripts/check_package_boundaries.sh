@@ -20,11 +20,14 @@ reject_imports() {
 	fi
 }
 
-reject_imports packages/engine 'import[^\n]*"\.\./(game|app)(/|\")' \
+ENGINE_DIR="${ZELDA_ENGINE_ROOT:-../zelda-engine}/packages/engine"
+UI_DIR="${ZELDA_ENGINE_ROOT:-../zelda-engine}/packages/ui"
+
+reject_imports "$ENGINE_DIR" 'import[^\n]*"\.\./(game|app)(/|\")' \
 	'engine must not depend on game or app'
-reject_imports packages/engine 'import[^\n]*"\.\./ui(/|\")' \
+reject_imports "$ENGINE_DIR" 'import[^\n]*"\.\./ui(/|\")' \
 	'engine must not depend on the renderer-neutral UI package'
-reject_imports packages/ui 'import[^\n]*"\.\./(engine|game|app)(/|\")' \
+reject_imports "$UI_DIR" 'import[^\n]*"\.\./(engine|game|app)(/|\")' \
 	'ui must remain renderer-neutral and must not depend on engine, game, or app'
 reject_imports packages/game 'import[^\n]*"\.\./app(/|\")' \
 	'game must not depend on the app composition layer'

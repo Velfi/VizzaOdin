@@ -1,4 +1,4 @@
-package engine
+package app
 
 APP_VERSION :: "0.1.0-6"
 APP_VERSION_MAJOR :: u32(0)

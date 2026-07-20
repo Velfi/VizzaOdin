@@ -1,7 +1,7 @@
 package render_vk
 
-import engine "../engine"
-import uifw "../ui"
+import engine "zelda_engine:engine"
+import uifw "zelda_engine:ui"
 
 import "core:math"
 import vk "vendor:vulkan"
@@ -100,7 +100,7 @@ moire_create_image :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Context, in
 		return false
 	}
 	alloc := vk.MemoryAllocateInfo{sType = .MEMORY_ALLOCATE_INFO, allocationSize = req.size, memoryTypeIndex = memory_type}
-	if vk.AllocateMemory(vk_ctx.device, &alloc, nil, &image.memory) != .SUCCESS {
+	if !engine.vk_allocate_memory_checked(vk_ctx, &alloc, "moire image", &image.memory) {
 		return false
 	}
 	if vk.BindImageMemory(vk_ctx.device, image.handle, image.memory, 0) != .SUCCESS {
@@ -145,7 +145,7 @@ moire_create_sampled_image :: proc(vk_ctx: ^engine.Vk_Context, image: ^Moire_Ima
 		return false
 	}
 	alloc := vk.MemoryAllocateInfo{sType = .MEMORY_ALLOCATE_INFO, allocationSize = req.size, memoryTypeIndex = memory_type}
-	if vk.AllocateMemory(vk_ctx.device, &alloc, nil, &image.memory) != .SUCCESS {
+	if !engine.vk_allocate_memory_checked(vk_ctx, &alloc, "moire upload image", &image.memory) {
 		return false
 	}
 	if vk.BindImageMemory(vk_ctx.device, image.handle, image.memory, 0) != .SUCCESS {
@@ -281,7 +281,15 @@ moire_gpu_load_image_path :: proc(gpu: ^Moire_Gpu_State, vk_ctx: ^engine.Vk_Cont
 
 	target_width := int(max(gpu.width, 1))
 	target_height := int(max(gpu.height, 1))
-	pixels := make([]u8, int(target_width * target_height * 4))
+	byte_count, size_ok := engine.checked_mul_u64(u64(target_width), u64(target_height))
+	if !size_ok do return false
+	byte_count, size_ok = engine.checked_mul_u64(byte_count, 4)
+	if !size_ok || byte_count > u64(max(int)) do return false
+	pixels, alloc_err := make([]u8, int(byte_count))
+	if alloc_err != nil {
+		engine.vk_record_resource_error(vk_ctx, .Cpu_Out_Of_Memory, "moire image staging", byte_count, 0)
+		return false
+	}
 	defer delete(pixels)
 	source := raw_data(img.pixels.buf[:])
 	for y := 0; y < target_height; y += 1 {

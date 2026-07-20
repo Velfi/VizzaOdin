@@ -1,7 +1,7 @@
 package render_vk
 
-import engine "../engine"
-import uifw "../ui"
+import engine "zelda_engine:engine"
+import uifw "zelda_engine:ui"
 import vk "vendor:vulkan"
 
 ST_FLIP_COMPUTE_SOURCE :: "assets/shaders/simulations/st_flip/compute.slang"

@@ -12,7 +12,7 @@ scripts/release.sh 0.2.0-0
 The script mirrors the Mahjuro release flow. It verifies that `main` is clean
 and up to date, checks that `v<version>` does not already exist, compiles
 `.changes/*.md` into `CHANGELOG.md` for stable releases, updates
-`packages/engine/version.odin`, commits `Release v<version>`, creates an
+`packages/app/version.odin`, commits `Release v<version>`, creates an
 annotated tag, then asks before pushing the commit and tag.
 
 Pre-releases, such as `0.2.0-0`, skip changelog compilation so fragments can
@@ -96,7 +96,7 @@ Pre-release GitHub notes use a compare link. Stable release notes come from
 GitHub's generated release notes.
 
 If you need to rebuild a release from the current `HEAD` without creating a new
-version, update `packages/engine/version.odin` if needed, then run:
+version, update `packages/app/version.odin` if needed, then run:
 
 ```sh
 scripts/retag-head.sh
