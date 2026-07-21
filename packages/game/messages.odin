@@ -201,20 +201,7 @@ Render_To_Ui_Message :: struct {
 Ui_To_Render_Queue :: engine.Bounded_Queue(Ui_To_Render_Command, 256)
 Render_To_Ui_Queue :: engine.Bounded_Queue(Render_To_Ui_Message, 256)
 
-write_fixed_string :: proc(dst: []u8, src: string) {
-	n := min(len(dst) - 1, len(src))
-	for i in 0 ..< n {
-		dst[i] = src[i]
-	}
-	if len(dst) > 0 {
-		dst[n] = 0
-	}
-}
-
-fixed_string :: proc(buf: []u8) -> string {
-	n := 0
-	for n < len(buf) && buf[n] != 0 {
-		n += 1
-	}
-	return string(buf[:n])
-}
+// Keep message buffer handling aligned with the shared engine implementation.
+// In particular, the engine helper safely accepts an empty destination slice.
+write_fixed_string :: engine.write_fixed_string
+fixed_string :: engine.fixed_string

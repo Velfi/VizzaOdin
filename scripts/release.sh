@@ -89,7 +89,7 @@ import sys
 version, major, minor, patch = sys.argv[1:5]
 path = pathlib.Path("packages/app/version.odin")
 text = (
-    "package engine\n\n"
+    "package app\n\n"
     f'APP_VERSION :: "{version}"\n'
     f"APP_VERSION_MAJOR :: u32({major})\n"
     f"APP_VERSION_MINOR :: u32({minor})\n"

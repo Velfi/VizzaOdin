@@ -13,6 +13,17 @@ import "core:testing"
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
 
+@(test)
+test_shared_fixed_string_helpers_handle_empty_and_truncated_buffers :: proc(t: ^testing.T) {
+	empty: [0]u8
+	game.write_fixed_string(empty[:], "ignored")
+	testing.expect_value(t, game.fixed_string(empty[:]), "")
+
+	truncated: [4]u8
+	game.write_fixed_string(truncated[:], "longer")
+	testing.expect_value(t, game.fixed_string(truncated[:]), "lon")
+}
+
 Test_Gray_Scott_Product_Storage :: struct {
 	settings: game.Gray_Scott_Settings,
 	runtime: game.Gray_Scott_Runtime_State,
