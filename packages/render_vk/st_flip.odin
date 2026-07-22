@@ -88,6 +88,12 @@ st_flip_gpu_ensure :: proc(gpu: ^ST_Flip_Gpu_State, vk_ctx: ^engine.Vk_Context, 
 	grid_height := settings.grid_height
 	grid_width := max(u32(f32(grid_height) * f32(max(width, 1)) / f32(max(height, 1)) + 0.5), 1)
 	if gpu.ready && gpu.particle_count == settings.particle_count && gpu.grid_width == grid_width && gpu.grid_height == grid_height do return true
+	// Resolution changes replace buffers and descriptor sets that may still be
+	// referenced by an in-flight frame. Vulkan requires those submissions to
+	// finish before their resources are destroyed.
+	if gpu.ready {
+		_ = vk.DeviceWaitIdle(vk_ctx.device)
+	}
 	st_flip_gpu_destroy(gpu, vk_ctx)
 	gpu.particle_count = settings.particle_count
 	gpu.grid_width = grid_width
