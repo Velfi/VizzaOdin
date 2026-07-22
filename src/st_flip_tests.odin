@@ -5,6 +5,16 @@ import render_vk "../packages/render_vk"
 import "core:math"
 import "core:testing"
 
+@(test)
+test_st_flip_gpu_storage_is_device_local_and_cpu_buffers_are_host_visible :: proc(t: ^testing.T) {
+	gpu_only := render_vk.st_flip_buffer_memory_properties(.GPU_Only)
+	cpu_written := render_vk.st_flip_buffer_memory_properties(.CPU_Written)
+	testing.expect(t, .DEVICE_LOCAL in gpu_only)
+	testing.expect(t, !(.HOST_VISIBLE in gpu_only))
+	testing.expect(t, .HOST_VISIBLE in cpu_written)
+	testing.expect(t, .HOST_COHERENT in cpu_written)
+}
+
 test_st_flip_temporal_kernel_is_one_sided_and_forward_weighted :: proc(t: ^testing.T) {
 	testing.expect_value(t, game.st_flip_temporal_weight(-0.51), f32(0))
 	testing.expect_value(t, game.st_flip_temporal_weight(0.51), f32(0))

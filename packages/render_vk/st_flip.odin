@@ -32,6 +32,57 @@ ST_FLIP_COMPUTE_FALLBACKS := [?]string{
 ST_FLIP_PRESENT_VERTEX_FALLBACK :: "build/shaders/simulations/st_flip/present_vertex"
 ST_FLIP_PRESENT_FRAGMENT_FALLBACK :: "build/shaders/simulations/st_flip/present_fragment"
 
+ST_Flip_Buffer_Access :: enum {
+	GPU_Only,
+	CPU_Written,
+}
+
+st_flip_buffer_memory_properties :: proc(access: ST_Flip_Buffer_Access) -> vk.MemoryPropertyFlags {
+	switch access {
+	case .GPU_Only:    return {.DEVICE_LOCAL}
+	case .CPU_Written: return {.HOST_VISIBLE, .HOST_COHERENT}
+	}
+	return {}
+}
+
+// ST-FLIP's simulation buffers are initialized and updated entirely by GPU
+// passes. Keeping them unmapped and device-local avoids routing the solver's
+// storage traffic through host memory on discrete GPUs.
+st_flip_create_device_buffer :: proc(vk_ctx: ^engine.Vk_Context, size: vk.DeviceSize, usage: vk.BufferUsageFlags, resource: string, out: ^engine.Vk_Buffer) -> bool {
+	if vk_ctx == nil || out == nil do return false
+	out^ = {}
+	engine.vk_clear_resource_error(vk_ctx)
+	if size == 0 {
+		engine.vk_record_resource_error(vk_ctx, .Invalid_Size, resource, 0, 0)
+		return false
+	}
+	info := vk.BufferCreateInfo{sType=.BUFFER_CREATE_INFO, size=size, usage=usage, sharingMode=.EXCLUSIVE}
+	if result := vk.CreateBuffer(vk_ctx.device, &info, nil, &out.handle); result != .SUCCESS {
+		engine.vk_record_allocation_result(vk_ctx, result, resource, u64(size))
+		return false
+	}
+	req: vk.MemoryRequirements
+	vk.GetBufferMemoryRequirements(vk_ctx.device, out.handle, &req)
+	memory_type, ok := engine.vk_find_memory_type(vk_ctx, req.memoryTypeBits, st_flip_buffer_memory_properties(.GPU_Only))
+	if !ok {
+		engine.vk_record_resource_error(vk_ctx, .Unsupported, resource, u64(req.size), 0)
+		engine.vk_destroy_buffer(vk_ctx, out)
+		return false
+	}
+	alloc := vk.MemoryAllocateInfo{sType=.MEMORY_ALLOCATE_INFO, allocationSize=req.size, memoryTypeIndex=memory_type}
+	if !engine.vk_allocate_memory_checked(vk_ctx, &alloc, resource, &out.memory) {
+		engine.vk_destroy_buffer(vk_ctx, out)
+		return false
+	}
+	if result := vk.BindBufferMemory(vk_ctx.device, out.handle, out.memory, 0); result != .SUCCESS {
+		engine.vk_record_allocation_result(vk_ctx, result, resource, u64(req.size))
+		engine.vk_destroy_buffer(vk_ctx, out)
+		return false
+	}
+	out.size = size
+	return true
+}
+
 st_flip_gpu_ensure :: proc(gpu: ^ST_Flip_Gpu_State, vk_ctx: ^engine.Vk_Context, settings: ^ST_Flip_Settings, width, height: u32) -> bool {
 	if gpu == nil || vk_ctx == nil || settings == nil do return false
 	grid_height := settings.grid_height
@@ -64,14 +115,14 @@ st_flip_create_buffers :: proc(gpu: ^ST_Flip_Gpu_State, vk_ctx: ^engine.Vk_Conte
 	v_count := gpu.grid_width * (gpu.grid_height + 1)
 	cell_count := gpu.grid_width * gpu.grid_height
 	storage := vk.BufferUsageFlags{.STORAGE_BUFFER}
-	if !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(gpu.particle_count) * vk.DeviceSize(size_of(ST_Flip_Particle)), storage, &gpu.particle_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(u_count) * 8, storage, &gpu.u_accum_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(v_count) * 8, storage, &gpu.v_accum_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(u_count) * 8, storage, &gpu.u_velocity_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(v_count) * 8, storage, &gpu.v_velocity_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(cell_count) * 16, storage, &gpu.cell_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(cell_count) * 4, storage, &gpu.render_density_buffer) ||
-	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(cell_count) * 8, storage, &gpu.fluid_phase_buffer) ||
+	if !st_flip_create_device_buffer(vk_ctx, vk.DeviceSize(gpu.particle_count) * vk.DeviceSize(size_of(ST_Flip_Particle)), storage, "ST-FLIP particles", &gpu.particle_buffer) ||
+	   !st_flip_create_device_buffer(vk_ctx, vk.DeviceSize(u_count) * 8, storage, "ST-FLIP U accumulators", &gpu.u_accum_buffer) ||
+	   !st_flip_create_device_buffer(vk_ctx, vk.DeviceSize(v_count) * 8, storage, "ST-FLIP V accumulators", &gpu.v_accum_buffer) ||
+	   !st_flip_create_device_buffer(vk_ctx, vk.DeviceSize(u_count) * 8, storage, "ST-FLIP U velocities", &gpu.u_velocity_buffer) ||
+	   !st_flip_create_device_buffer(vk_ctx, vk.DeviceSize(v_count) * 8, storage, "ST-FLIP V velocities", &gpu.v_velocity_buffer) ||
+	   !st_flip_create_device_buffer(vk_ctx, vk.DeviceSize(cell_count) * 16, storage, "ST-FLIP cells", &gpu.cell_buffer) ||
+	   !st_flip_create_device_buffer(vk_ctx, vk.DeviceSize(cell_count) * 4, storage, "ST-FLIP render density", &gpu.render_density_buffer) ||
+	   !st_flip_create_device_buffer(vk_ctx, vk.DeviceSize(cell_count) * 8, storage, "ST-FLIP fluid phase", &gpu.fluid_phase_buffer) ||
 	   !engine.vk_create_host_buffer(vk_ctx, vk.DeviceSize(COLOR_SCHEME_U32_COUNT) * 4, storage, &gpu.lut_buffer) {
 		return false
 	}
