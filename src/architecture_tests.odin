@@ -1905,10 +1905,13 @@ test_particle_life_camera_uses_shared_wasd_qe_reset_controls :: proc(t: ^testing
 
 	game.particle_life_apply_frame_input(&sim, {key_w = true, key_d = true, key_e = true, delta_time = 1.0 / 60.0, camera_sensitivity = 2})
 	testing.expect(t, sim.runtime.camera_target_x > 0)
-	testing.expect(t, sim.runtime.camera_target_y < 0)
+	testing.expect(t, sim.runtime.camera_target_y > 0)
 	testing.expect(t, sim.runtime.camera_target_zoom > 1)
 	testing.expect(t, sim.runtime.camera_x > 0)
-	testing.expect(t, sim.runtime.camera_y < 0)
+	testing.expect(t, sim.runtime.camera_y > 0)
+
+	game.particle_life_apply_frame_input(&sim, {key_s = true, delta_time = 1.0 / 60.0, camera_sensitivity = 2})
+	testing.expect(t, sim.runtime.camera_target_y < sim.runtime.camera_y)
 
 	game.particle_life_apply_frame_input(&sim, {actions = {camera_reset = {pressed = true, owner = .Mouse_Keyboard}}, delta_time = 1.0 / 60.0, camera_sensitivity = 1})
 	testing.expect_value(t, sim.runtime.camera_target_x, f32(0))

@@ -261,7 +261,12 @@ particle_life_apply_frame_input :: proc(sim: ^Particle_Life_Simulation, input: U
 	tool_set := canvas_tool_set_for_mode(.Particle_Life)
 	canvas_tool_update_selection(&tool_set, &sim.canvas_tool, input)
 	camera := particle_life_camera_control_state(sim)
-	camera_controls_apply_input(&camera, input)
+	camera_input := input
+	// Particle Life's world is Y-up, while the shared keyboard camera mapping
+	// uses screen-space Y. Adapt W/S here without changing the other simulations.
+	camera_input.key_w = input.key_s
+	camera_input.key_s = input.key_w
+	camera_controls_apply_input(&camera, camera_input)
 	particle_life_store_camera_control_state(sim, camera)
 
 	sim.runtime.cursor_active = 0
