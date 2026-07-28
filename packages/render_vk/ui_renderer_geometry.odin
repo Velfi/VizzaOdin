@@ -67,7 +67,31 @@ ui_renderer_font_atlas_for_scale :: proc(renderer: ^Ui_Renderer, ctx: ^Vk_Contex
 	byte_count := int(atlas_width * atlas_height * 4)
 	rgba := make([]u8, byte_count, context.temp_allocator)
 	defer delete(rgba, context.temp_allocator)
-	if !uifw.gui_font_render_ascii_atlas(font_kind, UI_FONT_GLYPH_FIRST, UI_FONT_GLYPH_FIRST + UI_FONT_GLYPH_COUNT - 1, int(pixel_height), int(cell_width), int(cell_height), int(columns), rgba) {
+	glyph_bounds: uifw.Gui_Glyph_Bounds
+	if !uifw.gui_font_ascii_glyph_bounds(
+		font_kind,
+		UI_FONT_GLYPH_FIRST,
+		UI_FONT_GLYPH_FIRST + UI_FONT_GLYPH_COUNT - 1,
+		int(pixel_height),
+		&glyph_bounds,
+	) {
+		log_warn("ui_renderer_font_atlas_for_scale: font bounds query failed height=", pixel_height)
+		return nil
+	}
+	origin_x := max(-int(glyph_bounds.min_x), 0)
+	baseline := max(int(glyph_bounds.ascent), 0)
+	if !uifw.gui_font_render_ascii_atlas(
+		font_kind,
+		UI_FONT_GLYPH_FIRST,
+		UI_FONT_GLYPH_FIRST + UI_FONT_GLYPH_COUNT - 1,
+		int(pixel_height),
+		int(cell_width),
+		int(cell_height),
+		int(columns),
+		origin_x,
+		baseline,
+		rgba,
+	) {
 		log_warn("ui_renderer_font_atlas_for_scale: font atlas rasterization failed height=", pixel_height)
 		return nil
 	}

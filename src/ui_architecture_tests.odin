@@ -1140,18 +1140,21 @@ test_ui_font_atlas_cell_covers_wide_glyph_advances :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_ui_shaped_glyph_ids_resolve_to_ascii_atlas_slots :: proc(t: ^testing.T) {
+test_ui_shaped_glyph_clusters_resolve_to_ascii_atlas_slots_for_each_font :: proc(t: ^testing.T) {
 	ctx: uifw.Gui_Context
 	uifw.gui_init(&ctx)
 	defer uifw.gui_destroy(&ctx)
 
-	shaped: [16]uifw.Gui_Shaped_Glyph
 	label := "Slime Mold"
 	bytes := transmute([]u8)label
-	count := uifw.gui_font_shape_text(.Body, bytes, 1, shaped[:])
+	font_kinds := [2]uifw.Gui_Font_Kind{uifw.Gui_Font_Kind.Body, uifw.Gui_Font_Kind.Display}
+	for font_kind in font_kinds {
+		shaped: [16]uifw.Gui_Shaped_Glyph
+		count := uifw.gui_font_shape_text(font_kind, bytes, 1, shaped[:])
 
-	testing.expect(t, count > 0)
-	testing.expect_value(t, uifw.gui_font_glyph_slot(shaped[0].glyph_id), i32('S' - uifw.GUI_FONT_GLYPH_FIRST))
+		testing.expect(t, count > 0)
+		testing.expect_value(t, rendervk.ui_font_glyph_slot(bytes, shaped[0]), i32('S' - uifw.GUI_FONT_GLYPH_FIRST))
+	}
 }
 
 @(test)

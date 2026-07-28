@@ -16,7 +16,7 @@ if [ "$graphics" -ne "$dynamic" ]; then
     exit 1
 fi
 
-rg -q 'apiVersion = vk_make_version\(1, 3, 0\)' "$engine_dir/vk_context.odin"
+rg -q 'apiVersion[[:space:]]*=[[:space:]]*vk_make_version\(1, 3, 0\)' "$engine_dir/vk_context.odin"
 rg -q 'Vulkan 1.3 loader is required' "$engine_dir/vk_context.odin"
 rg -q 'PhysicalDeviceVulkan13Features' "$engine_dir/vk_context.odin"
 rg -q 'vk\.CmdBeginRendering' "$engine_dir/vk_13.odin"

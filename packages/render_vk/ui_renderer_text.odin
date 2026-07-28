@@ -9,6 +9,17 @@ import "core:fmt"
 import "core:math"
 import png "core:image/png"
 
+ui_font_glyph_slot :: proc(bytes: []u8, glyph: uifw.Gui_Shaped_Glyph) -> i32 {
+	if glyph.cluster >= u32(len(bytes)) {
+		return -1
+	}
+	ch := bytes[glyph.cluster]
+	if ch < UI_FONT_GLYPH_FIRST || ch >= UI_FONT_GLYPH_FIRST + UI_FONT_GLYPH_COUNT {
+		return -1
+	}
+	return i32(ch - UI_FONT_GLYPH_FIRST)
+}
+
 ui_text_shape_cache_hash :: proc(font_kind: uifw.Gui_Font_Kind, bytes: []u8, scale: f32) -> u64 {
 	hash := u64(14695981039346656037)
 	hash = (hash ~ u64(font_kind)) * 1099511628211
@@ -138,7 +149,7 @@ ui_push_text :: proc(renderer: ^Ui_Renderer, out: [^]Ui_Vertex, count: ^int, com
 	if shaped_count > 0 {
 		cursor_x := x
 		for glyph in shaped[:shaped_count] {
-			slot := uifw.gui_font_glyph_slot(glyph.glyph_id)
+			slot := ui_font_glyph_slot(bytes, glyph)
 			if slot >= 0 {
 				ui_push_text_glyph(
 					out,
@@ -195,11 +206,12 @@ ui_push_clear_text_placeholder :: proc(out: []Ui_Clear_Rect, count: ^int, comman
 	}
 
 	shaped: [UI_MAX_SHAPED_GLYPHS]uifw.Gui_Shaped_Glyph
-	shaped_count := uifw.gui_font_shape_text(command.font_kind, transmute([]u8)command.text, scale, shaped[:])
+	bytes := transmute([]u8)command.text
+	shaped_count := uifw.gui_font_shape_text(command.font_kind, bytes, scale, shaped[:])
 	if shaped_count > 0 {
 		cursor_x := x
 		for glyph in shaped[:shaped_count] {
-			slot := uifw.gui_font_glyph_slot(glyph.glyph_id)
+			slot := ui_font_glyph_slot(bytes, glyph)
 			if slot >= 0 {
 				ui_push_clear_rect(out, count, {cursor_x + glyph.x_offset, y - glyph.y_offset, char_w, char_h}, command.color, scissor)
 			}
