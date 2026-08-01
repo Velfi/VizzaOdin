@@ -982,6 +982,18 @@ test_app_options_screen_uses_plain_toggle_labels_and_sticky_footer :: proc(t: ^t
 	testing.expect(t, test_first_text_command_index(ctx.commands[:], "Start Maximized") < 0)
 	testing.expect(t, test_first_text_command_index(ctx.commands[:], "Start Maximized: true") < 0)
 
+	panel := game.app_ui_options_panel({1200, 800}, &ctx.style)
+	section_labels := [?]string{"Display", "Window", "Interface", "Input", "Camera"}
+	for label in section_labels {
+		index := test_first_text_command_index(ctx.commands[:], label)
+		testing.expect(t, index >= 0)
+		if index >= 0 {
+			rect := ctx.commands[index].rect
+			testing.expect(t, rect.y >= panel.y)
+			testing.expect(t, rect.y + rect.h <= panel.y + panel.h)
+		}
+	}
+
 	scroll_clip: uifw.Rect
 	found_scroll_clip := false
 	for command in ctx.commands {
@@ -995,6 +1007,21 @@ test_app_options_screen_uses_plain_toggle_labels_and_sticky_footer :: proc(t: ^t
 	testing.expect(t, found_scroll_clip)
 	testing.expect(t, save_index >= 0)
 	testing.expect(t, ctx.commands[save_index].rect.y > scroll_clip.y + scroll_clip.h)
+	if save_index >= 0 {
+		save_rect := ctx.commands[save_index].rect
+		testing.expect(t, save_rect.y + save_rect.h <= panel.y + panel.h)
+	}
+}
+
+@(test)
+test_app_options_document_uses_responsive_centered_panel :: proc(t: ^testing.T) {
+	style := uifw.gui_style_for_viewport(uifw.gui_default_style(), 1200, 800, 1)
+	panel := game.app_ui_options_panel({1200, 800}, &style)
+
+	testing.expect(t, panel.w < 1200 - 48)
+	testing.expect(t, panel.h < 800 - 48)
+	testing.expect(t, math.abs((panel.x + panel.w * 0.5) - 600) < 0.01)
+	testing.expect(t, math.abs((panel.y + panel.h * 0.5) - 400) < 0.01)
 }
 
 @(test)

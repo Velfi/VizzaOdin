@@ -177,11 +177,7 @@ app_ui_draw_remaining_sim :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, kin
 }
 
 app_ui_draw_options :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, viewport: uifw.Vec2, worker: ^Product_Context) {
-	window_w := viewport.x
-	window_h := viewport.y
-	panel_w := min(max(window_w * 0.72, gui.style.body_char_width * 54), max(window_w - gui.style.margin * 2, 1))
-	panel_h := min(max(window_h * 0.86, gui.style.row_height * 12), max(window_h - gui.style.margin * 2, 1))
-	panel := centered_panel_styled(panel_w, panel_h, i32(viewport.x), i32(viewport.y), &gui.style)
+	panel := app_ui_options_panel(viewport, &gui.style)
 	uifw.gui_panel_begin(gui, panel)
 	inner_h := max(panel.h - gui.style.panel_padding * 2, 0)
 	content_w := max(panel.w - gui.style.panel_padding * 2, 1)
@@ -205,6 +201,14 @@ app_ui_draw_options :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, viewport:
 	uifw.gui_panel_end(gui)
 }
 
+app_ui_options_panel :: proc(viewport: uifw.Vec2, style: ^uifw.Gui_Style) -> uifw.Rect {
+	window_w := viewport.x
+	window_h := viewport.y
+	panel_w := min(max(window_w * 0.72, style.body_char_width * 54), max(window_w - style.margin * 2, 1))
+	panel_h := min(max(window_h * 0.86, style.row_height * 12), max(window_h - style.margin * 2, 1))
+	return centered_panel_styled(panel_w, panel_h, i32(window_w), i32(window_h), style)
+}
+
 App_Ui_Options_Document_Context :: struct {
 	ui: ^App_Ui_State,
 	worker: ^Product_Context,
@@ -214,6 +218,11 @@ app_ui_draw_options_document_slot :: proc(data: rawptr, gui: ^uifw.Gui_Context, 
 	document_context := cast(^App_Ui_Options_Document_Context)data
 	if document_context == nil || document_context.ui == nil || gui == nil do return
 	ui := document_context.ui
+	// Slots are invoked after the parent document has reserved their rectangle,
+	// so start a nested layout at the slot bounds instead of inheriting the
+	// parent's cursor at the bottom of that reservation.
+	uifw.gui_layout_begin(gui, bounds, .Column, gui.style.spacing, gui.style.row_height)
+	defer uifw.gui_layout_end(gui)
 	content_w := max(bounds.w, 1)
 	footer_h := app_ui_options_footer_height(gui, content_w)
 	section_rail_h := app_ui_options_section_rail_height(gui, content_w)
@@ -243,14 +252,19 @@ app_ui_draw_options_document :: proc(ui: ^App_Ui_State, gui: ^uifw.Gui_Context, 
 		app_ui_draw_options(ui, gui, viewport, worker)
 		return
 	}
-	root_height := max(viewport.y - 48, gui.style.row_height * 4)
+	panel := app_ui_options_panel(viewport, &gui.style)
+	root_height := panel.h
 	slot_height := max(root_height - gui.style.panel_padding * 2 - gui.style.heading_line_height - gui.style.spacing, gui.style.row_height)
 	document_context := App_Ui_Options_Document_Context {ui, worker}
 	bindings := [?]uifw.Ui_Document_Runtime_Binding {
 		{id = "options_slot", kind = .Slot, userdata = &document_context, draw_slot = app_ui_draw_options_document_slot, slot_content_height = slot_height},
 	}
 	actions: uifw.Ui_Document_Action_State
-	result := uifw.ui_document_draw(document, gui, {0, 0, viewport.x, viewport.y}, bindings[:], &actions)
+	// The VUI document keeps a 24 px inset around its root. Feed it a local
+	// viewport around the responsive panel so the document and fallback paths
+	// resolve to the same centered bounds.
+	document_bounds := uifw.Rect{panel.x - 24, panel.y - 24, panel.w + 48, panel.h + 48}
+	result := uifw.ui_document_draw(document, gui, document_bounds, bindings[:], &actions)
 	if result.error != .None {
 		app_ui_draw_options(ui, gui, viewport, worker)
 	}
