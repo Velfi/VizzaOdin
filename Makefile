@@ -28,6 +28,17 @@ TEXTSHAPE_DIR := $(ZELDA_ENGINE_ROOT)/third_party/textshape
 TEXTSHAPE_LIB := $(TEXTSHAPE_DIR)/libtextshape.a
 TEXTSHAPE_CFLAGS := $(shell pkg-config --cflags harfbuzz freetype2 2>/dev/null)
 TEXTSHAPE_LIBS := $(shell pkg-config --libs harfbuzz freetype2 2>/dev/null)
+UNICODE_ROOT := $(ZELDA_ENGINE_ROOT)/third_party/unicode
+SHEENBIDI_ROOT := $(UNICODE_ROOT)/sheenbidi
+LIBGRAPHEME_ROOT := $(UNICODE_ROOT)/libgrapheme
+UNICODE_CFLAGS := -I$(SHEENBIDI_ROOT)/Headers -I$(SHEENBIDI_ROOT)/Source -I$(LIBGRAPHEME_ROOT)
+UNICODE_OBJECTS := \
+	$(SHEENBIDI_ROOT)/SheenBidi.o \
+	$(LIBGRAPHEME_ROOT)/src/character.o \
+	$(LIBGRAPHEME_ROOT)/src/line.o \
+	$(LIBGRAPHEME_ROOT)/src/utf8.o \
+	$(LIBGRAPHEME_ROOT)/src/util.o \
+	$(LIBGRAPHEME_ROOT)/src/word.o
 STEAM_SDK_LOCATION ?= $(HOME)/steam_sdk
 STEAM_APP_ID ?= 4945920
 STEAM_DEFAULT_ENABLED ?= true
@@ -188,9 +199,18 @@ $(TOMLC17_LIB): $(TOMLC17_STAMP)
 
 textshape: $(TEXTSHAPE_LIB)
 
-$(TEXTSHAPE_LIB): $(TEXTSHAPE_DIR)/textshape.c
-	cc -c $(TEXTSHAPE_CFLAGS) $(TEXTSHAPE_DIR)/textshape.c -o $(TEXTSHAPE_DIR)/textshape.o
+$(SHEENBIDI_ROOT)/SheenBidi.o: $(SHEENBIDI_ROOT)/Source/SheenBidi.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(UNICODE_CFLAGS) -DSB_CONFIG_UNITY -c $< -o $@
+
+$(LIBGRAPHEME_ROOT)/src/%.o: $(LIBGRAPHEME_ROOT)/src/%.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -I$(LIBGRAPHEME_ROOT) -c $< -o $@
+
+$(TEXTSHAPE_DIR)/textshape.o: $(TEXTSHAPE_DIR)/textshape.c
+	cc -c $(TEXTSHAPE_CFLAGS) $(UNICODE_CFLAGS) $(TEXTSHAPE_DIR)/textshape.c -o $(TEXTSHAPE_DIR)/textshape.o
+
+$(TEXTSHAPE_LIB): $(TEXTSHAPE_DIR)/textshape.o $(UNICODE_OBJECTS)
 	ar rcs $(TEXTSHAPE_LIB) $(TEXTSHAPE_DIR)/textshape.o
+	ar rcs $(TEXTSHAPE_LIB) $(UNICODE_OBJECTS)
 
 install-slangc:
 	./scripts/install_slangc.sh
