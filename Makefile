@@ -28,6 +28,11 @@ TEXTSHAPE_DIR := $(ZELDA_ENGINE_ROOT)/third_party/textshape
 TEXTSHAPE_LIB := $(TEXTSHAPE_DIR)/libtextshape.a
 TEXTSHAPE_CFLAGS := $(shell pkg-config --cflags harfbuzz freetype2 2>/dev/null)
 TEXTSHAPE_LIBS := $(shell pkg-config --libs harfbuzz freetype2 2>/dev/null)
+FFMPEG_VENDOR := vendor/ffmpeg
+FFMPEG_REPO := https://github.com/catermujo/odin-ffmpeg
+FFMPEG_DYLIB_DIR := $(FFMPEG_VENDOR)/darwin_arm64
+FFMPEG_DYLIBS := $(wildcard $(FFMPEG_DYLIB_DIR)/*.dylib)
+FFMPEG_ODIN_DEFINE := -define:FFMPEG_LINK=shared
 UNICODE_ROOT := $(ZELDA_ENGINE_ROOT)/third_party/unicode
 SHEENBIDI_ROOT := $(UNICODE_ROOT)/sheenbidi
 LIBGRAPHEME_ROOT := $(UNICODE_ROOT)/libgrapheme
@@ -147,11 +152,13 @@ $(FONT_BITMAP) $(FONT_ATLAS) $(FONT_METRICS): $(FONT_SOURCE) $(FONT_GENERATOR) M
 
 build: $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
 	mkdir -p $(BUILD_DIR)
-	odin build $(SRC) $(ODIN_FLAGS) -extra-linker-flags:"$(TEXTSHAPE_LIBS)" -out:$(BUILD_DIR)/$(APP)
+	odin build $(SRC) $(ODIN_FLAGS) $(FFMPEG_ODIN_DEFINE) -extra-linker-flags:"$(TEXTSHAPE_LIBS)" -out:$(BUILD_DIR)/$(APP)
+	cp $(FFMPEG_DYLIBS) $(BUILD_DIR)/
 
 build-steam: $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
 	mkdir -p $(BUILD_DIR)
-	odin build $(SRC) $(ODIN_FLAGS) -define:VIZZA_STEAM_DEFAULT_ENABLED=$(STEAM_DEFAULT_ENABLED) -define:VIZZA_STEAM_APP_ID=$(STEAM_APP_ID) -extra-linker-flags:"$(TEXTSHAPE_LIBS)" -out:$(BUILD_DIR)/$(APP)
+	odin build $(SRC) $(ODIN_FLAGS) $(FFMPEG_ODIN_DEFINE) -define:VIZZA_STEAM_DEFAULT_ENABLED=$(STEAM_DEFAULT_ENABLED) -define:VIZZA_STEAM_APP_ID=$(STEAM_APP_ID) -extra-linker-flags:"$(TEXTSHAPE_LIBS)" -out:$(BUILD_DIR)/$(APP)
+	cp $(FFMPEG_DYLIBS) $(BUILD_DIR)/
 	$(MAKE) copy-steam-redist
 
 copy-steam-redist:
@@ -169,20 +176,26 @@ steam-upload-preview:
 
 check: check-boundaries $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
 	bash ./scripts/check_vulkan13.sh
-	odin check $(SRC) $(ZELDA_ENGINE_COLLECTION)
+	odin check $(SRC) $(ZELDA_ENGINE_COLLECTION) $(FFMPEG_ODIN_DEFINE)
 
 check-boundaries:
 	./scripts/check_package_boundaries.sh
 
 test: $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
-	odin test $(SRC) $(ZELDA_ENGINE_COLLECTION) -extra-linker-flags:"$(TEXTSHAPE_LIBS)"
+	odin test $(SRC) $(ZELDA_ENGINE_COLLECTION) $(FFMPEG_ODIN_DEFINE) -extra-linker-flags:"$(TEXTSHAPE_LIBS)"
 
 perf-particle-life: shaders $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
 	mkdir -p $(BUILD_DIR)
-	odin build perf/particle_life $(ODIN_FLAGS) -extra-linker-flags:"$(TEXTSHAPE_LIBS)" -out:$(BUILD_DIR)/particle_life_perf
+	odin build perf/particle_life $(ODIN_FLAGS) $(FFMPEG_ODIN_DEFINE) -extra-linker-flags:"$(TEXTSHAPE_LIBS)" -out:$(BUILD_DIR)/particle_life_perf
 	$(MACOS_VULKAN_ENV) $(BUILD_DIR)/particle_life_perf $(ARGS)
 
-deps: $(TEXTSHAPE_LIB) $(TOMLC17_LIB)
+deps: $(TEXTSHAPE_LIB) $(TOMLC17_LIB) ffmpeg
+
+ffmpeg: $(FFMPEG_VENDOR)
+
+$(FFMPEG_VENDOR):
+	@if [ -e "$(FFMPEG_VENDOR)" ] && [ ! -d "$(FFMPEG_VENDOR)/.git" ]; then printf 'Remove %s or turn it into a git clone.\n' "$(FFMPEG_VENDOR)" >&2; exit 1; fi
+	@if [ ! -d "$(FFMPEG_VENDOR)/.git" ]; then git clone "$(FFMPEG_REPO)" "$(FFMPEG_VENDOR)"; fi
 
 tomlc17: $(TOMLC17_LIB)
 

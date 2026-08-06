@@ -1115,12 +1115,6 @@ test_screenshot_state_converts_bgra_to_qoi_on_request :: proc(t: ^testing.T) {
 	testing.expect_value(t, qoi_bytes[17], u8(10))
 }
 
-@(test)
-test_video_recorder_uses_swapchain_pixel_format_names :: proc(t: ^testing.T) {
-	testing.expect_value(t, host.video_recorder_pixel_format_name(vk.Format.B8G8R8A8_UNORM), "bgra")
-	testing.expect_value(t, host.video_recorder_pixel_format_name(vk.Format.B8G8R8A8_SRGB), "bgra")
-	testing.expect_value(t, host.video_recorder_pixel_format_name(vk.Format.R8G8B8A8_UNORM), "rgba")
-}
 
 @(test)
 test_video_recorder_fps_defaults_and_clamps_to_sixty :: proc(t: ^testing.T) {
@@ -1160,7 +1154,7 @@ test_app_ui_video_recording_command_state_transitions :: proc(t: ^testing.T) {
 	testing.expect_value(t, ui.video_recording_state, game.Video_Recording_Ui_State.Recording)
 	testing.expect_value(t, game.app_ui_video_recording_button_label(&ui), "Stop Recording")
 
-	game.app_ui_video_recording_apply_command_state(&ui, .Failed, "ffmpeg was not found on PATH")
+	game.app_ui_video_recording_apply_command_state(&ui, .Failed, "H.264 encoder not found")
 	testing.expect_value(t, ui.video_recording_state, game.Video_Recording_Ui_State.Failed)
 	testing.expect_value(t, game.app_ui_video_recording_button_label(&ui), "Record")
 }
